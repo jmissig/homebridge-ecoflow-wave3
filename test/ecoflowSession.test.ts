@@ -187,6 +187,50 @@ describe('EcoFlow cloud session', () => {
     assert.equal(session.state, 'stopped');
   });
 
+  it('fails the connection before a late command or manual refresh can cross generations', async () => {
+    const operations = [
+      async (session: EcoFlowCloudSession) => {
+        await session.publishCommand('TESTWAVE30001', Uint8Array.of(7));
+      },
+      async (session: EcoFlowCloudSession) => {
+        await session.requestState('TESTWAVE30001');
+      },
+    ];
+
+    for (const operation of operations) {
+      const connection = new FakeMqttConnection();
+      const session = new EcoFlowCloudSession(
+        testConfig(),
+        successfulHttp(),
+        new FakeMqttTransport(connection),
+        new CapturingLogger(),
+        undefined,
+        10,
+      );
+      await session.start();
+      const initialSubscriptions = connection.subscribeCalls.length;
+      const latePublishGate = new Deferred<void>();
+      connection.publishGate = latePublishGate;
+      connection.ignoreOperationAbort = true;
+
+      await assert.rejects(operation(session), /failed/);
+      assert.equal(session.state, 'failed');
+      assert.equal(connection.closeCalls, 1);
+      assert.equal(connection.totalListenerCount(), 0);
+
+      connection.emitDisconnect();
+      connection.emitConnect();
+      await flushAsyncWork();
+      assert.equal(connection.subscribeCalls.length, initialSubscriptions);
+      assert.equal(session.state, 'failed');
+
+      latePublishGate.resolve();
+      await flushAsyncWork();
+      assert.equal(session.state, 'failed');
+      await session.stop();
+    }
+  });
+
   it('surfaces bounded subscription and refresh failures and closes the connection', async () => {
     const subscriptionFailure = new FakeMqttConnection();
     subscriptionFailure.failSubscribe = true;

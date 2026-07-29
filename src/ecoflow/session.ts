@@ -63,6 +63,7 @@ export class EcoFlowCloudSession {
   private readonly messageListeners = new Set<(message: Wave3InboundMessage) => void>();
   private readonly errorListeners = new Set<(error: EcoFlowCloudSessionError) => void>();
   private readonly activeOperations = new Set<Promise<unknown>>();
+  private readonly publicOperationControllers = new Set<AbortController>();
   private detachListeners: Array<() => void> = [];
   private establishPromise?: Promise<void>;
   private lifecycleController?: AbortController;
@@ -187,11 +188,10 @@ export class EcoFlowCloudSession {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
     try {
-      await withTimeout(
-        this.trackOperation(
-          connection.publish(topics.set, payload, this.lifecycleController?.signal),
-        ),
-        this.operationTimeoutMilliseconds,
+      await this.runPublicPublish(
+        connection,
+        topics.set,
+        payload,
       );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow command publication failed');
@@ -202,13 +202,10 @@ export class EcoFlowCloudSession {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
     try {
-      await withTimeout(
-        this.trackOperation(connection.publish(
-          topics.get,
-          this.buildRefreshPayload(),
-          this.lifecycleController?.signal,
-        )),
-        this.operationTimeoutMilliseconds,
+      await this.runPublicPublish(
+        connection,
+        topics.get,
+        this.buildRefreshPayload(),
       );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
@@ -227,6 +224,7 @@ export class EcoFlowCloudSession {
     this.state = 'stopped';
     this.lifecycleController?.abort();
     this.setupGenerationController?.abort();
+    this.abortPublicOperations();
     this.detachConnectionListeners();
     const connection = this.connection;
     this.connection = undefined;
@@ -258,13 +256,18 @@ export class EcoFlowCloudSession {
   private attachConnectionListeners(connection: MqttConnection): void {
     this.detachListeners = [
       connection.onConnect(() => {
+        const publicOperationWasActive = this.publicOperationControllers.size > 0;
+        this.abortPublicOperations();
         this.mqttConnected = true;
         this.connectionGeneration += 1;
         this.setupGenerationController?.abort();
-        this.scheduleReconnectSetup();
+        if (!publicOperationWasActive) {
+          this.scheduleReconnectSetup();
+        }
       }),
       connection.onDisconnect(() => {
         if (!this.stopped) {
+          this.abortPublicOperations();
           this.mqttConnected = false;
           this.state = 'offline';
           this.logger.warn('EcoFlow MQTT connection was interrupted');
@@ -478,6 +481,64 @@ export class EcoFlowCloudSession {
       );
     } catch {
       this.logger.warn('EcoFlow MQTT connection did not close cleanly');
+    }
+  }
+
+  private async runPublicPublish(
+    connection: MqttConnection,
+    topic: string,
+    payload: Uint8Array | string,
+  ): Promise<void> {
+    const lifecycleSignal = this.lifecycleController?.signal;
+    if (lifecycleSignal === undefined) {
+      throw new EcoFlowCloudSessionError('EcoFlow MQTT session is not available');
+    }
+    const generation = this.connectionGeneration;
+    const controller = new AbortController();
+    this.publicOperationControllers.add(controller);
+    const signal = AbortSignal.any([lifecycleSignal, controller.signal]);
+    try {
+      const operation = this.trackOperation(
+        connection.publish(topic, payload, signal),
+      );
+      await withSignalAndTimeout(
+        operation,
+        signal,
+        this.operationTimeoutMilliseconds,
+      );
+      if (generation !== this.connectionGeneration
+        || !this.mqttConnected
+        || this.connection !== connection) {
+        throw new EcoFlowCloudSessionError('EcoFlow MQTT generation changed');
+      }
+    } catch (error) {
+      controller.abort();
+      await this.failConnectionAfterPublicOperation(connection);
+      throw error;
+    } finally {
+      this.publicOperationControllers.delete(controller);
+    }
+  }
+
+  private async failConnectionAfterPublicOperation(
+    expectedConnection: MqttConnection,
+  ): Promise<void> {
+    if (this.stopped || this.connection !== expectedConnection) {
+      return;
+    }
+    this.state = 'failed';
+    this.detachConnectionListeners();
+    this.connection = undefined;
+    this.mqttConnected = false;
+    this.authenticated = undefined;
+    this.setupGenerationController?.abort();
+    await this.closeWithTimeout(expectedConnection);
+    await this.drainOperationsSafely([...this.activeOperations]);
+  }
+
+  private abortPublicOperations(): void {
+    for (const controller of this.publicOperationControllers) {
+      controller.abort();
     }
   }
 

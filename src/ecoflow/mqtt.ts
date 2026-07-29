@@ -138,10 +138,11 @@ class MqttJsConnection implements MqttConnection {
   }
 
   async subscribe(topics: readonly string[], signal?: AbortSignal): Promise<void> {
+    assertSignalActive(signal);
     const subscriptions: ISubscriptionMap = Object.fromEntries(
       topics.map(topic => [topic, { qos: 1 }]),
     );
-    await this.runOperation(this.client.subscribeAsync(subscriptions), signal);
+    await this.runOperation(this.client.subscribeAsync(subscriptions));
   }
 
   async publish(
@@ -149,13 +150,13 @@ class MqttJsConnection implements MqttConnection {
     payload: Uint8Array | string,
     signal?: AbortSignal,
   ): Promise<void> {
+    assertSignalActive(signal);
     await this.runOperation(
       this.client.publishAsync(
         topic,
         typeof payload === 'string' ? payload : Buffer.from(payload),
         { qos: 1 },
       ),
-      signal,
     );
   }
 
@@ -166,16 +167,18 @@ class MqttJsConnection implements MqttConnection {
 
   private async runOperation<T>(
     operation: Promise<T>,
-    signal?: AbortSignal,
   ): Promise<T> {
-    if (signal?.aborted === true) {
-      throw new Error('MQTT operation was cancelled');
-    }
     this.pendingOperations.add(operation);
     void operation.then(
       () => this.pendingOperations.delete(operation),
       () => this.pendingOperations.delete(operation),
     );
     return operation;
+  }
+}
+
+function assertSignalActive(signal?: AbortSignal): void {
+  if (signal?.aborted === true) {
+    throw new Error('MQTT operation was cancelled');
   }
 }

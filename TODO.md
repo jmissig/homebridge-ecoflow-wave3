@@ -1,27 +1,259 @@
 # Current
 
-## Now
+Build a narrow, testable Homebridge 2 plugin by porting only the WAVE 3
+knowledge we need from the Home Assistant EcoFlow Cloud integration.
 
-- [ ] Validate login, MQTT subscription, initial state refresh, and reconnect
-  behavior against the household WAVE 3.
-- [ ] Validate each exposed command on hardware before calling it supported:
-  power, cool, heat, auto, target temperature, fan-only, and fan speed.
-- [ ] Capture anonymized binary fixtures for display, runtime, and command
-  acknowledgement messages.
+The implementation order is deliberate:
 
-## Next
+```text
+upstream evidence
+    -> typed WAVE 3 protocol
+    -> fakeable EcoFlow cloud session
+    -> confirmed controller state
+    -> HomeKit climate mapping
+    -> read-only hardware observation
+    -> one-at-a-time command validation
+```
 
-- [ ] Verify the Home app presentation and Siri behavior in an isolated
-  Homebridge child bridge.
-- [ ] Confirm whether EcoFlow permits the app and plugin MQTT connections to
-  remain online simultaneously.
-- [ ] Add explicit command acknowledgement/time-out handling.
-- [ ] Decide how to represent dry mode, condensate-full warning, automatic
-  drainage, and Pet Care without cluttering the primary climate accessory.
+Do not skip from upstream field names directly to live-device writes.
 
-## Later
+## Now — Phase 1: Protocol dossier and port boundary
 
-- [ ] Investigate local MQTT redirection or Bluetooth after cloud-backed
-  control is stable.
-- [ ] Prepare publication metadata and a release only after real-hardware
-  validation.
+- [ ] Pin the exact upstream `tolwi/hassio-ecoflow-cloud` commit used for the
+  first port.
+- [ ] Create a focused protocol note that traces each imported behavior to its
+  upstream file and field:
+  - authentication and regional API hosts
+  - WAVE 3 account discovery and device identification
+  - MQTT credential acquisition and broker options
+  - `/app/...` publish and subscribe topics
+  - WAVE 3 message envelope, command IDs, sequence IDs, and payload transform
+  - display, runtime, and command-acknowledgement messages
+  - power, operating mode, temperature, humidity, fan speed, and submode fields
+- [ ] Separate three confidence levels in the protocol note:
+  - known from upstream code
+  - inferred from upstream behavior or comments
+  - verified against the household WAVE 3
+- [ ] Review the upstream protobuf schema and select the smallest coherent
+  WAVE-3-only subset needed for the first climate slice.
+- [ ] Compare maintained TypeScript protobuf options and choose the smallest
+  toolchain that supports proto3 optional fields and deterministic tests.
+- [ ] Record the upstream commit and copied/adapted files in
+  `THIRD_PARTY_NOTICES.md`; add SPDX and modification notices to derived files.
+- [ ] Replace the empty test harness with a TypeScript-capable unit-test setup
+  before protocol code lands.
+
+**Phase 1 exit:** every field and message planned for the first slice has a
+traceable upstream origin, explicit confidence level, licensing plan, and test
+strategy.
+
+Primary upstream evidence:
+
+- [`wave3.py`](https://github.com/tolwi/hassio-ecoflow-cloud/blob/main/custom_components/ecoflow_cloud/devices/internal/wave3.py)
+- [`wave3.proto`](https://github.com/tolwi/hassio-ecoflow-cloud/blob/main/custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto)
+- [Initial WAVE 3 implementation PR #762](https://github.com/tolwi/hassio-ecoflow-cloud/pull/762)
+
+## Next — Phase 2: Typed WAVE 3 codec and domain state
+
+- [ ] Add the reviewed protobuf subset with Apache-2.0 provenance.
+- [ ] Implement a Homebridge-independent WAVE 3 codec:
+  - decode the outer message envelope
+  - apply the observed payload transform only under the evidenced conditions
+  - decode display, runtime, and command-acknowledgement payloads
+  - encode configuration-write commands with explicit sequence IDs
+- [ ] Define a small normalized `Wave3State` with no Homebridge, MQTT, or raw
+  protobuf types.
+- [ ] Normalize the first-slice state:
+  - sleeping / powered state
+  - operating mode
+  - ambient temperature and humidity
+  - target temperature or automatic temperature range
+  - airflow speed
+  - current submode
+- [ ] Define typed first-slice commands:
+  - power on via `cfg_main_power`
+  - power off via `cfg_sys_pause`
+  - cool, heat, auto, and fan modes
+  - target temperature and automatic upper/lower thresholds
+  - airflow speed
+- [ ] Preserve unknown fields and unsupported messages as bounded diagnostics,
+  not crashes or silently invented state.
+- [ ] Add synthetic fixture tests for envelope routing, payload transforms,
+  state normalization, command encoding, sequence preservation, malformed
+  messages, and unknown command IDs.
+
+**Phase 2 exit:** protocol tests can decode known synthetic messages and encode
+the first command set without importing Homebridge or connecting to EcoFlow.
+
+## Phase 3: Private EcoFlow cloud session
+
+- [ ] Define strict typed plugin configuration and `config.schema.json` fields
+  for account login, region/API host, display name, and optional WAVE 3
+  selection.
+- [ ] Constrain API hosts to reviewed EcoFlow regional endpoints by default;
+  require an explicit advanced override for any other host.
+- [ ] Implement the private HTTPS authentication flow without logging
+  passwords, tokens, authorization headers, or full device identifiers.
+- [ ] Discover account devices and retain only positively identified WAVE 3
+  units; ignore every unrelated EcoFlow product.
+- [ ] Acquire temporary MQTT credentials and connect with TLS verification.
+- [ ] Implement WAVE-3-only topic construction, subscription, initial state
+  refresh, publication, disconnect, and clean shutdown.
+- [ ] Re-subscribe and request current state after every reconnect without
+  duplicating listeners or timers.
+- [ ] Put HTTP and MQTT behind fakeable boundaries.
+- [ ] Test success, invalid credentials, wrong region, no WAVE 3, multiple
+  WAVE 3 units, disconnect, reconnect, subscription failure, refresh failure,
+  and secret redaction without using a live account.
+
+**Phase 3 exit:** a fully fake-backed session can authenticate, select only
+WAVE 3 devices, subscribe, refresh, reconnect, publish bytes, and shut down
+cleanly.
+
+## Phase 4: Confirmed-state controller
+
+- [ ] Build one controller per WAVE 3 around the codec and cloud session.
+- [ ] Merge partial display/runtime messages into immutable normalized state.
+- [ ] Track online, stale, reconnecting, and stopped states explicitly.
+- [ ] Correlate command acknowledgements by sequence ID where the protocol
+  supports it.
+- [ ] Distinguish MQTT publication, broker acknowledgement, WAVE command
+  acknowledgement, and observed device-state confirmation.
+- [ ] Define bounded command timeouts and error results.
+- [ ] Do not make optimistic state the authoritative HomeKit state.
+- [ ] Coalesce or serialize conflicting climate commands so mode and target
+  changes cannot race.
+- [ ] Add deterministic tests for partial updates, stale state, delayed
+  acknowledgements, rejected/unknown acknowledgements, timeouts, reconnect
+  during a command, duplicate messages, and out-of-order state.
+
+**Phase 4 exit:** fake transports demonstrate that commands succeed only under
+the chosen acknowledgement/state-confirmation policy and fail predictably
+otherwise.
+
+## Phase 5: Homebridge platform and primary climate accessory
+
+- [ ] Validate config before starting any account or MQTT work.
+- [ ] Discover/register only WAVE 3 accessories after
+  `didFinishLaunching`.
+- [ ] Use the WAVE 3 serial number or another verified stable identifier for
+  accessory UUID generation while redacting it from logs.
+- [ ] Restore existing cached accessories, update their context safely, and
+  remove stale WAVE-3-only accessories.
+- [ ] Map the controller to one primary `HeaterCooler` service:
+  - `Active`
+  - `CurrentHeaterCoolerState`
+  - `TargetHeaterCoolerState`
+  - `CurrentTemperature`
+  - cooling and heating thresholds
+  - `RotationSpeed` if the five-step mapping remains valid
+- [ ] Keep characteristic getters fast and backed by cached confirmed state.
+- [ ] Push device events asynchronously into HomeKit characteristics.
+- [ ] Surface offline/stale/command-failure state with standard HAP behavior.
+- [ ] Test characteristic-to-command mapping and state-to-characteristic
+  mapping without a live bridge or device.
+- [ ] Test platform cache restoration, duplicate prevention, and stale removal.
+
+**Phase 5 exit:** fake controller tests exercise the complete HomeKit climate
+surface while `npm run verify` remains network- and hardware-independent.
+
+## Phase 6: Read-only household WAVE 3 validation
+
+- [ ] Use an isolated Homebridge 2 child bridge and a dedicated development
+  config/cache.
+- [ ] Validate login, regional host selection, WAVE 3 discovery, MQTT
+  connection, subscription, initial refresh, and clean shutdown.
+- [ ] Observe state only; do not send control commands in the first live run.
+- [ ] Confirm message routing and normalized values for power, mode, ambient
+  temperature, humidity, target settings, and fan speed.
+- [ ] Confirm the EcoFlow app and plugin can remain connected simultaneously.
+- [ ] Exercise disconnect/reconnect and verify subscriptions and refresh
+  recover once.
+- [ ] Capture the smallest useful anonymized binary fixtures for display,
+  runtime, and acknowledgement messages.
+- [ ] Review fixtures and logs for credentials, tokens, full serial numbers,
+  account identifiers, and other identifying payload data before commit.
+
+**Phase 6 exit:** read-only live behavior matches the normalized model,
+reconnect works, fixtures are safely anonymized, and no device command has
+been sent.
+
+## Phase 7: One-command-at-a-time hardware validation
+
+Validate each command in a separate bounded pass. For every item:
+
+1. record pre-command device state
+2. send one command
+3. record MQTT acknowledgement
+4. observe resulting device telemetry and physical behavior
+5. verify HomeKit state does not rubber-band
+6. mark the behavior supported, revise the mapping, or leave it unsupported
+
+- [ ] Power on.
+- [ ] Power off.
+- [ ] Cool mode.
+- [ ] Heat mode.
+- [ ] Auto / heat-cool mode.
+- [ ] Target temperature in cool mode.
+- [ ] Target temperature in heat mode.
+- [ ] Automatic lower and upper temperature thresholds.
+- [ ] Fan-only mode.
+- [ ] Five fan-speed levels.
+- [ ] Reconnect after the device has accepted commands for an extended session.
+- [ ] Confirm whether command acceptance degrades over time and, if so,
+  identify the smallest evidenced refresh or reconnect behavior.
+- [ ] Maintain a supported-controls section that distinguishes tested,
+  partially tested, and unsupported behavior.
+
+**Phase 7 exit:** every control exposed by the primary HomeKit surface has
+repeatable real-device evidence.
+
+## Phase 8: Secondary HomeKit surfaces
+
+Evaluate these only after the primary climate accessory is reliable:
+
+- [ ] Decide whether fan-only belongs solely in `HeaterCooler` behavior or
+  needs one carefully synchronized `Fanv2` companion service.
+- [ ] Decide whether dry mode can be represented honestly with standard
+  HomeKit services and characteristics.
+- [ ] Evaluate ambient humidity as a read-only `HumiditySensor`.
+- [ ] Evaluate battery level and charging state when an add-on battery is
+  actually present.
+- [ ] Evaluate condensate-full warning and drainage state.
+- [ ] Evaluate auto drainage, beeper, display brightness, and presets only
+  when they improve normal household use.
+- [ ] Keep timers, deep diagnostics, Pet Care, charge limits, and unrelated
+  power telemetry out unless a concrete HomeKit use case is approved.
+- [ ] Add hardware evidence and tests for each secondary surface before
+  exposing it.
+
+**Phase 8 exit:** any companion service has a clear Home app purpose, standard
+HomeKit semantics, hardware evidence, and no conflicting controls.
+
+## Phase 9: Child-bridge acceptance and release preparation
+
+- [ ] Verify Home app presentation, naming, room assignment, status updates,
+  and “No Response” behavior.
+- [ ] Verify useful Siri phrases for power, mode, temperature, and fan speed.
+- [ ] Run extended child-bridge testing across broker reconnects, Homebridge
+  restarts, EcoFlow app use, and WAVE 3 power cycles.
+- [ ] Confirm logs remain useful at normal and debug levels without leaking
+  secrets.
+- [ ] Update `README.md` so configuration and supported controls match only
+  what was hardware-validated.
+- [ ] Add installation, troubleshooting, region selection, child-bridge, and
+  private-API risk guidance.
+- [ ] Run `npm run verify` and inspect `npm pack --dry-run`.
+- [ ] Keep the package private until Julian explicitly approves publication.
+- [ ] Prepare versioning, release notes, and npm metadata only after acceptance.
+
+**Phase 9 exit:** the plugin is reviewable as a release candidate; publication
+remains a separate explicit decision.
+
+## Later / explicitly out of the first release
+
+- [ ] Investigate local MQTT redirection only as a separate experiment after
+  cloud-backed control is stable.
+- [ ] Investigate Bluetooth or LAN control only as a separate experiment.
+- [ ] Revisit Matter only if Julian explicitly changes the HAP-only direction.
+- [ ] Do not add other EcoFlow or older WAVE products to this repository.

@@ -13,12 +13,14 @@
         "type": "string",
         "default": "EcoFlow WAVE 3",
         "minLength": 1,
-        "maxLength": 64
+        "maxLength": 64,
+        "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
       },
       "email": {
         "title": "EcoFlow Account Email",
         "type": "string",
-        "format": "email"
+        "format": "email",
+        "maxLength": 320
       },
       "password": {
         "title": "EcoFlow Account Password",
@@ -40,7 +42,13 @@
         "title": "Advanced: Unreviewed API Host Override",
         "description": "Danger: account credentials will be sent to this host. Leave blank unless you have independently verified it.",
         "type": "string",
-        "pattern": "^[A-Za-z0-9.-]+$"
+        "maxLength": 253,
+        "anyOf": [
+          { "maxLength": 0 },
+          {
+            "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+          }
+        ]
       },
       "devices": {
         "title": "WAVE 3 Units",
@@ -55,7 +63,8 @@
               "title": "Display Name",
               "type": "string",
               "minLength": 1,
-              "maxLength": 64
+              "maxLength": 64,
+              "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
             },
             "serialNumber": {
               "title": "WAVE 3 Serial Number",

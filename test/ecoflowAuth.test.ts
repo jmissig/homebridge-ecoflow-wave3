@@ -11,6 +11,7 @@ import type {
   HttpResponse,
   HttpTransport,
 } from '../src/ecoflow/http.js';
+import { prepareHttpRequest } from '../src/ecoflow/http.js';
 
 describe('EcoFlow private authentication', () => {
   it('logs in, requests certification, and parses temporary MQTT credentials', async () => {
@@ -59,11 +60,14 @@ describe('EcoFlow private authentication', () => {
     assert.equal(http.requests.length, 2);
     assert.equal(http.requests[0]?.method, 'POST');
     assert.equal(http.requests[0]?.url.href, 'https://api.ecoflow.com/auth/login');
-    assert.deepEqual(http.requests[0]?.jsonBody, {
-      email: 'owner@example.test',
-      password: Buffer.from('TEST_ACCOUNT_PASSWORD').toString('base64'),
-      scene: 'IOT_APP',
-      userType: 'ECOFLOW',
+    assert.deepEqual(http.requests[0]?.body, {
+      type: 'json',
+      value: {
+        email: 'owner@example.test',
+        password: Buffer.from('TEST_ACCOUNT_PASSWORD').toString('base64'),
+        scene: 'IOT_APP',
+        userType: 'ECOFLOW',
+      },
     });
     assert.equal(http.requests[1]?.method, 'GET');
     assert.equal(
@@ -71,7 +75,20 @@ describe('EcoFlow private authentication', () => {
       'https://api.ecoflow.com/iot-auth/app/certification',
     );
     assert.equal(http.requests[1]?.headers.authorization, 'Bearer TEST_TOKEN');
-    assert.deepEqual(http.requests[1]?.jsonBody, { userId: 'TEST_USER' });
+    assert.deepEqual(http.requests[1]?.body, {
+      type: 'form',
+      fields: { userId: 'TEST_USER' },
+    });
+
+    const certificationRequest = prepareHttpRequest(http.requests[1]!);
+    assert.equal(certificationRequest.method, 'GET');
+    assert.equal(certificationRequest.url.pathname, '/iot-auth/app/certification');
+    assert.equal(
+      certificationRequest.headers['content-type'],
+      'application/x-www-form-urlencoded',
+    );
+    assert.equal(certificationRequest.headers['content-length'], '16');
+    assert.equal(certificationRequest.body?.toString('utf8'), 'userId=TEST_USER');
   });
 
   it('returns bounded errors for invalid credentials and malformed certification', async () => {

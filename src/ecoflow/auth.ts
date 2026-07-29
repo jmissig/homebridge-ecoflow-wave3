@@ -39,11 +39,14 @@ export async function authenticateEcoFlow(
         lang: 'en_US',
         'content-type': 'application/json',
       },
-      jsonBody: {
-        email: config.email,
-        password: Buffer.from(config.password, 'utf8').toString('base64'),
-        scene: 'IOT_APP',
-        userType: 'ECOFLOW',
+      body: {
+        type: 'json',
+        value: {
+          email: config.email,
+          password: Buffer.from(config.password, 'utf8').toString('base64'),
+          scene: 'IOT_APP',
+          userType: 'ECOFLOW',
+        },
       },
     },
     'login',
@@ -60,9 +63,11 @@ export async function authenticateEcoFlow(
       headers: {
         lang: 'en_US',
         authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
       },
-      jsonBody: { userId },
+      body: {
+        type: 'form',
+        fields: { userId },
+      },
     },
     'MQTT certification',
   );

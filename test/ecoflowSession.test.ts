@@ -76,6 +76,7 @@ describe('EcoFlow cloud session', () => {
     await session.stop();
     assert.equal(session.state, 'stopped');
     assert.equal(connection.closeCalls, 1);
+    assert.deepEqual(connection.closeForces, [true]);
     assert.equal(connection.totalListenerCount(), 0);
   });
 
@@ -142,9 +143,11 @@ describe('EcoFlow cloud session', () => {
     connection.emitConnect();
     await flushAsyncWork();
 
-    assert.equal(session.state, 'offline');
+    assert.equal(session.state, 'failed');
     assert.equal(errors.length, 1);
     assert.equal(errors[0]?.message, 'EcoFlow MQTT reconnect setup failed');
+    assert.equal(connection.closeCalls, 1);
+    assert.equal(connection.totalListenerCount(), 0);
     await session.stop();
   });
 
@@ -191,7 +194,145 @@ describe('EcoFlow cloud session', () => {
     }
   });
 
+  it('stops promptly during authentication and closes a connection that arrives late', async () => {
+    const loginGate = new Deferred<HttpResponse>();
+    let requestCount = 0;
+    const http: HttpTransport = {
+      request: async () => {
+        requestCount += 1;
+        return requestCount === 1 ? loginGate.promise : successfulCertification();
+      },
+    };
+    const connection = new FakeMqttConnection();
+    const mqtt = new FakeMqttTransport(connection);
+    const authenticationSession = new EcoFlowCloudSession(testConfig(), http, mqtt);
+    const stoppedAuthenticationStart = authenticationSession.start();
+    await flushAsyncWork();
+    await authenticationSession.stop();
+    loginGate.resolve(successfulLogin());
+    await assert.rejects(stoppedAuthenticationStart, /stopped during startup/);
+
+    const openGate = new Deferred<MqttConnection>();
+    const lateConnection = new FakeMqttConnection();
+    const openSession = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      { open: async () => openGate.promise },
+    );
+    const openStart = openSession.start();
+    await flushAsyncWork();
+    await openSession.stop();
+    openGate.resolve(lateConnection);
+    await assert.rejects(openStart, /stopped during startup/);
+    assert.equal(lateConnection.closeCalls, 1);
+  });
+
+  it('stops promptly during initial subscription, refresh, and reconnect setup', async () => {
+    const subscribeGate = new Deferred<void>();
+    const subscribingConnection = new FakeMqttConnection();
+    subscribingConnection.subscribeGate = subscribeGate;
+    const subscribingSession = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(subscribingConnection),
+    );
+    const subscribingStart = subscribingSession.start();
+    await flushAsyncWork();
+    await subscribingSession.stop();
+    assert.equal(subscribingConnection.closeCalls, 1);
+    subscribeGate.resolve();
+    await assert.rejects(subscribingStart, /stopped during startup/);
+
+    const publishGate = new Deferred<void>();
+    const refreshingConnection = new FakeMqttConnection();
+    refreshingConnection.publishGate = publishGate;
+    const refreshingSession = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(refreshingConnection),
+    );
+    const refreshingStart = refreshingSession.start();
+    await flushAsyncWork();
+    await refreshingSession.stop();
+    assert.equal(refreshingConnection.closeCalls, 1);
+    publishGate.resolve();
+    await assert.rejects(refreshingStart, /stopped during startup/);
+
+    const reconnectGate = new Deferred<void>();
+    const reconnectingConnection = new FakeMqttConnection();
+    const reconnectingSession = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(reconnectingConnection),
+    );
+    await reconnectingSession.start();
+    reconnectingConnection.subscribeGate = reconnectGate;
+    reconnectingConnection.emitDisconnect();
+    reconnectingConnection.emitConnect();
+    await flushAsyncWork();
+    await reconnectingSession.stop();
+    assert.equal(reconnectingConnection.closeCalls, 1);
+    assert.equal(reconnectingSession.state, 'stopped');
+    reconnectGate.resolve();
+    await flushAsyncWork();
+    assert.equal(reconnectingSession.state, 'stopped');
+  });
+
+  it('bounds a hanging force-close operation', async () => {
+    const closeGate = new Deferred<void>();
+    const connection = new FakeMqttConnection();
+    connection.closeGate = closeGate;
+    const logger = new CapturingLogger();
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+      logger,
+      undefined,
+      10,
+    );
+    await session.start();
+    await session.stop();
+    assert.equal(session.state, 'stopped');
+    assert.equal(connection.closeCalls, 1);
+    assert.equal(logger.messages.includes('EcoFlow MQTT connection did not close cleanly'), true);
+    closeGate.resolve();
+  });
+
+  it('bounds hanging subscription and refresh operations', async () => {
+    const subscribeGate = new Deferred<void>();
+    const subscribingConnection = new FakeMqttConnection();
+    subscribingConnection.subscribeGate = subscribeGate;
+    const subscribingSession = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(subscribingConnection),
+      new CapturingLogger(),
+      undefined,
+      10,
+    );
+    await assert.rejects(subscribingSession.start(), /subscription failed/);
+    assert.equal(subscribingConnection.closeCalls, 1);
+    subscribeGate.resolve();
+
+    const publishGate = new Deferred<void>();
+    const refreshingConnection = new FakeMqttConnection();
+    refreshingConnection.publishGate = publishGate;
+    const refreshingSession = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(refreshingConnection),
+      new CapturingLogger(),
+      undefined,
+      10,
+    );
+    await assert.rejects(refreshingSession.start(), /state refresh failed/);
+    assert.equal(refreshingConnection.closeCalls, 1);
+    publishGate.resolve();
+  });
+
   it('builds a clean TLS-verified MQTT.js connection', () => {
+    const leakedDebugArguments: unknown[][] = [];
     const options = buildMqttClientOptions(
       {
         host: 'mqtt.example.test',
@@ -204,11 +345,21 @@ describe('EcoFlow cloud session', () => {
         clean: false,
         keepalive: 60,
         rejectUnauthorized: false,
+        resubscribe: true,
+        log: (...args: unknown[]) => leakedDebugArguments.push(args),
       },
     );
     assert.equal(options.clean, true);
     assert.equal(options.keepalive, 15);
     assert.equal(options.rejectUnauthorized, true);
+    assert.equal(options.resubscribe, false);
+    options.log?.(
+      'TEST_MQTT_ACCOUNT',
+      'TEST_MQTT_PASSWORD',
+      '/app/TEST_USER/TESTWAVE30001/thing/property/set',
+      Uint8Array.of(1, 2, 3),
+    );
+    assert.deepEqual(leakedDebugArguments, []);
   });
 });
 
@@ -241,9 +392,13 @@ class FakeMqttTransport implements MqttTransport {
 class FakeMqttConnection implements MqttConnection {
   public readonly subscribeCalls: string[][] = [];
   public readonly publishCalls: Array<{ topic: string; payload: Uint8Array | string }> = [];
+  public readonly closeForces: Array<boolean | undefined> = [];
   public closeCalls = 0;
   public failSubscribe = false;
   public failPublish = false;
+  public subscribeGate?: Deferred<void>;
+  public publishGate?: Deferred<void>;
+  public closeGate?: Deferred<void>;
   private readonly connectListeners = new Set<() => void>();
   private readonly disconnectListeners = new Set<() => void>();
   private readonly messageListeners = new Set<(message: MqttMessage) => void>();
@@ -265,20 +420,24 @@ class FakeMqttConnection implements MqttConnection {
 
   async subscribe(topics: readonly string[]): Promise<void> {
     this.subscribeCalls.push([...topics]);
+    await this.subscribeGate?.promise;
     if (this.failSubscribe) {
       throw new Error('TEST_MQTT_PASSWORD TESTWAVE30001');
     }
   }
 
   async publish(topic: string, payload: Uint8Array | string): Promise<void> {
+    await this.publishGate?.promise;
     if (this.failPublish) {
       throw new Error('TEST_MQTT_PASSWORD TESTWAVE30001');
     }
     this.publishCalls.push({ topic, payload });
   }
 
-  async close(): Promise<void> {
+  async close(force?: boolean): Promise<void> {
     this.closeCalls += 1;
+    this.closeForces.push(force);
+    await this.closeGate?.promise;
   }
 
   emitConnect(): void {
@@ -369,4 +528,47 @@ function successfulHttp(): FakeHttpTransport {
 async function flushAsyncWork(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
   await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+class Deferred<T> {
+  public readonly promise: Promise<T>;
+  private resolvePromise!: (value: T | PromiseLike<T>) => void;
+
+  constructor() {
+    this.promise = new Promise<T>(resolve => {
+      this.resolvePromise = resolve;
+    });
+  }
+
+  resolve(value?: T): void {
+    this.resolvePromise(value as T);
+  }
+}
+
+function successfulLogin(): HttpResponse {
+  return {
+    status: 200,
+    json: {
+      message: 'Success',
+      data: {
+        token: 'TEST_TOKEN',
+        user: { userId: 'TEST_USER' },
+      },
+    },
+  };
+}
+
+function successfulCertification(): HttpResponse {
+  return {
+    status: 200,
+    json: {
+      message: 'Success',
+      data: {
+        url: 'mqtt.example.test',
+        port: 8883,
+        certificateAccount: 'TEST_MQTT_ACCOUNT',
+        certificatePassword: 'TEST_MQTT_PASSWORD',
+      },
+    },
+  };
 }

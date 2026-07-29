@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+
+import { Ajv } from 'ajv/dist/ajv.js';
 
 import {
   ConfigurationError,
@@ -72,6 +75,46 @@ describe('EcoFlow WAVE 3 configuration', () => {
       /hostname/,
     );
   });
+
+  it('keeps runtime acceptance aligned with the published schema', () => {
+    const schemaDocument = JSON.parse(readFileSync(
+      new URL('../config.schema.json', import.meta.url),
+      'utf8',
+    )) as { schema: object };
+    const ajv = new Ajv({ allErrors: true });
+    ajv.addFormat('email', /^[^\s@]+@[^\s@]+$/);
+    ajv.addFormat('password', true);
+    const validateSchema = ajv.compile(schemaDocument.schema);
+    const cases: Array<{ candidate: Record<string, unknown>; accepted: boolean }> = [
+      { candidate: baseConfig(), accepted: true },
+      { candidate: baseConfig({ email: 'a@' }), accepted: false },
+      { candidate: baseConfig({ name: '   ' }), accepted: false },
+      { candidate: baseConfig({ name: 'Line one\nLine two' }), accepted: false },
+      {
+        candidate: baseConfig({
+          devices: [{ name: 'Bedroom', serialNumber: ' TESTWAVE30001 ' }],
+        }),
+        accepted: false,
+      },
+      {
+        candidate: baseConfig({
+          advancedApiHostOverride: `${'a'.repeat(250)}.test`,
+        }),
+        accepted: false,
+      },
+      { candidate: baseConfig({ advancedApiHostOverride: '.' }), accepted: false },
+      { candidate: baseConfig({ unknownField: true }), accepted: false },
+    ];
+
+    for (const { candidate, accepted } of cases) {
+      const schemaCandidate = { ...candidate };
+      // Homebridge owns the platform discriminator and validates only the
+      // plugin-specific object against config.schema.json.
+      delete schemaCandidate.platform;
+      assert.equal(validateSchema(schemaCandidate), accepted);
+      assert.equal(runtimeAccepts(candidate), accepted);
+    }
+  });
 });
 
 function baseConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -83,4 +126,13 @@ function baseConfig(overrides: Record<string, unknown> = {}): Record<string, unk
     devices: [{ name: 'Bedroom', serialNumber: 'TESTWAVE30001' }],
     ...overrides,
   };
+}
+
+function runtimeAccepts(candidate: Record<string, unknown>): boolean {
+  try {
+    parseEcoFlowWave3Config(candidate);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -48,8 +48,8 @@ No item currently has **Hardware** confidence.
 3. Headers include `lang: en_US` and `content-type: application/json`.
 4. The response supplies `data.token` and `data.user.userId`.
 5. `GET https://{apiHost}/iot-auth/app/certification` uses
-   `Authorization: Bearer {token}` and a JSON request body containing
-   `userId`.
+   `Authorization: Bearer {token}` and an
+   `application/x-www-form-urlencoded` request body containing `userId`.
 6. The certification response supplies:
    - `data.url`
    - `data.port`
@@ -124,6 +124,12 @@ A matching get reply contains `data.online` and `data.quotaMap`.
 - The Homebridge transport should subscribe before publishing the initial
   refresh.
 - Every reconnect should re-subscribe and refresh exactly once.
+- MQTT.js automatic resubscription is disabled because the session owns that
+  ordering. If a reconnect subscription or refresh fails, the session closes
+  the connection and requires replacement instead of leaving a partially
+  initialized live connection.
+- MQTT.js dependency logging is forced to a no-op because its debug packets can
+  contain credentials, full serials, topics, and payload bytes.
 - Topic strings, client IDs, usernames, and full serial numbers are sensitive
   diagnostics and must be redacted.
 

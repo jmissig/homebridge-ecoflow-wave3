@@ -4,7 +4,23 @@ export interface HttpRequest {
   method: 'GET' | 'POST';
   url: URL;
   headers: Readonly<Record<string, string>>;
-  jsonBody?: unknown;
+  body?: HttpRequestBody;
+}
+
+export type HttpRequestBody =
+  | { type: 'json'; value: unknown }
+  | { type: 'form'; fields: Readonly<Record<string, string>> };
+
+export interface EncodedHttpBody {
+  bytes: Buffer;
+  contentType: string;
+}
+
+export interface PreparedHttpRequest {
+  method: HttpRequest['method'];
+  url: URL;
+  headers: Readonly<Record<string, string>>;
+  body?: Buffer;
 }
 
 export interface HttpResponse {
@@ -23,17 +39,12 @@ export class NodeHttpsTransport implements HttpTransport {
   ) {}
 
   async request(request: HttpRequest): Promise<HttpResponse> {
-    const body = request.jsonBody === undefined
-      ? undefined
-      : Buffer.from(JSON.stringify(request.jsonBody), 'utf8');
+    const prepared = prepareHttpRequest(request);
 
     return new Promise<HttpResponse>((resolve, reject) => {
-      const clientRequest = httpsRequest(request.url, {
-        method: request.method,
-        headers: {
-          ...request.headers,
-          ...(body === undefined ? {} : { 'content-length': String(body.length) }),
-        },
+      const clientRequest = httpsRequest(prepared.url, {
+        method: prepared.method,
+        headers: prepared.headers,
         rejectUnauthorized: true,
         timeout: this.timeoutMilliseconds,
       }, response => {
@@ -63,10 +74,42 @@ export class NodeHttpsTransport implements HttpTransport {
 
       clientRequest.on('timeout', () => clientRequest.destroy(new Error('request timed out')));
       clientRequest.on('error', reject);
-      if (body !== undefined) {
-        clientRequest.write(body);
+      if (prepared.body !== undefined) {
+        clientRequest.write(prepared.body);
       }
       clientRequest.end();
     });
   }
+}
+
+export function prepareHttpRequest(request: HttpRequest): PreparedHttpRequest {
+  const body = encodeHttpRequestBody(request.body);
+  return {
+    method: request.method,
+    url: request.url,
+    headers: {
+      ...request.headers,
+      ...(body === undefined ? {} : {
+        'content-type': body.contentType,
+        'content-length': String(body.bytes.length),
+      }),
+    },
+    ...(body === undefined ? {} : { body: body.bytes }),
+  };
+}
+
+export function encodeHttpRequestBody(body: HttpRequestBody | undefined): EncodedHttpBody | undefined {
+  if (body === undefined) {
+    return undefined;
+  }
+  if (body.type === 'json') {
+    return {
+      bytes: Buffer.from(JSON.stringify(body.value), 'utf8'),
+      contentType: 'application/json',
+    };
+  }
+  return {
+    bytes: Buffer.from(new URLSearchParams(body.fields).toString(), 'utf8'),
+    contentType: 'application/x-www-form-urlencoded',
+  };
 }

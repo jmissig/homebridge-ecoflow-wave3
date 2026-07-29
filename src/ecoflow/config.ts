@@ -39,12 +39,13 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
   ]);
 
   const name = requireString(config, 'name', { maxLength: 64 });
-  const email = requireString(config, 'email', { maxLength: 320 });
-  if (!email.includes('@')) {
+  validateDisplayName(name, 'name');
+  const email = requireString(config, 'email', { maxLength: 320, trim: false });
+  if (!/^[^\s@]+@[^\s@]+$/.test(email)) {
     throw new ConfigurationError('email must be a valid account address');
   }
   const password = requireString(config, 'password');
-  const reviewedHost = requireString(config, 'apiHost');
+  const reviewedHost = requireString(config, 'apiHost', { trim: false });
   const advancedOverride = optionalString(config, 'advancedApiHostOverride');
   const apiHost = validateApiHost(reviewedHost, advancedOverride);
 
@@ -57,7 +58,8 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
     const device = requireRecord(candidate, `devices[${index}]`);
     rejectUnknownKeys(device, ['name', 'serialNumber']);
     const deviceName = requireString(device, 'name', { maxLength: 64 });
-    const serialNumber = requireString(device, 'serialNumber', { maxLength: 64 });
+    validateDisplayName(deviceName, `devices[${index}].name`);
+    const serialNumber = requireString(device, 'serialNumber', { maxLength: 64, trim: false });
     if (!/^[A-Za-z0-9_-]{4,64}$/.test(serialNumber)) {
       throw new ConfigurationError(`devices[${index}].serialNumber has an invalid format`);
     }
@@ -96,7 +98,13 @@ function isHostname(value: string): boolean {
   }
   try {
     const url = new URL(`https://${value}`);
-    return url.hostname === value.toLowerCase()
+    const labelsAreValid = value.split('.').every(label => (
+      label.length >= 1
+      && label.length <= 63
+      && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+    ));
+    return labelsAreValid
+      && url.hostname === value.toLowerCase()
       && url.port === ''
       && url.pathname === '/'
       && !url.username
@@ -104,6 +112,12 @@ function isHostname(value: string): boolean {
       && value.includes('.');
   } catch {
     return false;
+  }
+}
+
+function validateDisplayName(value: string, field: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new ConfigurationError(`${field} must be a single line`);
   }
 }
 
@@ -124,7 +138,7 @@ function rejectUnknownKeys(record: Record<string, unknown>, allowed: readonly st
 function requireString(
   record: Record<string, unknown>,
   field: string,
-  options: { maxLength?: number } = {},
+  options: { maxLength?: number; trim?: boolean } = {},
 ): string {
   const value = record[field];
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -133,7 +147,7 @@ function requireString(
   if (options.maxLength !== undefined && value.length > options.maxLength) {
     throw new ConfigurationError(`${field} is too long`);
   }
-  return field === 'password' ? value : value.trim();
+  return field === 'password' || options.trim === false ? value : value.trim();
 }
 
 function optionalString(record: Record<string, unknown>, field: string): string | undefined {
@@ -144,5 +158,8 @@ function optionalString(record: Record<string, unknown>, field: string): string 
   if (typeof value !== 'string') {
     throw new ConfigurationError(`${field} must be a string`);
   }
-  return value.trim();
+  if (value !== value.trim()) {
+    throw new ConfigurationError(`${field} must not contain surrounding whitespace`);
+  }
+  return value;
 }

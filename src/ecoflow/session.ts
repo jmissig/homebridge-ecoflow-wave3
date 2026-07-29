@@ -79,6 +79,7 @@ export class EcoFlowCloudSession {
     private readonly mqtt: MqttTransport,
     private readonly logger: CloudSessionLogger = NOOP_LOGGER,
     private readonly randomHex?: () => string,
+    private readonly operationTimeoutMilliseconds = 15_000,
   ) {}
 
   async start(): Promise<void> {
@@ -88,32 +89,60 @@ export class EcoFlowCloudSession {
     this.state = 'starting';
     this.logger.info('Authenticating with EcoFlow private cloud');
 
+    let authenticated: EcoFlowAuthenticatedSession;
     try {
-      this.authenticated = await authenticateEcoFlow(
+      authenticated = await authenticateEcoFlow(
         this.config,
         this.http,
         this.randomHex,
       );
     } catch {
+      if (this.stopped) {
+        throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
+      }
+      this.authenticated = undefined;
       this.state = 'failed';
       throw new EcoFlowCloudSessionError('EcoFlow private cloud authentication failed');
     }
+    if (this.stopped) {
+      throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
+    }
+    this.authenticated = authenticated;
 
+    let connection: MqttConnection;
     try {
-      this.connection = await this.mqtt.open(this.authenticated.mqtt);
+      connection = await this.mqtt.open(authenticated.mqtt);
     } catch {
+      if (this.stopped) {
+        throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
+      }
+      this.authenticated = undefined;
       this.state = 'failed';
       throw new EcoFlowCloudSessionError('EcoFlow MQTT connection failed');
     }
+    if (this.stopped) {
+      await this.closeWithTimeout(connection);
+      throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
+    }
+    this.connection = connection;
 
-    this.attachConnectionListeners(this.connection);
+    this.attachConnectionListeners(connection);
+    const setup = this.establishSubscriptionsAndRefresh();
+    this.establishPromise = setup;
     try {
-      await this.establishSubscriptionsAndRefresh();
+      await setup;
       this.logger.info('EcoFlow MQTT session is ready');
     } catch (error) {
+      if (this.stopped) {
+        throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
+      }
       this.state = 'failed';
       await this.closeConnectionAfterFailure();
       throw error;
+    } finally {
+      if (this.establishPromise === setup) {
+        this.establishPromise = undefined;
+      }
     }
   }
 
@@ -131,7 +160,10 @@ export class EcoFlowCloudSession {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
     try {
-      await connection.publish(topics.set, payload);
+      await withTimeout(
+        connection.publish(topics.set, payload),
+        this.operationTimeoutMilliseconds,
+      );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow command publication failed');
     }
@@ -141,7 +173,10 @@ export class EcoFlowCloudSession {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
     try {
-      await connection.publish(topics.get, REFRESH_PAYLOAD);
+      await withTimeout(
+        connection.publish(topics.get, REFRESH_PAYLOAD),
+        this.operationTimeoutMilliseconds,
+      );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
     }
@@ -153,16 +188,12 @@ export class EcoFlowCloudSession {
     }
     this.stopped = true;
     this.state = 'stopped';
-    await this.establishPromise?.catch(() => undefined);
     this.detachConnectionListeners();
     const connection = this.connection;
     this.connection = undefined;
+    this.authenticated = undefined;
     if (connection !== undefined) {
-      try {
-        await connection.close();
-      } catch {
-        this.logger.warn('EcoFlow MQTT connection did not close cleanly');
-      }
+      await this.closeWithTimeout(connection);
     }
   }
 
@@ -183,11 +214,22 @@ export class EcoFlowCloudSession {
     if (this.stopped || this.establishPromise !== undefined) {
       return;
     }
-    this.establishPromise = this.establishSubscriptionsAndRefresh()
-      .catch(() => {
+    const setup = this.establishSubscriptionsAndRefresh();
+    this.establishPromise = setup
+      .catch(async () => {
+        if (this.stopped) {
+          return;
+        }
         const error = new EcoFlowCloudSessionError('EcoFlow MQTT reconnect setup failed');
-        this.state = 'offline';
+        this.state = 'failed';
         this.logger.error(error.message);
+        this.detachConnectionListeners();
+        const connection = this.connection;
+        this.connection = undefined;
+        this.authenticated = undefined;
+        if (connection !== undefined) {
+          await this.closeWithTimeout(connection);
+        }
         for (const listener of this.errorListeners) {
           listener(error);
         }
@@ -217,18 +259,27 @@ export class EcoFlowCloudSession {
     ]);
 
     try {
-      await connection.subscribe([...new Set(subscriptionTopics)]);
+      await withTimeout(
+        connection.subscribe([...new Set(subscriptionTopics)]),
+        this.operationTimeoutMilliseconds,
+      );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow MQTT subscription failed');
     }
+    this.assertSetupActive(connection);
 
     try {
       for (const { topics } of topicsByDevice) {
-        await connection.publish(topics.get, REFRESH_PAYLOAD);
+        await withTimeout(
+          connection.publish(topics.get, REFRESH_PAYLOAD),
+          this.operationTimeoutMilliseconds,
+        );
+        this.assertSetupActive(connection);
       }
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
     }
+    this.assertSetupActive(connection);
     this.state = 'online';
   }
 
@@ -279,12 +330,29 @@ export class EcoFlowCloudSession {
 
   private async closeConnectionAfterFailure(): Promise<void> {
     this.detachConnectionListeners();
-    try {
-      await this.connection?.close();
-    } catch {
-      // The primary setup error is more useful and contains no connection secrets.
-    }
+    const connection = this.connection;
     this.connection = undefined;
+    this.authenticated = undefined;
+    if (connection !== undefined) {
+      await this.closeWithTimeout(connection);
+    }
+  }
+
+  private assertSetupActive(connection: MqttConnection): void {
+    if (this.stopped || this.connection !== connection) {
+      throw new EcoFlowCloudSessionError('EcoFlow MQTT setup was cancelled');
+    }
+  }
+
+  private async closeWithTimeout(connection: MqttConnection): Promise<void> {
+    try {
+      await withTimeout(
+        connection.close(true),
+        this.operationTimeoutMilliseconds,
+      );
+    } catch {
+      this.logger.warn('EcoFlow MQTT connection did not close cleanly');
+    }
   }
 }
 
@@ -312,4 +380,22 @@ function inboundKindForTopic(
     return 'getReply';
   }
   return undefined;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('operation timed out')),
+      timeoutMilliseconds,
+    );
+    timer.unref();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
 }

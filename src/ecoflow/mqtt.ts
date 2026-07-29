@@ -18,12 +18,14 @@ export interface MqttConnection {
   onMessage(listener: (message: MqttMessage) => void): () => void;
   subscribe(topics: readonly string[]): Promise<void>;
   publish(topic: string, payload: Uint8Array | string): Promise<void>;
-  close(): Promise<void>;
+  close(force?: boolean): Promise<void>;
 }
 
 export interface MqttTransport {
   open(credentials: EcoFlowMqttCredentials): Promise<MqttConnection>;
 }
+
+const NOOP_MQTT_LOG = (): void => undefined;
 
 export class MqttJsTransport implements MqttTransport {
   constructor(
@@ -51,8 +53,10 @@ export function buildMqttClientOptions(
     clean: true,
     keepalive: 15,
     rejectUnauthorized: true,
+    resubscribe: false,
     reconnectPeriod: 1_000,
     connectTimeout: 15_000,
+    log: NOOP_MQTT_LOG,
   };
 }
 
@@ -92,7 +96,7 @@ class MqttJsConnection implements MqttConnection {
     );
   }
 
-  async close(): Promise<void> {
-    await this.client.endAsync();
+  async close(force = false): Promise<void> {
+    await this.client.endAsync(force);
   }
 }

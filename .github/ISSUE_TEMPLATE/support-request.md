@@ -15,14 +15,18 @@ assignees: ''
 **Logs:**
 
 ```
-Show the Homebridge logs here, remove any sensitive information.
+Paste only the smallest relevant, sanitized Homebridge log excerpt.
 ```
 
 **Plugin Config:**
 
 ```json
-Show your Homebridge config.json here, remove any sensitive information.
+Paste only this plugin's sanitized configuration if it is necessary.
 ```
+
+Before submitting, remove account email/password, bearer tokens, MQTT
+usernames/passwords, client IDs, full device serial numbers, `/app/...` topics,
+and raw or decoded payloads. Replace them with obvious placeholders.
 
 **Screenshots:**
 <!-- If applicable, add screenshots to help explain your problem. -->

@@ -1,3 +1,5 @@
+import { randomInt } from 'node:crypto';
+
 import {
   authenticateEcoFlow,
   type EcoFlowAuthenticatedSession,
@@ -9,13 +11,6 @@ import type {
   MqttMessage,
   MqttTransport,
 } from './mqtt.js';
-
-const REFRESH_PAYLOAD = JSON.stringify({
-  version: '1.1',
-  moduleType: 0,
-  operateType: 'latestQuotas',
-  params: {},
-});
 
 export interface Wave3Topics {
   property: string;
@@ -69,8 +64,11 @@ export class EcoFlowCloudSession {
   private readonly errorListeners = new Set<(error: EcoFlowCloudSessionError) => void>();
   private detachListeners: Array<() => void> = [];
   private establishPromise?: Promise<void>;
-  private startupController?: AbortController;
+  private lifecycleController?: AbortController;
+  private setupGenerationController?: AbortController;
   private startupPromise?: Promise<void>;
+  private connectionGeneration = 0;
+  private mqttConnected = false;
   private stopped = false;
 
   public state: CloudSessionState = 'idle';
@@ -82,6 +80,7 @@ export class EcoFlowCloudSession {
     private readonly logger: CloudSessionLogger = NOOP_LOGGER,
     private readonly randomHex?: () => string,
     private readonly operationTimeoutMilliseconds = 15_000,
+    private readonly refreshRequestId: () => string = defaultRefreshRequestId,
   ) {}
 
   async start(): Promise<void> {
@@ -92,15 +91,12 @@ export class EcoFlowCloudSession {
     this.logger.info('Authenticating with EcoFlow private cloud');
 
     const controller = new AbortController();
-    this.startupController = controller;
+    this.lifecycleController = controller;
     const startup = this.startSession(controller);
     this.startupPromise = startup;
     try {
       await startup;
     } finally {
-      if (this.startupController === controller) {
-        this.startupController = undefined;
-      }
       if (this.startupPromise === startup) {
         this.startupPromise = undefined;
       }
@@ -153,9 +149,10 @@ export class EcoFlowCloudSession {
       throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
     }
     this.connection = connection;
+    this.mqttConnected = true;
 
     this.attachConnectionListeners(connection);
-    const setup = this.establishSubscriptionsAndRefresh(controller.signal);
+    const setup = this.establishLatestConnectionGeneration(controller.signal);
     this.establishPromise = setup;
     try {
       await setup;
@@ -202,7 +199,7 @@ export class EcoFlowCloudSession {
     const topics = this.topicsForConfiguredDevice(serialNumber);
     try {
       await withTimeout(
-        connection.publish(topics.get, REFRESH_PAYLOAD),
+        connection.publish(topics.get, this.buildRefreshPayload()),
         this.operationTimeoutMilliseconds,
       );
     } catch {
@@ -216,32 +213,46 @@ export class EcoFlowCloudSession {
     }
     this.stopped = true;
     this.state = 'stopped';
-    this.startupController?.abort();
+    this.lifecycleController?.abort();
+    this.setupGenerationController?.abort();
     this.detachConnectionListeners();
     const connection = this.connection;
     this.connection = undefined;
+    this.mqttConnected = false;
     this.authenticated = undefined;
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
+    const establish = this.establishPromise;
     const startup = this.startupPromise;
-    if (startup !== undefined) {
+    for (const operation of new Set([
+      ...(startup === undefined ? [] : [startup]),
+      ...(establish === undefined ? [] : [establish]),
+    ])) {
       try {
         await withTimeout(
-          startup.catch(() => undefined),
+          operation.catch(() => undefined),
           this.operationTimeoutMilliseconds,
         );
       } catch {
-        this.logger.warn('EcoFlow cloud startup did not stop cleanly');
+        this.logger.warn('EcoFlow cloud setup did not stop cleanly');
       }
     }
+    this.lifecycleController = undefined;
+    this.setupGenerationController = undefined;
   }
 
   private attachConnectionListeners(connection: MqttConnection): void {
     this.detachListeners = [
-      connection.onConnect(() => this.scheduleReconnectSetup()),
+      connection.onConnect(() => {
+        this.mqttConnected = true;
+        this.connectionGeneration += 1;
+        this.setupGenerationController?.abort();
+        this.scheduleReconnectSetup();
+      }),
       connection.onDisconnect(() => {
         if (!this.stopped) {
+          this.mqttConnected = false;
           this.state = 'offline';
           this.logger.warn('EcoFlow MQTT connection was interrupted');
         }
@@ -254,7 +265,11 @@ export class EcoFlowCloudSession {
     if (this.stopped || this.establishPromise !== undefined) {
       return;
     }
-    const setup = this.establishSubscriptionsAndRefresh();
+    const signal = this.lifecycleController?.signal;
+    if (signal === undefined) {
+      return;
+    }
+    const setup = this.establishLatestConnectionGeneration(signal);
     this.establishPromise = setup
       .catch(async () => {
         if (this.stopped) {
@@ -266,6 +281,7 @@ export class EcoFlowCloudSession {
         this.detachConnectionListeners();
         const connection = this.connection;
         this.connection = undefined;
+        this.mqttConnected = false;
         this.authenticated = undefined;
         if (connection !== undefined) {
           await this.closeWithTimeout(connection);
@@ -279,7 +295,40 @@ export class EcoFlowCloudSession {
       });
   }
 
-  private async establishSubscriptionsAndRefresh(signal?: AbortSignal): Promise<void> {
+  private async establishLatestConnectionGeneration(
+    lifecycleSignal: AbortSignal,
+  ): Promise<void> {
+    while (!this.stopped) {
+      const generation = this.connectionGeneration;
+      const generationController = new AbortController();
+      this.setupGenerationController = generationController;
+      const signal = AbortSignal.any([
+        lifecycleSignal,
+        generationController.signal,
+      ]);
+      try {
+        await this.establishSubscriptionsAndRefresh(generation, signal);
+        return;
+      } catch (error) {
+        if (!this.stopped
+          && !lifecycleSignal.aborted
+          && generation !== this.connectionGeneration) {
+          continue;
+        }
+        throw error;
+      } finally {
+        if (this.setupGenerationController === generationController) {
+          this.setupGenerationController = undefined;
+        }
+      }
+    }
+    throw new EcoFlowCloudSessionError('EcoFlow MQTT setup was cancelled');
+  }
+
+  private async establishSubscriptionsAndRefresh(
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<void> {
     const connection = this.connection;
     const authenticated = this.authenticated;
     if (connection === undefined || authenticated === undefined || this.stopped) {
@@ -299,27 +348,29 @@ export class EcoFlowCloudSession {
     ]);
 
     try {
-      await this.runSetupOperation(
+      await withSignalAndTimeout(
         connection.subscribe([...new Set(subscriptionTopics)]),
         signal,
+        this.operationTimeoutMilliseconds,
       );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow MQTT subscription failed');
     }
-    this.assertSetupActive(connection);
+    this.assertSetupActive(connection, generation);
 
     try {
       for (const { topics } of topicsByDevice) {
-        await this.runSetupOperation(
-          connection.publish(topics.get, REFRESH_PAYLOAD),
+        await withSignalAndTimeout(
+          connection.publish(topics.get, this.buildRefreshPayload()),
           signal,
+          this.operationTimeoutMilliseconds,
         );
-        this.assertSetupActive(connection);
+        this.assertSetupActive(connection, generation);
       }
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
     }
-    this.assertSetupActive(connection);
+    this.assertSetupActive(connection, generation);
     this.state = 'online';
   }
 
@@ -346,7 +397,10 @@ export class EcoFlowCloudSession {
   }
 
   private requireOnlineConnection(): MqttConnection {
-    if (this.connection === undefined || this.state !== 'online' || this.stopped) {
+    if (this.connection === undefined
+      || !this.mqttConnected
+      || this.state !== 'online'
+      || this.stopped) {
       throw new EcoFlowCloudSessionError('EcoFlow MQTT session is not online');
     }
     return this.connection;
@@ -372,14 +426,18 @@ export class EcoFlowCloudSession {
     this.detachConnectionListeners();
     const connection = this.connection;
     this.connection = undefined;
+    this.mqttConnected = false;
     this.authenticated = undefined;
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
   }
 
-  private assertSetupActive(connection: MqttConnection): void {
-    if (this.stopped || this.connection !== connection) {
+  private assertSetupActive(connection: MqttConnection, generation: number): void {
+    if (this.stopped
+      || this.connection !== connection
+      || !this.mqttConnected
+      || generation !== this.connectionGeneration) {
       throw new EcoFlowCloudSessionError('EcoFlow MQTT setup was cancelled');
     }
   }
@@ -395,18 +453,15 @@ export class EcoFlowCloudSession {
     }
   }
 
-  private async runSetupOperation<T>(
-    operation: Promise<T>,
-    signal?: AbortSignal,
-  ): Promise<T> {
-    if (signal === undefined) {
-      return withTimeout(operation, this.operationTimeoutMilliseconds);
-    }
-    return withSignalAndTimeout(
-      operation,
-      signal,
-      this.operationTimeoutMilliseconds,
-    );
+  private buildRefreshPayload(): string {
+    return JSON.stringify({
+      from: 'HomeAssistant',
+      id: this.refreshRequestId(),
+      version: '1.1',
+      moduleType: 0,
+      operateType: 'latestQuotas',
+      params: {},
+    });
   }
 }
 
@@ -459,23 +514,34 @@ async function withAbortAndTimeout<T>(
   controller: AbortController,
   timeoutMilliseconds: number,
 ): Promise<T> {
+  const timeoutMarker = Symbol('timeout');
   let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new Error('operation timed out'));
-    }, timeoutMilliseconds);
+  const timeout = new Promise<typeof timeoutMarker>(resolve => {
+    timer = setTimeout(() => resolve(timeoutMarker), timeoutMilliseconds);
     timer.unref();
   });
-  const aborted = rejectWhenAborted(controller.signal);
   try {
-    return await Promise.race([promise, timeout, aborted.promise]);
+    const outcome = await Promise.race([promise, timeout]);
+    if (outcome !== timeoutMarker) {
+      return outcome;
+    }
+    controller.abort();
+    try {
+      await withTimeout(promise, timeoutMilliseconds);
+    } catch {
+      // The original operation owns cleanup after cancellation. Shutdown is
+      // still bounded if an external adapter violates that contract.
+    }
+    throw new Error('operation timed out');
   } finally {
-    aborted.detach();
     if (timer !== undefined) {
       clearTimeout(timer);
     }
   }
+}
+
+function defaultRefreshRequestId(): string {
+  return String(randomInt(999_910_000, 1_000_000_000));
 }
 
 async function withSignalAndTimeout<T>(

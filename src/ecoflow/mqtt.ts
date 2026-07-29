@@ -59,8 +59,10 @@ export class MqttJsTransport implements MqttTransport {
         }
         settled = true;
         cleanup();
-        void client.endAsync(true).catch(() => undefined);
-        reject(error);
+        void client.endAsync(true).then(
+          () => reject(error),
+          () => reject(error),
+        );
       }
       function handleConnect(): void {
         if (settled) {

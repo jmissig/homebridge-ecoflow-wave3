@@ -21,6 +21,7 @@ Files used as evidence:
 | `custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto` | Message and field-number schema | `75c47794f1470d2b5887af7440ee0a193c3a20662c44b76cfd3051b7956d7cae` |
 | `custom_components/ecoflow_cloud/api/private_api.py` | Private login, MQTT certification, client ID, app topics | `8d9aee9176f7b46f3c0090e863b2265dd5bf7ae63437c80b0eccc7faac8a5467` |
 | `custom_components/ecoflow_cloud/api/ecoflow_mqtt.py` | MQTT TLS, keepalive, QoS, subscription lifecycle | `3afa6ddbedb5163b0959f9af40425c6ab97b73943b288abce3d743ea820995a4` |
+| `custom_components/ecoflow_cloud/api/message.py` | Private JSON command envelope and request ID | `907bbf2249c73a92c6dd82705d50bb9a3efdf6b3688d7fa09d8658b87be13fd7` |
 | `custom_components/ecoflow_cloud/devices/__init__.py` | Topic routing and `latestQuotas` refresh | `57284591d01b545dc99013264893719b78afc8581eb62813cdae05bec67dcb27` |
 
 The initial WAVE 3 contribution and discussion are preserved in
@@ -111,6 +112,8 @@ The initial refresh is JSON published to the property-get topic:
 
 ```json
 {
+  "from": "HomeAssistant",
+  "id": "<per-request numeric string>",
   "version": "1.1",
   "moduleType": 0,
   "operateType": "latestQuotas",

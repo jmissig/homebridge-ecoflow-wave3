@@ -23,6 +23,8 @@ import {
 } from '../src/ecoflow/session.js';
 
 const EXPECTED_REFRESH_PAYLOAD = JSON.stringify({
+  from: 'HomeAssistant',
+  id: '999910001',
   version: '1.1',
   moduleType: 0,
   operateType: 'latestQuotas',
@@ -34,7 +36,16 @@ describe('EcoFlow cloud session', () => {
     const http = successfulHttp();
     const connection = new FakeMqttConnection();
     const mqtt = new FakeMqttTransport(connection);
-    const session = new EcoFlowCloudSession(testConfig(), http, mqtt);
+    const requestIds = sequentialRequestIds();
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      http,
+      mqtt,
+      undefined,
+      undefined,
+      15_000,
+      requestIds,
+    );
     const messages: Wave3InboundMessage[] = [];
     session.onMessage(message => messages.push(message));
 
@@ -53,6 +64,10 @@ describe('EcoFlow cloud session', () => {
     assert.equal(connection.publishCalls.length, 2);
     assert.equal(connection.publishCalls[0]?.topic.endsWith('/thing/property/get'), true);
     assert.equal(connection.publishCalls[0]?.payload, EXPECTED_REFRESH_PAYLOAD);
+    assert.equal(
+      connection.publishCalls[1]?.payload,
+      EXPECTED_REFRESH_PAYLOAD.replace('999910001', '999910002'),
+    );
 
     const propertyTopic = buildWave3Topics('TEST_USER', 'TESTWAVE30002').property;
     connection.emitMessage({ topic: propertyTopic, payload: Uint8Array.of(1, 2) });
@@ -71,6 +86,11 @@ describe('EcoFlow cloud session', () => {
       session.publishCommand('UNCONFIGURED', Uint8Array.of()),
       /not configured/,
     );
+    await session.requestState('TESTWAVE30001');
+    assert.equal(
+      connection.publishCalls.at(-1)?.payload,
+      EXPECTED_REFRESH_PAYLOAD.replace('999910001', '999910003'),
+    );
 
     await session.stop();
     await session.stop();
@@ -80,7 +100,7 @@ describe('EcoFlow cloud session', () => {
     assert.equal(connection.totalListenerCount(), 0);
   });
 
-  it('re-subscribes and refreshes exactly once per reconnect without duplicating listeners', async () => {
+  it('re-subscribes and refreshes once for every clean-session connection generation', async () => {
     const connection = new FakeMqttConnection();
     const session = new EcoFlowCloudSession(
       testConfig(),
@@ -97,9 +117,37 @@ describe('EcoFlow cloud session', () => {
     await flushAsyncWork();
 
     assert.equal(session.state, 'online');
-    assert.equal(connection.subscribeCalls.length, 2);
+    assert.equal(connection.subscribeCalls.length, 3);
+    // The intermediate generation is superseded before refresh; only the
+    // initial and latest clean sessions complete the full refresh cycle.
     assert.equal(connection.publishCalls.length, 4);
     assert.equal(connection.totalListenerCount(), 3);
+    await session.stop();
+  });
+
+  it('restarts setup for a new clean-session generation during an in-flight refresh', async () => {
+    const refreshGate = new Deferred<void>();
+    const connection = new FakeMqttConnection();
+    connection.publishGate = refreshGate;
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+    );
+    const start = session.start();
+    await flushAsyncWork();
+    assert.equal(connection.subscribeCalls.length, 1);
+
+    connection.emitDisconnect();
+    connection.emitConnect();
+    await flushAsyncWork();
+
+    assert.equal(connection.subscribeCalls.length, 2);
+    assert.notEqual(session.state, 'online');
+    refreshGate.resolve();
+    await start;
+    assert.equal(session.state, 'online');
+    assert.equal(connection.subscribeCalls.length, 2);
     await session.stop();
   });
 
@@ -196,7 +244,7 @@ describe('EcoFlow cloud session', () => {
 
   it('cancels never-resolving authentication and MQTT open operations', async () => {
     const http: HttpTransport = {
-      request: async () => new Promise<HttpResponse>(() => undefined),
+      request: async (_request, signal) => neverUntilAborted(signal),
     };
     const authenticationSession = new EcoFlowCloudSession(
       testConfig(),
@@ -214,7 +262,7 @@ describe('EcoFlow cloud session', () => {
     const openSession = new EcoFlowCloudSession(
       testConfig(),
       successfulHttp(),
-      { open: async () => new Promise<MqttConnection>(() => undefined) },
+      { open: async (_credentials, signal) => neverUntilAborted(signal) },
       new CapturingLogger(),
       undefined,
       1_000,
@@ -268,11 +316,8 @@ describe('EcoFlow cloud session', () => {
     reconnectingConnection.emitDisconnect();
     reconnectingConnection.emitConnect();
     await flushAsyncWork();
-    await reconnectingSession.stop();
+    await completesWithin(reconnectingSession.stop(), 100);
     assert.equal(reconnectingConnection.closeCalls, 1);
-    assert.equal(reconnectingSession.state, 'stopped');
-    reconnectGate.resolve();
-    await flushAsyncWork();
     assert.equal(reconnectingSession.state, 'stopped');
   });
 
@@ -536,6 +581,25 @@ async function completesWithin(promise: Promise<void>, milliseconds: number): Pr
       setTimeout(() => reject(new Error('operation did not complete promptly')), milliseconds);
     }),
   ]);
+}
+
+function neverUntilAborted<T>(signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((_resolve, reject) => {
+    if (signal?.aborted === true) {
+      reject(new Error('operation cancelled'));
+      return;
+    }
+    signal?.addEventListener(
+      'abort',
+      () => reject(new Error('operation cancelled')),
+      { once: true },
+    );
+  });
+}
+
+function sequentialRequestIds(): () => string {
+  let next = 999_910_001;
+  return () => String(next++);
 }
 
 class Deferred<T> {

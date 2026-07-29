@@ -231,6 +231,46 @@ describe('EcoFlow cloud session', () => {
     }
   });
 
+  it('joins public-publish failure cleanup when stop is called concurrently', async () => {
+    const connection = new FakeMqttConnection();
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+      new CapturingLogger(),
+      undefined,
+      1_000,
+    );
+    await session.start();
+    connection.failPublish = true;
+    const closeGate = new Deferred<void>();
+    connection.closeGate = closeGate;
+
+    let publishSettled = false;
+    const publishing = session.publishCommand(
+      'TESTWAVE30001',
+      Uint8Array.of(8),
+    ).finally(() => {
+      publishSettled = true;
+    });
+    await flushAsyncWork();
+    assert.equal(connection.closeCalls, 1);
+
+    let stopSettled = false;
+    const stopping = session.stop().then(() => {
+      stopSettled = true;
+    });
+    await flushAsyncWork();
+    assert.equal(stopSettled, false);
+    assert.equal(publishSettled, false);
+
+    closeGate.resolve();
+    await assert.rejects(publishing, /publication failed/);
+    await stopping;
+    assert.equal(stopSettled, true);
+    assert.equal(session.state, 'stopped');
+  });
+
   it('surfaces bounded subscription and refresh failures and closes the connection', async () => {
     const subscriptionFailure = new FakeMqttConnection();
     subscriptionFailure.failSubscribe = true;

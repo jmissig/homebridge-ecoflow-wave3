@@ -73,6 +73,7 @@ export class EcoFlowCloudSession {
   private mqttConnected = false;
   private stopped = false;
   private stopPromise?: Promise<void>;
+  private connectionFailurePromise?: Promise<void>;
 
   public state: CloudSessionState = 'idle';
 
@@ -236,9 +237,11 @@ export class EcoFlowCloudSession {
     await this.drainOperationsSafely([...this.activeOperations]);
     const establish = this.establishPromise;
     const startup = this.startupPromise;
+    const connectionFailure = this.connectionFailurePromise;
     for (const operation of new Set([
       ...(startup === undefined ? [] : [startup]),
       ...(establish === undefined ? [] : [establish]),
+      ...(connectionFailure === undefined ? [] : [connectionFailure]),
     ])) {
       try {
         await withTimeout(
@@ -520,12 +523,23 @@ export class EcoFlowCloudSession {
     }
   }
 
-  private async failConnectionAfterPublicOperation(
+  private failConnectionAfterPublicOperation(
     expectedConnection: MqttConnection,
   ): Promise<void> {
     if (this.stopped || this.connection !== expectedConnection) {
-      return;
+      return this.connectionFailurePromise ?? Promise.resolve();
     }
+    if (this.connectionFailurePromise === undefined) {
+      this.connectionFailurePromise = this.performConnectionFailureCleanup(
+        expectedConnection,
+      );
+    }
+    return this.connectionFailurePromise;
+  }
+
+  private async performConnectionFailureCleanup(
+    expectedConnection: MqttConnection,
+  ): Promise<void> {
     this.state = 'failed';
     this.detachConnectionListeners();
     this.connection = undefined;

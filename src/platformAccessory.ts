@@ -66,6 +66,10 @@ export class Wave3PlatformAccessory {
       this.platform.Characteristic.TargetHeaterCoolerState,
     );
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
+      .setCharacteristic(
+        this.platform.Characteristic.Name,
+        this.accessory.displayName,
+      )
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'EcoFlow')
       .setCharacteristic(this.platform.Characteristic.Model, 'WAVE 3')
       .setCharacteristic(
@@ -78,7 +82,12 @@ export class Wave3PlatformAccessory {
         this.platform.Service.HeaterCooler,
         this.accessory.displayName,
       );
+    this.heaterCoolerService.setCharacteristic(
+      this.platform.Characteristic.Name,
+      this.accessory.displayName,
+    );
 
+    this.configureWritableRanges();
     this.bindCharacteristics();
     this.detachSnapshot = controller.onSnapshot(snapshot => {
       this.snapshot = snapshot;
@@ -135,20 +144,24 @@ export class Wave3PlatformAccessory {
       'rotationSpeed',
       value => ({ type: 'airflowSpeed', speed: airflowSpeed(Number(value)) }),
     );
+    this.bindReadOnly(characteristic.CurrentHeaterCoolerState, 'currentState');
+    this.bindReadOnly(characteristic.CurrentTemperature, 'currentTemperature');
+  }
+
+  private configureWritableRanges(): void {
+    const characteristic = this.platform.Characteristic;
     for (const threshold of [
       characteristic.CoolingThresholdTemperature,
       characteristic.HeatingThresholdTemperature,
     ]) {
-      this.heaterCoolerService
-        .getCharacteristic(threshold)
-        .setProps({ minValue: 16, maxValue: 30, minStep: 0.1 });
+      const instance = this.heaterCoolerService.getCharacteristic(threshold);
+      instance.updateValue(16);
+      instance.setProps({ minValue: 16, maxValue: 30, minStep: 1 });
     }
-    this.heaterCoolerService
-      .getCharacteristic(characteristic.RotationSpeed)
-      .setProps({ minValue: 20, maxValue: 100, minStep: 20 });
-
-    this.bindReadOnly(characteristic.CurrentHeaterCoolerState, 'currentState');
-    this.bindReadOnly(characteristic.CurrentTemperature, 'currentTemperature');
+    const rotationSpeed = this.heaterCoolerService
+      .getCharacteristic(characteristic.RotationSpeed);
+    rotationSpeed.updateValue(20);
+    rotationSpeed.setProps({ minValue: 20, maxValue: 100, minStep: 20 });
   }
 
   private bind(
@@ -438,8 +451,8 @@ function thresholdCommand(
 }
 
 function validateTemperature(celsius: number): void {
-  if (!Number.isFinite(celsius) || celsius < 16 || celsius > 30) {
-    throw new RangeError('temperature must be from 16 through 30 degrees Celsius');
+  if (!Number.isInteger(celsius) || celsius < 16 || celsius > 30) {
+    throw new RangeError('temperature must be a whole degree from 16 through 30 Celsius');
   }
 }
 

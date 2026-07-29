@@ -4,6 +4,7 @@ import type {
   Wave3InboundMessage,
 } from '../ecoflow/session.js';
 import {
+  decodeWave3QuotaReply,
   decodeWave3Message,
   encodeWave3Command,
   mergeWave3DisplayUpdate,
@@ -72,6 +73,8 @@ export class Wave3Controller {
   private lastRuntimeSequence?: number;
   private nextSequence: number;
   private stopped = false;
+  private hasCurrentGenerationState = false;
+  private deviceReportedOnline?: boolean;
 
   public snapshot: Wave3ControllerSnapshot;
 
@@ -137,7 +140,7 @@ export class Wave3Controller {
     if (this.stopped || this.session.state === 'stopped') {
       return { status: 'failed', sequence, reason: 'stopped' };
     }
-    if (this.session.state !== 'online') {
+    if (this.session.state !== 'online' || this.snapshot.availability !== 'online') {
       return { status: 'failed', sequence, reason: 'disconnected' };
     }
     if (this.activePublications.size > 0) {
@@ -204,19 +207,23 @@ export class Wave3Controller {
     if (this.stopped || message.serialNumber !== this.serialNumber) {
       return;
     }
+    if (message.kind === 'getReply') {
+      this.handleQuotaReply(message.payload);
+      return;
+    }
     const decoded = decodeWave3Message(message.payload);
-    if (decoded.kind === 'display') {
+    if (message.kind === 'property' && decoded.kind === 'display') {
       if (!isNewerSequence(decoded.sequence, this.lastDisplaySequence)) {
         return;
       }
       this.lastDisplaySequence = decoded.sequence;
       this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
       this.displayRevision += 1;
-      this.markFresh();
+      this.markStateFresh();
       this.confirmPendingFromObservedState(decoded.update);
       return;
     }
-    if (decoded.kind === 'runtime') {
+    if (message.kind === 'property' && decoded.kind === 'runtime') {
       if (!isNewerSequence(decoded.sequence, this.lastRuntimeSequence)) {
         return;
       }
@@ -225,12 +232,36 @@ export class Wave3Controller {
         ...this.runtimeTemperatures,
         ...decoded.temperatures,
       };
-      this.markFresh();
+      this.updateFreshnessForOnlineSession();
       return;
     }
-    if (decoded.kind === 'acknowledgement') {
+    if (message.kind === 'setReply' && decoded.kind === 'acknowledgement') {
       this.handleAcknowledgement(decoded.sequence, decoded.acknowledgement);
     }
+  }
+
+  private handleQuotaReply(payload: Uint8Array): void {
+    const decoded = decodeWave3QuotaReply(payload);
+    if (decoded.kind === 'malformed') {
+      return;
+    }
+    this.deviceReportedOnline = decoded.deviceOnline;
+    if (!decoded.deviceOnline) {
+      this.hasCurrentGenerationState = false;
+      this.cancelStaleTimer?.();
+      this.cancelStaleTimer = undefined;
+      this.settlePending('disconnected');
+      this.updateSnapshot('offline');
+      return;
+    }
+    if (decoded.update === undefined || !hasDisplayEvidence(decoded.update)) {
+      this.updateFreshnessForOnlineSession();
+      return;
+    }
+    this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
+    this.displayRevision += 1;
+    this.markStateFresh();
+    this.confirmPendingFromObservedState(decoded.update);
   }
 
   private handleAcknowledgement(
@@ -301,6 +332,8 @@ export class Wave3Controller {
     if (state === 'offline' || state === 'starting') {
       this.cancelStaleTimer?.();
       this.cancelStaleTimer = undefined;
+      this.hasCurrentGenerationState = false;
+      this.deviceReportedOnline = undefined;
       this.lastDisplaySequence = undefined;
       this.lastRuntimeSequence = undefined;
       if (this.pending?.publicationCompleted !== false) {
@@ -310,6 +343,8 @@ export class Wave3Controller {
       return;
     }
     if (state === 'failed') {
+      this.hasCurrentGenerationState = false;
+      this.deviceReportedOnline = undefined;
       if (this.pending?.publicationCompleted !== false) {
         this.settlePending('disconnected');
       }
@@ -332,7 +367,9 @@ export class Wave3Controller {
     }
   }
 
-  private markFresh(): void {
+  private markStateFresh(): void {
+    this.hasCurrentGenerationState = true;
+    this.deviceReportedOnline = true;
     this.updatedAt = this.now();
     this.updateFreshnessForOnlineSession();
   }
@@ -340,7 +377,13 @@ export class Wave3Controller {
   private updateFreshnessForOnlineSession(): void {
     this.cancelStaleTimer?.();
     this.cancelStaleTimer = undefined;
-    if (this.session.state !== 'online' || this.updatedAt === undefined) {
+    if (this.session.state === 'online' && this.deviceReportedOnline === false) {
+      this.updateSnapshot('offline');
+      return;
+    }
+    if (this.session.state !== 'online'
+      || !this.hasCurrentGenerationState
+      || this.updatedAt === undefined) {
       this.updateSnapshot(this.session.state === 'online' ? 'stale' : 'reconnecting');
       return;
     }
@@ -478,6 +521,14 @@ function updateProvidesCommandEvidence(
   case 'submode':
     return parameters?.submode !== undefined;
   }
+}
+
+function hasDisplayEvidence(update: Wave3DisplayUpdate): boolean {
+  return update.sleepState !== undefined
+    || update.operatingModeId !== undefined
+    || update.ambientTemperatureCelsius !== undefined
+    || update.ambientHumidityPercent !== undefined
+    || Object.keys(update.modeParameters).length > 0;
 }
 
 function closeEnough(actual: number | undefined, expected: number): boolean {

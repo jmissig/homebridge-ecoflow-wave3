@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  Accessory,
+  AccessoryEventTypes,
   Characteristic,
   HAPStatus,
   HapStatusError,
   Service,
+  uuid,
   type WithUUID,
 } from '@homebridge/hap-nodejs';
 import type {
@@ -234,7 +237,7 @@ describe('WAVE 3 HomeKit accessory', () => {
     ]);
   });
 
-  it('advertises exact WAVE temperature and airflow constraints', async () => {
+  it('advertises upstream-backed WAVE temperature and airflow constraints', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
       mode: 'heat',
@@ -254,11 +257,11 @@ describe('WAVE 3 HomeKit accessory', () => {
     const rotation = service.getCharacteristic(Characteristic.RotationSpeed);
     assert.deepEqual(
       pickRange(heating.props),
-      { minValue: 16, maxValue: 30, minStep: 0.1 },
+      { minValue: 16, maxValue: 30, minStep: 1 },
     );
     assert.deepEqual(
       pickRange(cooling.props),
-      { minValue: 16, maxValue: 30, minStep: 0.1 },
+      { minValue: 16, maxValue: 30, minStep: 1 },
     );
     assert.deepEqual(
       pickRange(rotation.props),
@@ -279,6 +282,13 @@ describe('WAVE 3 HomeKit accessory', () => {
       true,
     );
     assert.equal(invalidTemperature, HAPStatus.INVALID_VALUE_IN_REQUEST);
+    const invalidFraction = await setCharacteristicError(
+      service,
+      Characteristic.HeatingThresholdTemperature,
+      22.5,
+      true,
+    );
+    assert.equal(invalidFraction, HAPStatus.INVALID_VALUE_IN_REQUEST);
 
     const invalidAirflow = await setCharacteristicError(
       service,
@@ -290,6 +300,49 @@ describe('WAVE 3 HomeKit accessory', () => {
     assert.deepEqual(controller.commands.slice(-1), [
       { type: 'targetTemperature', celsius: 30 },
     ]);
+  });
+
+  it('reconciles restored HAP names without characteristic-range warnings', () => {
+    const accessory = new Accessory(
+      'Configured WAVE 3',
+      uuid.generate('restored-wave3-name'),
+    );
+    Object.assign(accessory, {
+      context: {
+        schemaVersion: 1,
+        serialNumber: 'SERIALRESTORED',
+      } satisfies Wave3AccessoryContext,
+    });
+    accessory.getService(Service.AccessoryInformation)!
+      .setCharacteristic(Characteristic.Name, 'Old Accessory Name');
+    const heaterCooler = accessory.addService(Service.HeaterCooler, 'Old Service Name');
+    heaterCooler.setCharacteristic(Characteristic.Name, 'Old Service Name');
+    const warnings: unknown[] = [];
+    accessory.on(AccessoryEventTypes.CHARACTERISTIC_WARNING, warning => {
+      warnings.push(warning);
+    });
+
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      new FakeController(snapshot({
+        powered: true,
+        mode: 'heat',
+        targetTemperatureCelsius: 30,
+        airflowSpeed: 100,
+      })),
+    );
+
+    assert.equal(
+      accessory.getService(Service.AccessoryInformation)!
+        .getCharacteristic(Characteristic.Name).value,
+      'Configured WAVE 3',
+    );
+    assert.equal(
+      heaterCooler.getCharacteristic(Characteristic.Name).value,
+      'Configured WAVE 3',
+    );
+    assert.deepEqual(warnings, []);
   });
 
   it('rejects thresholds outside their confirmed operating mode and recovers the write queue', async () => {

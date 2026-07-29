@@ -133,6 +133,11 @@ A matching get reply contains `data.online` and `data.quotaMap`.
 - The first slice retains the pinned client's five-topic subscription shape;
   narrowing it to inbound-only topics requires broker or hardware evidence.
 - Every reconnect should re-subscribe and refresh exactly once.
+- MQTT setup completing means only that the cloud transport is ready. The
+  controller remains stale and rejects writes until current-generation WAVE 3
+  climate evidence arrives. A valid `latestQuotas` get reply supplies that
+  evidence; `data.online == 0` makes the device unavailable, and malformed
+  replies do not revive cached pre-reconnect state.
 - MQTT.js automatic resubscription is disabled because the session owns that
   ordering. If a reconnect subscription or refresh fails, the session closes
   the connection and requires replacement instead of leaving a partially
@@ -221,6 +226,9 @@ Operating modes used upstream:
 | 5 | Heat/cool automatic |
 
 Airflow steps used upstream are 20, 40, 60, 80, and 100.
+The pinned climate entity advertises a 16–30 °C target range with a 1 °C
+target step. This is upstream evidence, not household-hardware verification;
+finer target precision remains deferred to Phase 7.
 Submodes used upstream are normal `0`, boost `2`, sleep `3`, and eco `4`.
 
 **Inference**

@@ -13,6 +13,7 @@ import {
 } from '../src/proto/gen/ecoflow/wave3/v1/wave3_pb.js';
 import {
   decodeWave3Message,
+  decodeWave3QuotaReply,
   encodeWave3Command,
   mergeWave3DisplayUpdate,
   transformWave3Payload,
@@ -154,6 +155,84 @@ describe('WAVE 3 codec', () => {
     }
   });
 
+  it('strictly decodes latest-quota JSON into a merge-safe display update', () => {
+    const decoded = decodeWave3QuotaReply(jsonBytes({
+      operateType: 'latestQuotas',
+      data: {
+        online: '1',
+        quotaMap: {
+          dev_sleep_state: 0,
+          wave_operating_mode: 5,
+          temp_ambient: 23,
+          humi_ambient: 48,
+          current_temp_lower: 19,
+          current_temp_upper: 25,
+          current_airflow_speed: 60,
+          current_submode: 3,
+        },
+      },
+    }));
+    assert.deepEqual(decoded, {
+      kind: 'quota',
+      deviceOnline: true,
+      update: {
+        sleepState: 0,
+        operatingModeId: 5,
+        ambientTemperatureCelsius: 23,
+        ambientHumidityPercent: 48,
+        modeParameters: {
+          5: {
+            targetTemperatureLowerCelsius: 19,
+            targetTemperatureUpperCelsius: 25,
+            airflowSpeed: 60,
+            submode: 3,
+          },
+        },
+      },
+    });
+    if (decoded.kind === 'quota' && decoded.update !== undefined) {
+      assert.deepEqual(mergeWave3DisplayUpdate(undefined, decoded.update).state, {
+        sleeping: false,
+        powered: true,
+        mode: 'auto',
+        ambientTemperatureCelsius: 23,
+        ambientHumidityPercent: 48,
+        targetTemperatureLowerCelsius: 19,
+        targetTemperatureUpperCelsius: 25,
+        airflowSpeed: 60,
+        submode: 3,
+      });
+    }
+
+    assert.deepEqual(decodeWave3QuotaReply(jsonBytes({
+      operateType: 'latestQuotas',
+      data: { online: 0 },
+    })), {
+      kind: 'quota',
+      deviceOnline: false,
+    });
+    assert.equal(
+      decodeWave3QuotaReply(jsonBytes({
+        operateType: 'latestQuotas',
+        data: {
+          online: 1,
+          quotaMap: { temp_ambient: '23' },
+        },
+      })).kind,
+      'malformed',
+    );
+    assert.equal(
+      decodeWave3QuotaReply(jsonBytes({
+        operateType: 'latestQuotas',
+        data: {
+          online: 1,
+          quotaMap: { temp_ambient: 23 },
+        },
+      })).kind,
+      'malformed',
+    );
+  });
+
   it('reports configOk without conflating action ID and envelope sequence', () => {
     for (const [configOk, expected] of [
       [true, true],
@@ -249,6 +328,10 @@ describe('WAVE 3 codec', () => {
     assert.throws(
       () => encodeWave3Command('TEST', 20, { type: 'targetTemperature', celsius: 31 }),
       /temperature/,
+    );
+    assert.throws(
+      () => encodeWave3Command('TEST', 20, { type: 'targetTemperature', celsius: 22.5 }),
+      /whole degree/,
     );
     assert.throws(
       () => encodeWave3Command('TEST', 20, {
@@ -402,6 +485,10 @@ function envelope(
 
 function hexToBytes(hex: string): Uint8Array {
   return Uint8Array.from(Buffer.from(hex, 'hex'));
+}
+
+function jsonBytes(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
 }
 
 function bytesToHex(bytes: Uint8Array): string {

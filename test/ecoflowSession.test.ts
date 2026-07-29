@@ -21,6 +21,7 @@ import {
   type CloudSessionLogger,
   type Wave3InboundMessage,
 } from '../src/ecoflow/session.js';
+import { Wave3Controller } from '../src/wave3/controller.js';
 
 const EXPECTED_REFRESH_PAYLOAD = JSON.stringify({
   from: 'HomeAssistant',
@@ -102,6 +103,58 @@ describe('EcoFlow cloud session', () => {
     assert.equal(connection.closeCalls, 1);
     assert.deepEqual(connection.closeForces, [true]);
     assert.equal(connection.totalListenerCount(), 0);
+  });
+
+  it('keeps a controller stale until a routed quota reply proves current device state', async () => {
+    const connection = new FakeMqttConnection();
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+    );
+    const controller = new Wave3Controller('TESTWAVE30001', session);
+
+    await session.start();
+    assert.equal(session.state, 'online');
+    assert.equal(controller.snapshot.availability, 'stale');
+
+    const getReply = buildWave3Topics('TEST_USER', 'TESTWAVE30001').getReply;
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        operateType: 'latestQuotas',
+        data: {
+          online: 1,
+          quotaMap: {
+            dev_sleep_state: 0,
+            wave_operating_mode: 1,
+            temp_ambient: 24,
+            current_temp_set: 22,
+          },
+        },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 22);
+
+    connection.emitDisconnect();
+    assert.equal(controller.snapshot.availability, 'reconnecting');
+    connection.emitConnect();
+    await flushAsyncWork();
+    assert.equal(session.state, 'online');
+    assert.equal(controller.snapshot.availability, 'stale');
+
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        operateType: 'latestQuotas',
+        data: { online: 0 },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'offline');
+
+    controller.stop();
+    await session.stop();
   });
 
   it('re-subscribes and refreshes once for every clean-session connection generation', async () => {
@@ -729,6 +782,10 @@ function successfulHttp(): FakeHttpTransport {
 async function flushAsyncWork(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
   await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+function jsonBytes(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
 }
 
 async function completesWithin(promise: Promise<void>, milliseconds: number): Promise<void> {

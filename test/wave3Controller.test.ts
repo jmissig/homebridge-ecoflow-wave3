@@ -93,10 +93,63 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.runtimeTemperatures.condenserCelsius, 41);
   });
 
+  it('requires current-generation climate evidence and honors quota availability', async () => {
+    const session = new FakeControllerSession();
+    const controller = new Wave3Controller(TEST_SERIAL, session);
+    assert.equal(controller.snapshot.availability, 'stale');
+
+    session.emitPacket('getReply', quotaReply({
+      online: 1,
+      quotaMap: {
+        dev_sleep_state: 0,
+        wave_operating_mode: 1,
+        temp_ambient: 24,
+        current_temp_set: 22,
+        current_airflow_speed: 60,
+      },
+    }));
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.deepEqual(controller.snapshot.state, {
+      sleeping: false,
+      powered: true,
+      mode: 'cool',
+      ambientTemperatureCelsius: 24,
+      targetTemperatureCelsius: 22,
+      airflowSpeed: 60,
+    });
+
+    session.emitState('offline');
+    session.emitState('online');
+    assert.equal(controller.snapshot.availability, 'stale');
+    session.emitPacket('property', runtimePacket(1, { condenser: 40 }));
+    assert.equal(controller.snapshot.availability, 'stale');
+    session.emitPacket('getReply', new TextEncoder().encode('{broken'));
+    assert.equal(controller.snapshot.availability, 'stale');
+    assert.deepEqual(
+      await controller.execute({ type: 'power', on: false }),
+      { status: 'failed', sequence: 10, reason: 'disconnected' },
+    );
+
+    session.emitPacket('getReply', quotaReply({ online: 0 }));
+    assert.equal(controller.snapshot.availability, 'offline');
+
+    session.emitPacket('getReply', quotaReply({
+      online: true,
+      quotaMap: {
+        dev_sleep_state: 0,
+        wave_operating_mode: 2,
+        current_temp_set: 23,
+      },
+    }));
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.state.mode, 'heat');
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 23);
+  });
+
   it('requires a matching positive acknowledgement and later observed state', async () => {
     const session = new FakeControllerSession();
     const clock = new FakeClock();
-    const controller = new Wave3Controller(TEST_SERIAL, session, {
+    const controller = readyController(session, {
       schedule: clock.schedule,
       initialSequence: 40,
     });
@@ -108,7 +161,7 @@ describe('WAVE 3 controller', () => {
     });
     await flushAsyncWork();
     assert.equal(session.publishCalls.length, 1);
-    assert.deepEqual(controller.snapshot.state, {});
+    assert.equal(controller.snapshot.state.mode, 'cool');
 
     session.emitPacket('property', displayPacket(100, { mode: 2 }));
     session.emitPacket('setReply', acknowledgementPacket(41, {
@@ -141,7 +194,7 @@ describe('WAVE 3 controller', () => {
     const session = new FakeControllerSession();
     const publicationGate = new Deferred<void>();
     session.publishGate = publicationGate;
-    const controller = new Wave3Controller(TEST_SERIAL, session, {
+    const controller = readyController(session, {
       initialSequence: 45,
     });
     const result = controller.execute({ type: 'mode', mode: 'heat' });
@@ -167,7 +220,7 @@ describe('WAVE 3 controller', () => {
     const session = new FakeControllerSession();
     const publicationGate = new Deferred<void>();
     session.publishGate = publicationGate;
-    const controller = new Wave3Controller(TEST_SERIAL, session, {
+    const controller = readyController(session, {
       initialSequence: 48,
     });
     let settled = false;
@@ -195,7 +248,7 @@ describe('WAVE 3 controller', () => {
 
   it('rejects contradictory same-sequence acknowledgements without overriding publication failure', async () => {
     const publishedSession = new FakeControllerSession();
-    const publishedController = new Wave3Controller(TEST_SERIAL, publishedSession, {
+    const publishedController = readyController(publishedSession, {
       initialSequence: 49,
     });
     const publishedResult = publishedController.execute({
@@ -220,7 +273,7 @@ describe('WAVE 3 controller', () => {
     const earlySession = new FakeControllerSession();
     const earlyGate = new Deferred<void>();
     earlySession.publishGate = earlyGate;
-    const earlyController = new Wave3Controller(TEST_SERIAL, earlySession, {
+    const earlyController = readyController(earlySession, {
       initialSequence: 51,
     });
     const earlyResult = earlyController.execute({ type: 'airflowSpeed', speed: 60 });
@@ -247,7 +300,7 @@ describe('WAVE 3 controller', () => {
     const failedSession = new FakeControllerSession();
     const failedGate = new Deferred<void>();
     failedSession.publishGate = failedGate;
-    const failedController = new Wave3Controller(TEST_SERIAL, failedSession, {
+    const failedController = readyController(failedSession, {
       initialSequence: 52,
     });
     const failedResult = failedController.execute({ type: 'airflowSpeed', speed: 60 });
@@ -275,7 +328,7 @@ describe('WAVE 3 controller', () => {
 
   it('ignores semantically identical duplicate acknowledgements', async () => {
     const session = new FakeControllerSession();
-    const controller = new Wave3Controller(TEST_SERIAL, session, {
+    const controller = readyController(session, {
       initialSequence: 53,
     });
     const result = controller.execute({ type: 'airflowSpeed', speed: 80 });
@@ -371,7 +424,7 @@ describe('WAVE 3 controller', () => {
       { configOk: true, airflowSpeed: 80 },
     ]) {
       const session = new FakeControllerSession();
-      const controller = new Wave3Controller(TEST_SERIAL, session, {
+      const controller = readyController(session, {
         initialSequence: 50,
       });
       const result = controller.execute({ type: 'airflowSpeed', speed: 60 });
@@ -443,7 +496,7 @@ describe('WAVE 3 controller', () => {
 
     for (const { command, acknowledgement, display } of cases) {
       const session = new FakeControllerSession();
-      const controller = new Wave3Controller(TEST_SERIAL, session, {
+      const controller = readyController(session, {
         initialSequence: 90,
       });
       const result = controller.execute(command);
@@ -458,7 +511,7 @@ describe('WAVE 3 controller', () => {
   it('serializes conflicting commands and times out without optimistic state', async () => {
     const session = new FakeControllerSession();
     const clock = new FakeClock();
-    const controller = new Wave3Controller(TEST_SERIAL, session, {
+    const controller = readyController(session, {
       schedule: clock.schedule,
       commandTimeoutMilliseconds: 100,
       initialSequence: 60,
@@ -493,7 +546,7 @@ describe('WAVE 3 controller', () => {
     const timeoutSession = new FakeControllerSession();
     timeoutSession.publishGate = new Deferred<void>();
     const clock = new FakeClock();
-    const timeoutController = new Wave3Controller(TEST_SERIAL, timeoutSession, {
+    const timeoutController = readyController(timeoutSession, {
       schedule: clock.schedule,
       commandTimeoutMilliseconds: 100,
       initialSequence: 65,
@@ -515,6 +568,7 @@ describe('WAVE 3 controller', () => {
     );
     timeoutSession.publishGate = undefined;
     timeoutSession.emitState('online');
+    timeoutSession.emitPacket('property', displayPacket(204, { mode: 1 }));
     const recovered = timeoutController.execute({ type: 'airflowSpeed', speed: 40 });
     await flushAsyncWork();
     timeoutSession.emitPacket('setReply', acknowledgementPacket(67, {
@@ -529,7 +583,7 @@ describe('WAVE 3 controller', () => {
 
     const stopSession = new FakeControllerSession();
     stopSession.publishGate = new Deferred<void>();
-    const stopController = new Wave3Controller(TEST_SERIAL, stopSession, {
+    const stopController = readyController(stopSession, {
       initialSequence: 75,
     });
     const stopped = stopController.execute({ type: 'power', on: true });
@@ -547,7 +601,7 @@ describe('WAVE 3 controller', () => {
   it('fails commands predictably on publication, disconnect, and stop', async () => {
     const publicationSession = new FakeControllerSession();
     publicationSession.failPublish = true;
-    const publicationController = new Wave3Controller(TEST_SERIAL, publicationSession, {
+    const publicationController = readyController(publicationSession, {
       initialSequence: 70,
     });
     assert.deepEqual(
@@ -556,7 +610,7 @@ describe('WAVE 3 controller', () => {
     );
 
     const disconnectedSession = new FakeControllerSession();
-    const disconnectedController = new Wave3Controller(TEST_SERIAL, disconnectedSession, {
+    const disconnectedController = readyController(disconnectedSession, {
       initialSequence: 80,
     });
     const disconnected = disconnectedController.execute({ type: 'power', on: false });
@@ -662,6 +716,16 @@ class FakeControllerSession implements Wave3ControllerSession {
       + this.errorListeners.size
       + this.stateListeners.size;
   }
+}
+
+function readyController(
+  session: FakeControllerSession,
+  options: ConstructorParameters<typeof Wave3Controller>[2] = {},
+): Wave3Controller {
+  const controller = new Wave3Controller(TEST_SERIAL, session, options);
+  session.emitPacket('property', displayPacket(0, { mode: 1 }));
+  assert.equal(controller.snapshot.availability, 'online');
+  return controller;
 }
 
 async function waitForGate(
@@ -808,6 +872,13 @@ function runtimePacket(
     sequence,
     toBinary(Wave3RuntimePropertyUploadSchema, runtime),
   );
+}
+
+function quotaReply(data: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({
+    operateType: 'latestQuotas',
+    data,
+  }));
 }
 
 function envelope(commandId: number, sequence: number, payload: Uint8Array): Uint8Array {

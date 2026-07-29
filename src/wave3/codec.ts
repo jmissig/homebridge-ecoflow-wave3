@@ -84,6 +84,19 @@ export interface EncodedWave3Command {
   bytes: Uint8Array;
 }
 
+export type DecodedWave3QuotaReply =
+  | {
+    kind: 'quota';
+    deviceOnline: boolean;
+    update?: Wave3DisplayUpdate;
+  }
+  | {
+    kind: 'malformed';
+    reason: string;
+  };
+
+const MAX_QUOTA_REPLY_BYTES = 64 * 1024;
+
 export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
   try {
     const message = fromBinary(Wave3SetMessageSchema, bytes);
@@ -165,6 +178,103 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
     return { kind: 'unknown', diagnostic };
   } catch (error) {
     return malformed(bytes.length, boundedErrorReason(error));
+  }
+}
+
+export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply {
+  if (bytes.length > MAX_QUOTA_REPLY_BYTES) {
+    return { kind: 'malformed', reason: 'quota reply exceeds size limit' };
+  }
+  try {
+    const parsed: unknown = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+    );
+    const message = requireRecord(parsed, 'quota reply');
+    if (message.operateType !== 'latestQuotas') {
+      return { kind: 'malformed', reason: 'unexpected quota reply operation' };
+    }
+    const data = requireRecord(message.data, 'quota reply data');
+    const deviceOnline = parseOnlineValue(data.online);
+    if (!deviceOnline) {
+      return { kind: 'quota', deviceOnline: false };
+    }
+
+    const quotaMap = requireRecord(data.quotaMap, 'quota map');
+    const update: Wave3DisplayUpdate = { modeParameters: {} };
+    assignQuotaNumber(quotaMap, 'dev_sleep_state', update, 'sleepState');
+    assignQuotaNumber(quotaMap, 'wave_operating_mode', update, 'operatingModeId');
+    assignQuotaNumber(
+      quotaMap,
+      'temp_ambient',
+      update,
+      'ambientTemperatureCelsius',
+    );
+    assignQuotaNumber(
+      quotaMap,
+      'humi_ambient',
+      update,
+      'ambientHumidityPercent',
+    );
+    if (update.sleepState !== undefined && update.sleepState !== 0 && update.sleepState !== 1) {
+      throw new TypeError('quota sleep state is unsupported');
+    }
+    if (update.operatingModeId !== undefined
+      && (!Number.isInteger(update.operatingModeId)
+        || !WAVE3_MODE_BY_ID.has(update.operatingModeId))) {
+      throw new TypeError('quota operating mode is unsupported');
+    }
+    if (update.operatingModeId === undefined) {
+      throw new TypeError('quota reply lacks operating mode');
+    }
+
+    const parameters: Wave3ModeParameters = {};
+    assignQuotaNumber(
+      quotaMap,
+      'current_temp_set',
+      parameters,
+      'targetTemperatureCelsius',
+    );
+    assignQuotaNumber(
+      quotaMap,
+      'current_temp_lower',
+      parameters,
+      'targetTemperatureLowerCelsius',
+    );
+    assignQuotaNumber(
+      quotaMap,
+      'current_temp_upper',
+      parameters,
+      'targetTemperatureUpperCelsius',
+    );
+    assignQuotaNumber(quotaMap, 'current_airflow_speed', parameters, 'airflowSpeed');
+    assignQuotaNumber(quotaMap, 'current_submode', parameters, 'submode');
+    for (const temperature of [
+      parameters.targetTemperatureCelsius,
+      parameters.targetTemperatureLowerCelsius,
+      parameters.targetTemperatureUpperCelsius,
+    ]) {
+      if (temperature !== undefined
+        && (!Number.isInteger(temperature) || temperature < 16 || temperature > 30)) {
+        throw new TypeError('quota target temperature is unsupported');
+      }
+    }
+    if (parameters.airflowSpeed !== undefined
+      && ![20, 40, 60, 80, 100].includes(parameters.airflowSpeed)) {
+      throw new TypeError('quota airflow speed is unsupported');
+    }
+    if (parameters.submode !== undefined
+      && ![0, 2, 3, 4].includes(parameters.submode)) {
+      throw new TypeError('quota submode is unsupported');
+    }
+    if (Object.values(parameters).some(value => value !== undefined)) {
+      (update.modeParameters as Record<number, Wave3ModeParameters>)[
+        update.operatingModeId
+      ] = parameters;
+    }
+
+    return { kind: 'quota', deviceOnline: true, update };
+  } catch (error) {
+    return { kind: 'malformed', reason: boundedQuotaErrorReason(error) };
   }
 }
 
@@ -548,6 +658,52 @@ function boundedErrorReason(error: unknown): string {
   return error.name === 'RangeError' ? 'truncated protobuf message' : 'invalid protobuf message';
 }
 
+function boundedQuotaErrorReason(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'invalid quota reply';
+  }
+  if (error instanceof TypeError && error.message.length <= 80) {
+    return error.message;
+  }
+  return 'invalid quota reply';
+}
+
+function requireRecord(value: unknown, name: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(`${name} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseOnlineValue(value: unknown): boolean {
+  if (value === true || value === 1 || value === '1') {
+    return true;
+  }
+  if (value === false || value === 0 || value === '0') {
+    return false;
+  }
+  throw new TypeError('quota online flag is invalid');
+}
+
+function assignQuotaNumber<
+  Output extends object,
+  Key extends keyof Output,
+>(
+  record: Record<string, unknown>,
+  sourceKey: string,
+  output: Output,
+  outputKey: Key,
+): void {
+  const value = record[sourceKey];
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TypeError(`quota field ${sourceKey} must be a finite number`);
+  }
+  output[outputKey] = value as Output[Key];
+}
+
 function validateDeviceSerial(deviceSerial: string): void {
   if (deviceSerial.trim().length === 0) {
     throw new TypeError('device serial must not be empty');
@@ -561,7 +717,7 @@ function validateSequence(sequence: number): void {
 }
 
 function validateTemperature(celsius: number): void {
-  if (!Number.isFinite(celsius) || celsius < 16 || celsius > 30) {
-    throw new RangeError('temperature must be from 16 through 30 degrees Celsius');
+  if (!Number.isInteger(celsius) || celsius < 16 || celsius > 30) {
+    throw new RangeError('temperature must be a whole degree from 16 through 30 Celsius');
   }
 }

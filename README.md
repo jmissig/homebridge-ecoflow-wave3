@@ -4,22 +4,15 @@ A focused Homebridge plugin for controlling the EcoFlow WAVE 3 through HomeKit.
 
 ## Status
 
-The first cloud-backed plugin slice is implemented and passes its local
-build, lint, and protocol tests. It has not yet been validated against a real
-WAVE 3, so it should be treated as pre-release software.
+The repository currently contains the Homebridge 2 plugin baseline and a
+pinned protocol dossier. EcoFlow authentication, MQTT, protobuf handling,
+device control, and working HomeKit characteristics are not implemented yet.
 
-Implemented HomeKit services:
+The planned first slice is one primary `HeaterCooler` accessory for a
+user-configured WAVE 3. Nothing is considered hardware-supported until it has
+been validated against the household unit.
 
-- A primary `HeaterCooler` with power, cool/heat/auto mode, current
-  temperature, temperature thresholds, and five-step fan speed
-- A companion fan service for fan-only operation
-- Ambient humidity
-- Add-on battery level and charging state
-
-The plugin uses EcoFlow's private app API and MQTT broker. Fully local MQTT or
-Bluetooth control remains a possible later investigation.
-
-## Install from source
+## Development
 
 Until the plugin is published, install it from this checkout:
 
@@ -31,31 +24,16 @@ npm run verify
 npm link
 ```
 
-Then link it into the Node installation used by Homebridge, or use
-Homebridge UI's development/plugin installation workflow. Run it in a child
-bridge while the hardware support is being validated.
+The current package is deliberately private and inert. `npm link` and live
+Homebridge use are not useful until the protocol and controller phases are
+implemented.
 
 ## Configuration
 
-```json
-{
-  "platforms": [
-    {
-      "platform": "EcoFlowWave3",
-      "name": "Guest Bedroom WAVE 3",
-      "email": "ecoflow-account@example.com",
-      "password": "your-ecoflow-password",
-      "serialNumber": "YOUR-WAVE-3-SERIAL",
-      "apiHost": "api.ecoflow.com"
-    }
-  ]
-}
-```
-
-The account must already have the WAVE 3 paired in the official EcoFlow app.
-Credentials are sent only to the configured EcoFlow API host, but Homebridge
-stores plugin configuration as plain JSON; protect the Homebridge host and its
-backups accordingly.
+The final configuration schema has not been implemented. Current upstream
+evidence does not provide private-API device discovery, so the first working
+configuration is expected to require an explicit WAVE 3 serial number in
+addition to EcoFlow account credentials and region.
 
 ## What we know
 
@@ -97,19 +75,18 @@ can keep that boundary explicit and avoid carrying unrelated device support.
    carefully chosen companion services where HomeKit lacks a natural
    characteristic.
 
-The first HomeKit surface includes:
+The planned first HomeKit surface includes:
 
 - Active/inactive state
 - Current and target temperature
 - Cooling, heating, and automatic operation
 - Current operating state
 - Fan speed
-- Ambient humidity and battery state
 
-Secondary settings such as automatic drainage, beeper, display brightness, and
-Pet Care—and fault or condensate-level indication—should not distort the
-primary climate accessory. They can be added as optional companion services
-after the core behavior is reliable.
+Secondary settings such as humidity, battery state, automatic drainage,
+beeper, display brightness, Pet Care, faults, and condensate level should not
+distort the primary climate accessory. They can be evaluated only after the
+core behavior is reliable.
 
 ## Development approach
 
@@ -130,8 +107,9 @@ The main protocol reference is
 particularly its WAVE 3 implementation and `wave3.proto`. The repository is
 licensed under Apache License 2.0.
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and
-licensing details.
+See [docs/protocol.md](docs/protocol.md) for the pinned evidence boundary and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and licensing
+details.
 
 ## License
 

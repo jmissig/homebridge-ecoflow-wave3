@@ -19,9 +19,9 @@ Do not skip from upstream field names directly to live-device writes.
 
 ## Now — Phase 1: Protocol dossier and port boundary
 
-- [ ] Pin the exact upstream `tolwi/hassio-ecoflow-cloud` commit used for the
+- [x] Pin the exact upstream `tolwi/hassio-ecoflow-cloud` commit used for the
   first port.
-- [ ] Create a focused protocol note that traces each imported behavior to its
+- [x] Create a focused protocol note that traces each imported behavior to its
   upstream file and field:
   - authentication and regional API hosts
   - WAVE 3 account discovery and device identification
@@ -30,17 +30,17 @@ Do not skip from upstream field names directly to live-device writes.
   - WAVE 3 message envelope, command IDs, sequence IDs, and payload transform
   - display, runtime, and command-acknowledgement messages
   - power, operating mode, temperature, humidity, fan speed, and submode fields
-- [ ] Separate three confidence levels in the protocol note:
+- [x] Separate three confidence levels in the protocol note:
   - known from upstream code
   - inferred from upstream behavior or comments
   - verified against the household WAVE 3
-- [ ] Review the upstream protobuf schema and select the smallest coherent
+- [x] Review the upstream protobuf schema and select the smallest coherent
   WAVE-3-only subset needed for the first climate slice.
-- [ ] Compare maintained TypeScript protobuf options and choose the smallest
+- [x] Compare maintained TypeScript protobuf options and choose the smallest
   toolchain that supports proto3 optional fields and deterministic tests.
-- [ ] Record the upstream commit and copied/adapted files in
+- [x] Record the upstream commit and copied/adapted files in
   `THIRD_PARTY_NOTICES.md`; add SPDX and modification notices to derived files.
-- [ ] Replace the empty test harness with a TypeScript-capable unit-test setup
+- [x] Replace the empty test harness with a TypeScript-capable unit-test setup
   before protocol code lands.
 
 **Phase 1 exit:** every field and message planned for the first slice has a

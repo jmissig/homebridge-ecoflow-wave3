@@ -1,5 +1,5 @@
 import {
-  connectAsync,
+  connect,
   type IClientOptions,
   type ISubscriptionMap,
   type MqttClient,
@@ -22,31 +22,79 @@ export interface MqttConnection {
 }
 
 export interface MqttTransport {
-  open(credentials: EcoFlowMqttCredentials): Promise<MqttConnection>;
+  open(
+    credentials: EcoFlowMqttCredentials,
+    signal?: AbortSignal,
+  ): Promise<MqttConnection>;
 }
 
 const NOOP_MQTT_LOG = (): void => undefined;
+const RECONNECT_PERIOD_MILLISECONDS = 1_000;
 
 export class MqttJsTransport implements MqttTransport {
-  constructor(
-    private readonly optionOverrides: Readonly<Partial<IClientOptions>> = {},
-  ) {}
+  async open(
+    credentials: EcoFlowMqttCredentials,
+    signal?: AbortSignal,
+  ): Promise<MqttConnection> {
+    if (signal?.aborted === true) {
+      throw new Error('MQTT connection was cancelled');
+    }
 
-  async open(credentials: EcoFlowMqttCredentials): Promise<MqttConnection> {
-    const client = await connectAsync(
+    const client = connect(
       `mqtts://${credentials.host}:${credentials.port}`,
-      buildMqttClientOptions(credentials, this.optionOverrides),
+      buildMqttClientOptions(credentials),
     );
-    return new MqttJsConnection(client);
+
+    return new Promise<MqttConnection>((resolve, reject) => {
+      let settled = false;
+      function cleanup(): void {
+        client.off('connect', handleConnect);
+        client.off('error', handleError);
+        client.off('close', handleClose);
+        signal?.removeEventListener('abort', handleAbort);
+      }
+      function fail(error: Error): void {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        void client.endAsync(true).catch(() => undefined);
+        reject(error);
+      }
+      function handleConnect(): void {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        // The first connection is deliberately non-retrying so start() can
+        // own its deadline. Once connected, MQTT.js may manage reconnects.
+        client.options.reconnectPeriod = RECONNECT_PERIOD_MILLISECONDS;
+        resolve(new MqttJsConnection(client));
+      }
+      function handleError(): void {
+        fail(new Error('MQTT connection failed'));
+      }
+      function handleClose(): void {
+        fail(new Error('MQTT connection closed'));
+      }
+      function handleAbort(): void {
+        fail(new Error('MQTT connection was cancelled'));
+      }
+
+      client.once('connect', handleConnect);
+      client.once('error', handleError);
+      client.once('close', handleClose);
+      signal?.addEventListener('abort', handleAbort, { once: true });
+    });
   }
 }
 
 export function buildMqttClientOptions(
   credentials: EcoFlowMqttCredentials,
-  optionOverrides: Readonly<Partial<IClientOptions>> = {},
 ): IClientOptions {
   return {
-    ...optionOverrides,
     clientId: credentials.clientId,
     username: credentials.username,
     password: credentials.password,
@@ -54,7 +102,7 @@ export function buildMqttClientOptions(
     keepalive: 15,
     rejectUnauthorized: true,
     resubscribe: false,
-    reconnectPeriod: 1_000,
+    reconnectPeriod: 0,
     connectTimeout: 15_000,
     log: NOOP_MQTT_LOG,
   };

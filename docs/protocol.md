@@ -48,8 +48,9 @@ No item currently has **Hardware** confidence.
 3. Headers include `lang: en_US` and `content-type: application/json`.
 4. The response supplies `data.token` and `data.user.userId`.
 5. `GET https://{apiHost}/iot-auth/app/certification` uses
-   `Authorization: Bearer {token}` and an
-   `application/x-www-form-urlencoded` request body containing `userId`.
+   `Authorization: Bearer {token}`. The pinned client passes `{"userId": ...}`
+   through aiohttp's `data=` mapping, producing URL-encoded body bytes, while
+   retaining its explicit `content-type: application/json` header.
 6. The certification response supplies:
    - `data.url`
    - `data.port`

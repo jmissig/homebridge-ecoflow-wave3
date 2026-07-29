@@ -28,6 +28,7 @@ export async function authenticateEcoFlow(
   config: EcoFlowWave3Config,
   http: HttpTransport,
   randomHex: () => string = defaultRandomHex,
+  signal?: AbortSignal,
 ): Promise<EcoFlowAuthenticatedSession> {
   const baseUrl = `https://${config.apiHost}`;
   const loginResponse = await guardedRequest(
@@ -50,6 +51,7 @@ export async function authenticateEcoFlow(
       },
     },
     'login',
+    signal,
   );
   const loginData = requireSuccessfulData(loginResponse, 'login');
   const token = requireNestedString(loginData, ['token'], 'login token');
@@ -63,6 +65,7 @@ export async function authenticateEcoFlow(
       headers: {
         lang: 'en_US',
         authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
       },
       body: {
         type: 'form',
@@ -70,6 +73,7 @@ export async function authenticateEcoFlow(
       },
     },
     'MQTT certification',
+    signal,
   );
   const certificationData = requireSuccessfulData(certificationResponse, 'MQTT certification');
   const host = normalizeBrokerHost(requireNestedString(certificationData, ['url'], 'MQTT broker host'));
@@ -102,9 +106,10 @@ async function guardedRequest(
   http: HttpTransport,
   request: Parameters<HttpTransport['request']>[0],
   operation: string,
+  signal?: AbortSignal,
 ): Promise<HttpResponse> {
   try {
-    const response = await http.request(request);
+    const response = await http.request(request, signal);
     if (response.status !== 200) {
       throw new EcoFlowAuthenticationError(
         `EcoFlow ${operation} failed with HTTP status ${response.status}`,

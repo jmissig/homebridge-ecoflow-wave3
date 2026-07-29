@@ -52,8 +52,10 @@
       },
       "devices": {
         "title": "WAVE 3 Units",
+        "description": "Each WAVE 3 serial number must be unique; cross-item serial uniqueness is enforced at runtime.",
         "type": "array",
         "minItems": 1,
+        "uniqueItems": true,
         "items": {
           "type": "object",
           "required": ["name", "serialNumber"],

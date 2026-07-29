@@ -82,7 +82,7 @@ This repository may contain exploratory scaffold files created before these cons
 
 Use a dynamic platform because it fits Homebridge's current template and cached-accessory lifecycle. Keep discovery intentionally narrow:
 
-- represent only configured or account-discovered WAVE 3 units
+- represent only explicitly configured WAVE 3 units
 - ignore unrelated EcoFlow devices returned by an account
 - derive stable accessory UUIDs from a stable WAVE 3 identifier such as its serial number
 - restore, update, and remove cached accessories through Homebridge's platform APIs
@@ -171,8 +171,10 @@ Configuration should be the smallest set needed for a WAVE 3 session and useful 
 
 - Use `config.schema.json` with strict, helpful validation and Homebridge UI labels.
 - Support the regional EcoFlow API host when required; do not silently send credentials to an arbitrary host.
-- Prefer account discovery plus optional WAVE 3 selection over requiring users to transcribe identifiers when the private API reliably provides them.
-- If explicit serial selection is needed, validate that the selected device is a WAVE 3.
+- Require explicit WAVE 3 serials because the pinned private API path exposes
+  no device-list endpoint.
+- Treat configured serials as WAVE 3 at this evidence level; hardware
+  validation must confirm the household unit before release.
 - Never log passwords, bearer tokens, MQTT usernames/passwords, authorization headers, full device serial numbers, or identifying raw payloads.
 - Redact identifiers in debug logs and bug-report instructions.
 - Do not commit real Homebridge config, account details, certificates, MQTT credentials, serial numbers, or packet captures.

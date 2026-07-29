@@ -69,6 +69,8 @@ export class EcoFlowCloudSession {
   private readonly errorListeners = new Set<(error: EcoFlowCloudSessionError) => void>();
   private detachListeners: Array<() => void> = [];
   private establishPromise?: Promise<void>;
+  private startupController?: AbortController;
+  private startupPromise?: Promise<void>;
   private stopped = false;
 
   public state: CloudSessionState = 'idle';
@@ -89,12 +91,34 @@ export class EcoFlowCloudSession {
     this.state = 'starting';
     this.logger.info('Authenticating with EcoFlow private cloud');
 
+    const controller = new AbortController();
+    this.startupController = controller;
+    const startup = this.startSession(controller);
+    this.startupPromise = startup;
+    try {
+      await startup;
+    } finally {
+      if (this.startupController === controller) {
+        this.startupController = undefined;
+      }
+      if (this.startupPromise === startup) {
+        this.startupPromise = undefined;
+      }
+    }
+  }
+
+  private async startSession(controller: AbortController): Promise<void> {
     let authenticated: EcoFlowAuthenticatedSession;
     try {
-      authenticated = await authenticateEcoFlow(
-        this.config,
-        this.http,
-        this.randomHex,
+      authenticated = await withAbortAndTimeout(
+        authenticateEcoFlow(
+          this.config,
+          this.http,
+          this.randomHex,
+          controller.signal,
+        ),
+        controller,
+        this.operationTimeoutMilliseconds,
       );
     } catch {
       if (this.stopped) {
@@ -111,7 +135,11 @@ export class EcoFlowCloudSession {
 
     let connection: MqttConnection;
     try {
-      connection = await this.mqtt.open(authenticated.mqtt);
+      connection = await withAbortAndTimeout(
+        this.mqtt.open(authenticated.mqtt, controller.signal),
+        controller,
+        this.operationTimeoutMilliseconds,
+      );
     } catch {
       if (this.stopped) {
         throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
@@ -127,7 +155,7 @@ export class EcoFlowCloudSession {
     this.connection = connection;
 
     this.attachConnectionListeners(connection);
-    const setup = this.establishSubscriptionsAndRefresh();
+    const setup = this.establishSubscriptionsAndRefresh(controller.signal);
     this.establishPromise = setup;
     try {
       await setup;
@@ -188,12 +216,24 @@ export class EcoFlowCloudSession {
     }
     this.stopped = true;
     this.state = 'stopped';
+    this.startupController?.abort();
     this.detachConnectionListeners();
     const connection = this.connection;
     this.connection = undefined;
     this.authenticated = undefined;
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
+    }
+    const startup = this.startupPromise;
+    if (startup !== undefined) {
+      try {
+        await withTimeout(
+          startup.catch(() => undefined),
+          this.operationTimeoutMilliseconds,
+        );
+      } catch {
+        this.logger.warn('EcoFlow cloud startup did not stop cleanly');
+      }
     }
   }
 
@@ -239,7 +279,7 @@ export class EcoFlowCloudSession {
       });
   }
 
-  private async establishSubscriptionsAndRefresh(): Promise<void> {
+  private async establishSubscriptionsAndRefresh(signal?: AbortSignal): Promise<void> {
     const connection = this.connection;
     const authenticated = this.authenticated;
     if (connection === undefined || authenticated === undefined || this.stopped) {
@@ -259,9 +299,9 @@ export class EcoFlowCloudSession {
     ]);
 
     try {
-      await withTimeout(
+      await this.runSetupOperation(
         connection.subscribe([...new Set(subscriptionTopics)]),
-        this.operationTimeoutMilliseconds,
+        signal,
       );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow MQTT subscription failed');
@@ -270,9 +310,9 @@ export class EcoFlowCloudSession {
 
     try {
       for (const { topics } of topicsByDevice) {
-        await withTimeout(
+        await this.runSetupOperation(
           connection.publish(topics.get, REFRESH_PAYLOAD),
-          this.operationTimeoutMilliseconds,
+          signal,
         );
         this.assertSetupActive(connection);
       }
@@ -354,6 +394,20 @@ export class EcoFlowCloudSession {
       this.logger.warn('EcoFlow MQTT connection did not close cleanly');
     }
   }
+
+  private async runSetupOperation<T>(
+    operation: Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (signal === undefined) {
+      return withTimeout(operation, this.operationTimeoutMilliseconds);
+    }
+    return withSignalAndTimeout(
+      operation,
+      signal,
+      this.operationTimeoutMilliseconds,
+    );
+  }
 }
 
 export function buildWave3Topics(userId: string, serialNumber: string): Wave3Topics {
@@ -398,4 +452,64 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number):
       clearTimeout(timer);
     }
   }
+}
+
+async function withAbortAndTimeout<T>(
+  promise: Promise<T>,
+  controller: AbortController,
+  timeoutMilliseconds: number,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('operation timed out'));
+    }, timeoutMilliseconds);
+    timer.unref();
+  });
+  const aborted = rejectWhenAborted(controller.signal);
+  try {
+    return await Promise.race([promise, timeout, aborted.promise]);
+  } finally {
+    aborted.detach();
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function withSignalAndTimeout<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  timeoutMilliseconds: number,
+): Promise<T> {
+  const aborted = rejectWhenAborted(signal);
+  try {
+    return await Promise.race([
+      promise,
+      withTimeout(new Promise<never>(() => undefined), timeoutMilliseconds),
+      aborted.promise,
+    ]);
+  } finally {
+    aborted.detach();
+  }
+}
+
+function rejectWhenAborted(signal: AbortSignal): {
+  promise: Promise<never>;
+  detach: () => void;
+} {
+  let handleAbort = (): void => undefined;
+  const promise = new Promise<never>((_resolve, reject) => {
+    handleAbort = () => reject(new Error('operation cancelled'));
+    if (signal.aborted) {
+      handleAbort();
+      return;
+    }
+    signal.addEventListener('abort', handleAbort, { once: true });
+  });
+  return {
+    promise,
+    detach: () => signal.removeEventListener('abort', handleAbort),
+  };
 }

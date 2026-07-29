@@ -85,7 +85,7 @@ describe('EcoFlow private authentication', () => {
     assert.equal(certificationRequest.url.pathname, '/iot-auth/app/certification');
     assert.equal(
       certificationRequest.headers['content-type'],
-      'application/x-www-form-urlencoded',
+      'application/json',
     );
     assert.equal(certificationRequest.headers['content-length'], '16');
     assert.equal(certificationRequest.body?.toString('utf8'), 'userId=TEST_USER');

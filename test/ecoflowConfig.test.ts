@@ -76,7 +76,7 @@ describe('EcoFlow WAVE 3 configuration', () => {
     );
   });
 
-  it('keeps runtime acceptance aligned with the published schema', () => {
+  it('aligns syntactic validation and documents runtime-only serial uniqueness', () => {
     const schemaDocument = JSON.parse(readFileSync(
       new URL('../config.schema.json', import.meta.url),
       'utf8',
@@ -85,34 +85,85 @@ describe('EcoFlow WAVE 3 configuration', () => {
     ajv.addFormat('email', /^[^\s@]+@[^\s@]+$/);
     ajv.addFormat('password', true);
     const validateSchema = ajv.compile(schemaDocument.schema);
-    const cases: Array<{ candidate: Record<string, unknown>; accepted: boolean }> = [
-      { candidate: baseConfig(), accepted: true },
-      { candidate: baseConfig({ email: 'a@' }), accepted: false },
-      { candidate: baseConfig({ name: '   ' }), accepted: false },
-      { candidate: baseConfig({ name: 'Line one\nLine two' }), accepted: false },
+    const cases: Array<{
+      candidate: Record<string, unknown>;
+      schemaAccepted: boolean;
+      runtimeAccepted: boolean;
+    }> = [
+      { candidate: baseConfig(), schemaAccepted: true, runtimeAccepted: true },
+      {
+        candidate: baseConfig({ password: '   ' }),
+        schemaAccepted: true,
+        runtimeAccepted: true,
+      },
+      {
+        candidate: baseConfig({ email: 'a@' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ name: '   ' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ name: 'Line one\nLine two' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
       {
         candidate: baseConfig({
           devices: [{ name: 'Bedroom', serialNumber: ' TESTWAVE30001 ' }],
         }),
-        accepted: false,
+        schemaAccepted: false,
+        runtimeAccepted: false,
       },
       {
         candidate: baseConfig({
           advancedApiHostOverride: `${'a'.repeat(250)}.test`,
         }),
-        accepted: false,
+        schemaAccepted: false,
+        runtimeAccepted: false,
       },
-      { candidate: baseConfig({ advancedApiHostOverride: '.' }), accepted: false },
-      { candidate: baseConfig({ unknownField: true }), accepted: false },
+      {
+        candidate: baseConfig({
+          apiHost: 'not-ecoflow.example',
+          advancedApiHostOverride: 'private-api.example.test',
+        }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({
+          devices: [
+            { name: 'Bedroom', serialNumber: 'TESTWAVE30001' },
+            { name: 'Office', serialNumber: 'TESTWAVE30001' },
+          ],
+        }),
+        // JSON Schema can reject byte-for-byte duplicate items but cannot
+        // express uniqueness of one property across otherwise distinct items.
+        schemaAccepted: true,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ advancedApiHostOverride: '.' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ unknownField: true }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
     ];
 
-    for (const { candidate, accepted } of cases) {
+    for (const { candidate, schemaAccepted, runtimeAccepted } of cases) {
       const schemaCandidate = { ...candidate };
       // Homebridge owns the platform discriminator and validates only the
       // plugin-specific object against config.schema.json.
       delete schemaCandidate.platform;
-      assert.equal(validateSchema(schemaCandidate), accepted);
-      assert.equal(runtimeAccepts(candidate), accepted);
+      assert.equal(validateSchema(schemaCandidate), schemaAccepted);
+      assert.equal(runtimeAccepts(candidate), runtimeAccepted);
     }
   });
 });

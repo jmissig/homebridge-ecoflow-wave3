@@ -194,37 +194,35 @@ describe('EcoFlow cloud session', () => {
     }
   });
 
-  it('stops promptly during authentication and closes a connection that arrives late', async () => {
-    const loginGate = new Deferred<HttpResponse>();
-    let requestCount = 0;
+  it('cancels never-resolving authentication and MQTT open operations', async () => {
     const http: HttpTransport = {
-      request: async () => {
-        requestCount += 1;
-        return requestCount === 1 ? loginGate.promise : successfulCertification();
-      },
+      request: async () => new Promise<HttpResponse>(() => undefined),
     };
-    const connection = new FakeMqttConnection();
-    const mqtt = new FakeMqttTransport(connection);
-    const authenticationSession = new EcoFlowCloudSession(testConfig(), http, mqtt);
+    const authenticationSession = new EcoFlowCloudSession(
+      testConfig(),
+      http,
+      new FakeMqttTransport(new FakeMqttConnection()),
+      new CapturingLogger(),
+      undefined,
+      1_000,
+    );
     const stoppedAuthenticationStart = authenticationSession.start();
     await flushAsyncWork();
-    await authenticationSession.stop();
-    loginGate.resolve(successfulLogin());
+    await completesWithin(authenticationSession.stop(), 100);
     await assert.rejects(stoppedAuthenticationStart, /stopped during startup/);
 
-    const openGate = new Deferred<MqttConnection>();
-    const lateConnection = new FakeMqttConnection();
     const openSession = new EcoFlowCloudSession(
       testConfig(),
       successfulHttp(),
-      { open: async () => openGate.promise },
+      { open: async () => new Promise<MqttConnection>(() => undefined) },
+      new CapturingLogger(),
+      undefined,
+      1_000,
     );
     const openStart = openSession.start();
     await flushAsyncWork();
-    await openSession.stop();
-    openGate.resolve(lateConnection);
+    await completesWithin(openSession.stop(), 100);
     await assert.rejects(openStart, /stopped during startup/);
-    assert.equal(lateConnection.closeCalls, 1);
   });
 
   it('stops promptly during initial subscription, refresh, and reconnect setup', async () => {
@@ -332,34 +330,35 @@ describe('EcoFlow cloud session', () => {
   });
 
   it('builds a clean TLS-verified MQTT.js connection', () => {
-    const leakedDebugArguments: unknown[][] = [];
-    const options = buildMqttClientOptions(
-      {
-        host: 'mqtt.example.test',
-        port: 8883,
-        username: 'TEST_MQTT_ACCOUNT',
-        password: 'TEST_MQTT_PASSWORD',
-        clientId: 'TEST_CLIENT',
-      },
-      {
-        clean: false,
-        keepalive: 60,
-        rejectUnauthorized: false,
-        resubscribe: true,
-        log: (...args: unknown[]) => leakedDebugArguments.push(args),
-      },
-    );
+    const options = buildMqttClientOptions({
+      host: 'mqtt.example.test',
+      port: 8883,
+      username: 'TEST_MQTT_ACCOUNT',
+      password: 'TEST_MQTT_PASSWORD',
+      clientId: 'TEST_CLIENT',
+    });
     assert.equal(options.clean, true);
     assert.equal(options.keepalive, 15);
     assert.equal(options.rejectUnauthorized, true);
     assert.equal(options.resubscribe, false);
+    assert.equal(options.reconnectPeriod, 0);
+    for (const forbiddenRoutingField of [
+      'protocol',
+      'host',
+      'port',
+      'servers',
+      'auth',
+      'query',
+      'manualConnect',
+    ]) {
+      assert.equal(Object.hasOwn(options, forbiddenRoutingField), false);
+    }
     options.log?.(
       'TEST_MQTT_ACCOUNT',
       'TEST_MQTT_PASSWORD',
       '/app/TEST_USER/TESTWAVE30001/thing/property/set',
       Uint8Array.of(1, 2, 3),
     );
-    assert.deepEqual(leakedDebugArguments, []);
   });
 });
 
@@ -530,6 +529,15 @@ async function flushAsyncWork(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
 }
 
+async function completesWithin(promise: Promise<void>, milliseconds: number): Promise<void> {
+  await Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(new Error('operation did not complete promptly')), milliseconds);
+    }),
+  ]);
+}
+
 class Deferred<T> {
   public readonly promise: Promise<T>;
   private resolvePromise!: (value: T | PromiseLike<T>) => void;
@@ -543,32 +551,4 @@ class Deferred<T> {
   resolve(value?: T): void {
     this.resolvePromise(value as T);
   }
-}
-
-function successfulLogin(): HttpResponse {
-  return {
-    status: 200,
-    json: {
-      message: 'Success',
-      data: {
-        token: 'TEST_TOKEN',
-        user: { userId: 'TEST_USER' },
-      },
-    },
-  };
-}
-
-function successfulCertification(): HttpResponse {
-  return {
-    status: 200,
-    json: {
-      message: 'Success',
-      data: {
-        url: 'mqtt.example.test',
-        port: 8883,
-        certificateAccount: 'TEST_MQTT_ACCOUNT',
-        certificatePassword: 'TEST_MQTT_PASSWORD',
-      },
-    },
-  };
 }

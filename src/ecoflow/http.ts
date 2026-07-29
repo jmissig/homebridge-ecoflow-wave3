@@ -29,24 +29,29 @@ export interface HttpResponse {
 }
 
 export interface HttpTransport {
-  request(request: HttpRequest): Promise<HttpResponse>;
+  request(request: HttpRequest, signal?: AbortSignal): Promise<HttpResponse>;
 }
 
 export class NodeHttpsTransport implements HttpTransport {
   constructor(
     private readonly timeoutMilliseconds = 15_000,
     private readonly maximumResponseBytes = 1_048_576,
+    private readonly requester: typeof httpsRequest = httpsRequest,
   ) {}
 
-  async request(request: HttpRequest): Promise<HttpResponse> {
+  async request(request: HttpRequest, signal?: AbortSignal): Promise<HttpResponse> {
     const prepared = prepareHttpRequest(request);
+    const deadline = AbortSignal.timeout(this.timeoutMilliseconds);
+    const requestSignal = signal === undefined
+      ? deadline
+      : AbortSignal.any([signal, deadline]);
 
     return new Promise<HttpResponse>((resolve, reject) => {
-      const clientRequest = httpsRequest(prepared.url, {
+      const clientRequest = this.requester(prepared.url, {
         method: prepared.method,
         headers: prepared.headers,
         rejectUnauthorized: true,
-        timeout: this.timeoutMilliseconds,
+        signal: requestSignal,
       }, response => {
         const chunks: Buffer[] = [];
         let receivedBytes = 0;
@@ -70,9 +75,10 @@ export class NodeHttpsTransport implements HttpTransport {
             reject(new Error('invalid JSON response'));
           }
         });
+        response.on('aborted', () => reject(new Error('response aborted')));
+        response.on('error', reject);
       });
 
-      clientRequest.on('timeout', () => clientRequest.destroy(new Error('request timed out')));
       clientRequest.on('error', reject);
       if (prepared.body !== undefined) {
         clientRequest.write(prepared.body);
@@ -88,11 +94,11 @@ export function prepareHttpRequest(request: HttpRequest): PreparedHttpRequest {
     method: request.method,
     url: request.url,
     headers: {
-      ...request.headers,
       ...(body === undefined ? {} : {
         'content-type': body.contentType,
-        'content-length': String(body.bytes.length),
       }),
+      ...request.headers,
+      ...(body === undefined ? {} : { 'content-length': String(body.bytes.length) }),
     },
     ...(body === undefined ? {} : { body: body.bytes }),
   };

@@ -80,14 +80,14 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
 }
 
 function validateApiHost(reviewedHost: string, advancedOverride: string | undefined): string {
+  if (!REVIEWED_API_HOSTS.includes(reviewedHost as ReviewedApiHost)) {
+    throw new ConfigurationError('apiHost must be a reviewed EcoFlow regional endpoint');
+  }
   if (advancedOverride !== undefined) {
     if (!isHostname(advancedOverride)) {
       throw new ConfigurationError('advancedApiHostOverride must be a hostname without a scheme, port, or path');
     }
     return advancedOverride.toLowerCase();
-  }
-  if (!REVIEWED_API_HOSTS.includes(reviewedHost as ReviewedApiHost)) {
-    throw new ConfigurationError('apiHost must be a reviewed EcoFlow regional endpoint');
   }
   return reviewedHost;
 }
@@ -141,7 +141,8 @@ function requireString(
   options: { maxLength?: number; trim?: boolean } = {},
 ): string {
   const value = record[field];
-  if (typeof value !== 'string' || value.trim().length === 0) {
+  if (typeof value !== 'string'
+    || (field === 'password' ? value.length === 0 : value.trim().length === 0)) {
     throw new ConfigurationError(`${field} must be a non-empty string`);
   }
   if (options.maxLength !== undefined && value.length > options.maxLength) {

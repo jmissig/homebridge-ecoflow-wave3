@@ -53,39 +53,40 @@ Primary upstream evidence:
 - [`wave3.proto`](https://github.com/tolwi/hassio-ecoflow-cloud/blob/main/custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto)
 - [Initial WAVE 3 implementation PR #762](https://github.com/tolwi/hassio-ecoflow-cloud/pull/762)
 
-## Next — Phase 2: Typed WAVE 3 codec and domain state
+## Phase 2: Typed WAVE 3 codec and domain state
 
-- [ ] Add the reviewed protobuf subset with Apache-2.0 provenance.
-- [ ] Implement a Homebridge-independent WAVE 3 codec:
+- [x] Add the reviewed protobuf subset with Apache-2.0 provenance.
+- [x] Implement a Homebridge-independent WAVE 3 codec:
   - decode the outer message envelope
   - apply the observed payload transform only under the evidenced conditions
   - decode display, runtime, and command-acknowledgement payloads
   - encode configuration-write commands with explicit sequence IDs
-- [ ] Define a small normalized `Wave3State` with no Homebridge, MQTT, or raw
+- [x] Define a small normalized `Wave3State` with no Homebridge, MQTT, or raw
   protobuf types.
-- [ ] Normalize the first-slice state:
+- [x] Normalize the first-slice state:
   - sleeping / powered state
   - operating mode
   - ambient temperature and humidity
   - target temperature or automatic temperature range
   - airflow speed
   - current submode
-- [ ] Define typed first-slice commands:
+- [x] Define typed first-slice commands:
   - power on via `cfg_main_power`
   - power off via `cfg_sys_pause`
   - cool, heat, auto, and fan modes
   - target temperature and automatic upper/lower thresholds
   - airflow speed
-- [ ] Preserve unknown fields and unsupported messages as bounded diagnostics,
+  - supported operating submodes
+- [x] Preserve unknown fields and unsupported messages as bounded diagnostics,
   not crashes or silently invented state.
-- [ ] Add synthetic fixture tests for envelope routing, payload transforms,
+- [x] Add synthetic fixture tests for envelope routing, payload transforms,
   state normalization, command encoding, sequence preservation, malformed
   messages, and unknown command IDs.
 
 **Phase 2 exit:** protocol tests can decode known synthetic messages and encode
 the first command set without importing Homebridge or connecting to EcoFlow.
 
-## Phase 3: Private EcoFlow cloud session
+## Next — Phase 3: Private EcoFlow cloud session
 
 - [ ] Define strict typed plugin configuration and `config.schema.json` fields
   for account login, region/API host, display name, and required WAVE 3 serial

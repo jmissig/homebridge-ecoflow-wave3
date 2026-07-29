@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Derived from the EcoFlow WAVE 3 schema in tolwi/hassio-ecoflow-cloud at
+// commit 95dc51eb12562c49be9067052814d5960cc0829f.
+// Copyright its contributors. Modified to retain only the messages and fields
+// required by this WAVE 3-only Homebridge plugin.
+
+syntax = "proto2";
+
+package ecoflow.wave3.v1;
+
+message Wave3WaveOperatingModeParamItem {
+  optional uint32 submode = 1;
+  optional uint32 airflow_speed = 2;
+  optional float temp_set = 3;
+  optional float humi_set = 4;
+  optional float temp_thermostatic_upper_limit = 5;
+  optional float temp_thermostatic_lower_limit = 6;
+}
+
+message Wave3WaveOperatingModeParamList {
+  repeated Wave3WaveOperatingModeParamItem list_info = 1;
+}
+
+message Wave3DisplayPropertyUpload {
+  optional uint32 dev_sleep_state = 212;
+  optional float temp_ambient = 484;
+  optional float humi_ambient = 485;
+  optional uint32 wave_operating_mode = 486;
+  optional Wave3WaveOperatingModeParamList wave_mode_info = 514;
+}
+
+message Wave3RuntimePropertyUpload {
+  optional float temp_indoor_return_air = 493;
+  optional float temp_outdoor_ambient = 495;
+  optional float temp_condenser = 496;
+  optional float temp_evaporator = 499;
+  optional float temp_compressor_discharge = 503;
+}
+
+message Wave3ConfigWrite {
+  optional bool cfg_main_power = 4;
+  optional uint32 cfg_wave_operating_mode = 153;
+  optional uint32 cfg_wave_operating_submode = 154;
+  optional uint32 cfg_airflow_speed = 155;
+  optional float cfg_temp_set = 156;
+  optional float cfg_temp_thermostatic_upper_limit = 158;
+  optional float cfg_temp_thermostatic_lower_limit = 159;
+  optional bool cfg_sys_pause = 172;
+}
+
+message Wave3ConfigWriteAck {
+  optional int32 action_id = 1;
+  optional bool config_ok = 2;
+  optional bool cfg_main_power = 4;
+  optional uint32 cfg_wave_operating_mode = 153;
+  optional uint32 cfg_wave_operating_submode = 154;
+  optional uint32 cfg_airflow_speed = 155;
+  optional float cfg_temp_set = 156;
+  optional float cfg_temp_thermostatic_upper_limit = 158;
+  optional float cfg_temp_thermostatic_lower_limit = 159;
+  optional bool cfg_sys_pause = 172;
+}
+
+message Wave3SetMessage {
+  optional Wave3SetHeader header = 1;
+}
+
+message Wave3SetHeader {
+  optional bytes pdata = 1;
+  optional int32 src = 2;
+  optional int32 dest = 3;
+  optional int32 d_src = 4;
+  optional int32 d_dest = 5;
+  optional int32 enc_type = 6;
+  optional int32 check_type = 7;
+  optional int32 cmd_func = 8;
+  optional int32 cmd_id = 9;
+  optional int32 data_len = 10;
+  optional int32 need_ack = 11;
+  optional int32 is_ack = 12;
+  optional int32 seq = 14;
+  optional int32 product_id = 15;
+  optional int32 version = 16;
+  optional int32 payload_ver = 17;
+  optional int32 time_snap = 18;
+  optional int32 is_rw_cmd = 19;
+  optional int32 is_queue = 20;
+  optional int32 ack_type = 21;
+  optional string code = 22;
+  optional string from = 23;
+  optional string module_sn = 24;
+  optional string device_sn = 25;
+}

@@ -19,9 +19,9 @@ identified as Apache-2.0 material, preserve applicable notices, and state that
 it has been modified.
 
 The first port is scoped and traced in [docs/protocol.md](docs/protocol.md).
-Any future `src/proto/wave3.proto` and generated schema code adapted from the
-pinned upstream WAVE 3 schema remain licensed under Apache License 2.0 and must
-carry provenance and modification notices.
+The reviewed subset in `proto/ecoflow/wave3/v1/wave3.proto` and its generated
+TypeScript remain licensed under Apache License 2.0. Both carry provenance and
+modification notices.
 
 ## homebridge-ecoflow
 

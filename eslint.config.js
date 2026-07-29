@@ -20,7 +20,7 @@ export default tseslint.config(
       'max-len': ['warn', 160],
       'object-curly-spacing': ['error', 'always'],
       'no-use-before-define': 'off',
-      '@typescript-eslint/no-use-before-define': ['error', { 'classes': false, 'enums': false }],
+      '@typescript-eslint/no-use-before-define': ['error', { 'classes': false, 'enums': false, 'functions': false }],
       '@typescript-eslint/no-unused-vars': ['error', { 'caughtErrors': 'none' }],
     },
   },

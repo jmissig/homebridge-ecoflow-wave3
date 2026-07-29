@@ -21,7 +21,10 @@ import {
   type Wave3AcknowledgedValues,
   type Wave3Acknowledgement,
   type Wave3Command,
+  type Wave3DisplayState,
+  type Wave3DisplayUpdate,
   type Wave3Mode,
+  type Wave3ModeParameters,
   type Wave3RuntimeTemperatures,
   type Wave3State,
 } from './domain.js';
@@ -41,6 +44,10 @@ export interface Wave3Diagnostic {
   sequence?: number;
   payloadLength: number;
   unknownFieldCount?: number;
+  unsupportedValues?: ReadonlyArray<{
+    field: string;
+    value: number;
+  }>;
   reason?: string;
 }
 
@@ -48,7 +55,7 @@ export type DecodedWave3Message =
   | {
     kind: 'display';
     sequence: number;
-    state: Wave3State;
+    update: Wave3DisplayUpdate;
     diagnostic: Wave3Diagnostic;
   }
   | {
@@ -85,37 +92,48 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
     if (header === undefined) {
       return malformed(bytes.length, 'missing envelope header');
     }
+    const encodedPayload = header.pdata ?? new Uint8Array();
 
-    const diagnostic = {
+    const diagnostic: Wave3Diagnostic = {
       commandFunction: header.cmdFunc,
       commandId: header.cmdId,
       sequence: header.seq,
-      payloadLength: header.pdata.length,
-      unknownFieldCount: header.$unknown?.length ?? 0,
+      payloadLength: encodedPayload.length,
+      unknownFieldCount: countUnknownFields(message, header),
     };
 
-    if (header.pdata.length === 0) {
+    if (encodedPayload.length === 0) {
       return { kind: 'malformed', diagnostic: { ...diagnostic, reason: 'missing payload' } };
     }
 
     if (isFieldSet(header, Wave3SetHeaderSchema.field.dataLen)
-      && header.dataLen !== header.pdata.length) {
+      && header.dataLen !== encodedPayload.length) {
       return { kind: 'malformed', diagnostic: { ...diagnostic, reason: 'payload length mismatch' } };
     }
 
-    const payload = transformWave3Payload(header.pdata, header.encType, header.src, header.seq);
+    const payload = transformWave3Payload(
+      encodedPayload,
+      header.encType ?? 0,
+      header.src ?? 0,
+      header.seq ?? 0,
+    );
 
     if (header.cmdFunc !== WAVE3_COMMAND_FUNCTION) {
       return { kind: 'unknown', diagnostic };
     }
 
-    if (DISPLAY_COMMAND_IDS.has(header.cmdId)) {
+    if (DISPLAY_COMMAND_IDS.has(header.cmdId ?? 0)) {
       const display = fromBinary(Wave3DisplayPropertyUploadSchema, payload);
+      const normalized = normalizeDisplayUpdate(display);
       return {
         kind: 'display',
-        sequence: header.seq,
-        state: normalizeDisplayState(display),
-        diagnostic: withPayloadUnknownCount(diagnostic, display),
+        sequence: header.seq ?? 0,
+        update: normalized.update,
+        diagnostic: withPayloadDiagnostics(
+          diagnostic,
+          countDisplayUnknownFields(display),
+          normalized.unsupportedValues,
+        ),
       };
     }
 
@@ -123,19 +141,24 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
       const runtime = fromBinary(Wave3RuntimePropertyUploadSchema, payload);
       return {
         kind: 'runtime',
-        sequence: header.seq,
+        sequence: header.seq ?? 0,
         temperatures: normalizeRuntimeTemperatures(runtime),
-        diagnostic: withPayloadUnknownCount(diagnostic, runtime),
+        diagnostic: withPayloadDiagnostics(diagnostic, countUnknownFields(runtime)),
       };
     }
 
     if (header.cmdId === ACK_COMMAND_ID) {
       const acknowledgement = fromBinary(Wave3ConfigWriteAckSchema, payload);
+      const normalized = normalizeAcknowledgement(acknowledgement);
       return {
         kind: 'acknowledgement',
-        sequence: header.seq,
-        acknowledgement: normalizeAcknowledgement(acknowledgement),
-        diagnostic: withPayloadUnknownCount(diagnostic, acknowledgement),
+        sequence: header.seq ?? 0,
+        acknowledgement: normalized.acknowledgement,
+        diagnostic: withPayloadDiagnostics(
+          diagnostic,
+          countUnknownFields(acknowledgement),
+          normalized.unsupportedValues,
+        ),
       };
     }
 
@@ -197,57 +220,141 @@ export function transformWave3Payload(
   return Uint8Array.from(payload, byte => byte ^ key);
 }
 
-function normalizeDisplayState(
-  display: MessageShape<typeof Wave3DisplayPropertyUploadSchema>,
-): Wave3State {
+export function mergeWave3DisplayUpdate(
+  previous: Wave3DisplayState | undefined,
+  update: Wave3DisplayUpdate,
+): Wave3DisplayState {
+  const sleepState = update.sleepState ?? previous?.sleepState;
+  const operatingModeId = update.operatingModeId ?? previous?.operatingModeId;
+  const modeParameters: Record<number, Wave3ModeParameters> = {
+    ...previous?.modeParameters,
+  };
+
+  for (const [modeId, parameters] of Object.entries(update.modeParameters)) {
+    const numericModeId = Number(modeId);
+    modeParameters[numericModeId] = {
+      ...modeParameters[numericModeId],
+      ...parameters,
+    };
+  }
+
   const state: Wave3State = {};
+  const ambientTemperature = update.ambientTemperatureCelsius
+    ?? previous?.state.ambientTemperatureCelsius;
+  const ambientHumidity = update.ambientHumidityPercent
+    ?? previous?.state.ambientHumidityPercent;
+  if (ambientTemperature !== undefined) {
+    state.ambientTemperatureCelsius = ambientTemperature;
+  }
+  if (ambientHumidity !== undefined) {
+    state.ambientHumidityPercent = ambientHumidity;
+  }
+
+  if (sleepState === 0 || sleepState === 1) {
+    state.sleeping = sleepState === 1;
+  }
+
+  const reportedMode = operatingModeId === undefined
+    ? undefined
+    : WAVE3_MODE_BY_ID.get(operatingModeId);
+  if (sleepState === 1) {
+    state.mode = 'off';
+    state.powered = false;
+  } else if (reportedMode !== undefined) {
+    state.mode = reportedMode;
+    state.powered = reportedMode !== 'off';
+  } else if (operatingModeId === 0) {
+    state.mode = 'off';
+    state.powered = false;
+  }
+
+  if (operatingModeId !== undefined) {
+    Object.assign(state, modeParameters[operatingModeId]);
+  }
+
+  return {
+    sleepState,
+    operatingModeId,
+    modeParameters,
+    state,
+  };
+}
+
+function normalizeDisplayUpdate(
+  display: MessageShape<typeof Wave3DisplayPropertyUploadSchema>,
+): {
+  update: Wave3DisplayUpdate;
+  unsupportedValues: Wave3Diagnostic['unsupportedValues'];
+} {
+  const update: Wave3DisplayUpdate = { modeParameters: {} };
+  const unsupportedValues: Array<{ field: string; value: number }> = [];
 
   if (has(display, Wave3DisplayPropertyUploadSchema, 'devSleepState')) {
-    state.sleeping = display.devSleepState === 1;
-    state.powered = display.devSleepState !== 1;
+    const sleepState = display.devSleepState!;
+    update.sleepState = sleepState;
+    if (sleepState !== 0 && sleepState !== 1) {
+      addUnsupportedValue(unsupportedValues, 'dev_sleep_state', sleepState);
+    }
   }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'tempAmbient')) {
-    state.ambientTemperatureCelsius = display.tempAmbient;
+    update.ambientTemperatureCelsius = display.tempAmbient;
   }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'humiAmbient')) {
-    state.ambientHumidityPercent = display.humiAmbient;
+    update.ambientHumidityPercent = display.humiAmbient;
   }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'waveOperatingMode')) {
-    state.mode = WAVE3_MODE_BY_ID.get(display.waveOperatingMode);
+    const operatingModeId = display.waveOperatingMode!;
+    update.operatingModeId = operatingModeId;
+    if (!WAVE3_MODE_BY_ID.has(operatingModeId)) {
+      addUnsupportedValue(unsupportedValues, 'wave_operating_mode', operatingModeId);
+    }
   }
 
-  const mode = display.waveOperatingMode;
-  const modeParameters = display.waveModeInfo?.listInfo[mode];
-  if (modeParameters !== undefined && mode >= 1) {
+  display.waveModeInfo?.listInfo.forEach((modeParameters, modeId) => {
+    const parameters: Wave3ModeParameters = {};
     if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'submode')) {
-      state.submode = modeParameters.submode;
+      const submode = modeParameters.submode!;
+      parameters.submode = submode;
+      if (![0, 2, 3, 4].includes(submode)) {
+        addUnsupportedValue(
+          unsupportedValues,
+          `wave_mode_info[${modeId}].submode`,
+          submode,
+        );
+      }
     }
     if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'airflowSpeed')) {
-      state.airflowSpeed = modeParameters.airflowSpeed;
+      parameters.airflowSpeed = modeParameters.airflowSpeed;
     }
     if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'tempSet')) {
-      state.targetTemperatureCelsius = modeParameters.tempSet;
-    }
-    if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'humiSet')) {
-      state.targetHumidityPercent = modeParameters.humiSet;
+      parameters.targetTemperatureCelsius = modeParameters.tempSet;
     }
     if (has(
       modeParameters,
       Wave3WaveOperatingModeParamItemSchema,
       'tempThermostaticLowerLimit',
     )) {
-      state.targetTemperatureLowerCelsius = modeParameters.tempThermostaticLowerLimit;
+      parameters.targetTemperatureLowerCelsius = modeParameters.tempThermostaticLowerLimit;
     }
     if (has(
       modeParameters,
       Wave3WaveOperatingModeParamItemSchema,
       'tempThermostaticUpperLimit',
     )) {
-      state.targetTemperatureUpperCelsius = modeParameters.tempThermostaticUpperLimit;
+      parameters.targetTemperatureUpperCelsius = modeParameters.tempThermostaticUpperLimit;
     }
-  }
+    if (Object.keys(parameters).length > 0) {
+      (update.modeParameters as Record<number, Wave3ModeParameters>)[modeId] = parameters;
+      if (!WAVE3_MODE_BY_ID.has(modeId)) {
+        addUnsupportedValue(unsupportedValues, 'wave_mode_info.mode_id', modeId);
+      }
+    }
+  });
 
-  return state;
+  return {
+    update,
+    unsupportedValues: unsupportedValues.length === 0 ? undefined : unsupportedValues,
+  };
 }
 
 function normalizeRuntimeTemperatures(
@@ -274,10 +381,14 @@ function normalizeRuntimeTemperatures(
 
 function normalizeAcknowledgement(
   acknowledgement: MessageShape<typeof Wave3ConfigWriteAckSchema>,
-): Wave3Acknowledgement {
+): {
+  acknowledgement: Wave3Acknowledgement;
+  unsupportedValues: Wave3Diagnostic['unsupportedValues'];
+} {
   const values: Wave3AcknowledgedValues = {};
+  const unsupportedValues: Array<{ field: string; value: number }> = [];
   assignIfPresent(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgMainPower', values, 'mainPower');
-  assignModeIfPresent(acknowledgement, values);
+  assignModeIfPresent(acknowledgement, values, unsupportedValues);
   assignIfPresent(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgWaveOperatingSubmode', values, 'submode');
   assignIfPresent(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgAirflowSpeed', values, 'airflowSpeed');
   assignIfPresent(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgTempSet', values, 'targetTemperatureCelsius');
@@ -298,9 +409,12 @@ function normalizeAcknowledgement(
   assignIfPresent(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgSysPause', values, 'systemPaused');
 
   return {
-    actionId: has(acknowledgement, Wave3ConfigWriteAckSchema, 'actionId') ? acknowledgement.actionId : undefined,
-    accepted: has(acknowledgement, Wave3ConfigWriteAckSchema, 'configOk') ? acknowledgement.configOk : undefined,
-    values,
+    acknowledgement: {
+      actionId: has(acknowledgement, Wave3ConfigWriteAckSchema, 'actionId') ? acknowledgement.actionId : undefined,
+      reportedConfigOk: has(acknowledgement, Wave3ConfigWriteAckSchema, 'configOk') ? acknowledgement.configOk : undefined,
+      values,
+    },
+    unsupportedValues: unsupportedValues.length === 0 ? undefined : unsupportedValues,
   };
 }
 
@@ -354,13 +468,21 @@ function assignIfPresent<
 function assignModeIfPresent(
   acknowledgement: MessageShape<typeof Wave3ConfigWriteAckSchema>,
   values: Wave3AcknowledgedValues,
+  unsupportedValues: Array<{ field: string; value: number }>,
 ): void {
   if (!has(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgWaveOperatingMode')) {
     return;
   }
-  const mode = WAVE3_MODE_BY_ID.get(acknowledgement.cfgWaveOperatingMode);
+  const operatingModeId = acknowledgement.cfgWaveOperatingMode!;
+  const mode = WAVE3_MODE_BY_ID.get(operatingModeId);
   if (mode !== undefined) {
     values.mode = mode;
+  } else {
+    addUnsupportedValue(
+      unsupportedValues,
+      'cfg_wave_operating_mode',
+      operatingModeId,
+    );
   }
 }
 
@@ -373,14 +495,40 @@ function has<Schema extends DescMessage>(
   return field !== undefined && isFieldSet(message, field);
 }
 
-function withPayloadUnknownCount(
+function withPayloadDiagnostics(
   diagnostic: Wave3Diagnostic,
-  message: { $unknown?: unknown[] },
+  payloadUnknownFieldCount: number,
+  unsupportedValues?: Wave3Diagnostic['unsupportedValues'],
 ): Wave3Diagnostic {
   return {
     ...diagnostic,
-    unknownFieldCount: (diagnostic.unknownFieldCount ?? 0) + (message.$unknown?.length ?? 0),
+    unknownFieldCount: (diagnostic.unknownFieldCount ?? 0) + payloadUnknownFieldCount,
+    ...(unsupportedValues === undefined ? {} : { unsupportedValues }),
   };
+}
+
+function countUnknownFields(...messages: Array<{ $unknown?: unknown[] } | undefined>): number {
+  return messages.reduce((count, message) => count + (message?.$unknown?.length ?? 0), 0);
+}
+
+function countDisplayUnknownFields(
+  display: MessageShape<typeof Wave3DisplayPropertyUploadSchema>,
+): number {
+  return countUnknownFields(
+    display,
+    display.waveModeInfo,
+    ...(display.waveModeInfo?.listInfo ?? []),
+  );
+}
+
+function addUnsupportedValue(
+  values: Array<{ field: string; value: number }>,
+  field: string,
+  value: number,
+): void {
+  if (values.length < 8) {
+    values.push({ field, value });
+  }
 }
 
 function malformed(payloadLength: number, reason: string): DecodedWave3Message {

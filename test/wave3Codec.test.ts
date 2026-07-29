@@ -14,45 +14,42 @@ import {
 import {
   decodeWave3Message,
   encodeWave3Command,
+  mergeWave3DisplayUpdate,
   transformWave3Payload,
 } from '../src/wave3/codec.js';
 import type { Wave3Command } from '../src/wave3/domain.js';
 
-describe('WAVE 3 codec', () => {
-  it('decodes an XOR-transformed display upload into normalized state', () => {
-    const display = create(Wave3DisplayPropertyUploadSchema, {
-      devSleepState: 0,
-      tempAmbient: 23.5,
-      humiAmbient: 54,
-      waveOperatingMode: 1,
-      waveModeInfo: {
-        listInfo: [
-          {},
-          {
-            submode: 2,
-            airflowSpeed: 60,
-            tempSet: 21,
-            humiSet: 50,
-            tempThermostaticLowerLimit: 19,
-            tempThermostaticUpperLimit: 24,
-          },
-        ],
-      },
-    });
-    const plainPayload = toBinary(Wave3DisplayPropertyUploadSchema, display);
-    const sequence = 37;
-    const transformedPayload = transformWave3Payload(plainPayload, 1, 66, sequence);
+// Produced with the pinned upstream wave3_pb2.py at commit
+// 95dc51eb12562c49be9067052814d5960cc0829f, not with this repository's schema.
+const GOLDEN_DISPLAY_PACKET_HEX =
+  '0a3b0a2ca00d00a51e0000bc41ad1e00005842b01e019220170a000a130802103c1d0000a8412d0000c04135000098411020300040fe014801502c7025';
+const GOLDEN_COOL_COMMAND_HEX =
+  '0a450a052001c8090110201842200128013001380340fe01481150055801707b800103880101980101ba0107416e64726f6964ca0111544553542d57415645332d53455249414c';
 
-    const decoded = decodeWave3Message(envelope(1, sequence, transformedPayload, {
-      encryptionType: 1,
-      source: 66,
-    }));
+describe('WAVE 3 codec', () => {
+  it('decodes an upstream-generated golden display packet into merge-safe state', () => {
+    const decoded = decodeWave3Message(hexToBytes(GOLDEN_DISPLAY_PACKET_HEX));
 
     assert.equal(decoded.kind, 'display');
     if (decoded.kind !== 'display') {
       return;
     }
-    assert.deepEqual(decoded.state, {
+    assert.deepEqual(decoded.update, {
+      sleepState: 0,
+      operatingModeId: 1,
+      ambientTemperatureCelsius: 23.5,
+      ambientHumidityPercent: 54,
+      modeParameters: {
+        1: {
+          submode: 2,
+          airflowSpeed: 60,
+          targetTemperatureCelsius: 21,
+          targetTemperatureLowerCelsius: 19,
+          targetTemperatureUpperCelsius: 24,
+        },
+      },
+    });
+    assert.deepEqual(mergeWave3DisplayUpdate(undefined, decoded.update).state, {
       sleeping: false,
       powered: true,
       mode: 'cool',
@@ -61,14 +58,13 @@ describe('WAVE 3 codec', () => {
       targetTemperatureCelsius: 21,
       targetTemperatureLowerCelsius: 19,
       targetTemperatureUpperCelsius: 24,
-      targetHumidityPercent: 50,
       airflowSpeed: 60,
       submode: 2,
     });
-    assert.equal(decoded.sequence, sequence);
+    assert.equal(decoded.sequence, 37);
   });
 
-  it('does not invent absent proto2 scalar fields', () => {
+  it('does not invent absent optional scalar fields', () => {
     const display = create(Wave3DisplayPropertyUploadSchema, {
       waveOperatingMode: 5,
     });
@@ -81,7 +77,59 @@ describe('WAVE 3 codec', () => {
 
     assert.equal(decoded.kind, 'display');
     if (decoded.kind === 'display') {
-      assert.deepEqual(decoded.state, { mode: 'auto' });
+      assert.deepEqual(decoded.update, {
+        operatingModeId: 5,
+        modeParameters: {},
+      });
+      assert.deepEqual(mergeWave3DisplayUpdate(undefined, decoded.update).state, {
+        mode: 'auto',
+        powered: true,
+      });
+    }
+  });
+
+  it('derives OFF from mode zero and preserves mode parameters across incremental packets', () => {
+    const off = create(Wave3DisplayPropertyUploadSchema, {
+      devSleepState: 0,
+      waveOperatingMode: 0,
+    });
+    const decodedOff = decodeWave3Message(envelope(
+      1,
+      40,
+      toBinary(Wave3DisplayPropertyUploadSchema, off),
+    ));
+    assert.equal(decodedOff.kind, 'display');
+    if (decodedOff.kind !== 'display') {
+      return;
+    }
+    assert.deepEqual(mergeWave3DisplayUpdate(undefined, decodedOff.update).state, {
+      sleeping: false,
+      mode: 'off',
+      powered: false,
+    });
+
+    const initial = decodeWave3Message(hexToBytes(GOLDEN_DISPLAY_PACKET_HEX));
+    assert.equal(initial.kind, 'display');
+    if (initial.kind !== 'display') {
+      return;
+    }
+    const prior = mergeWave3DisplayUpdate(undefined, initial.update);
+    const incremental = create(Wave3DisplayPropertyUploadSchema, {
+      waveModeInfo: {
+        listInfo: [{}, { tempSet: 22 }],
+      },
+    });
+    const decodedIncremental = decodeWave3Message(envelope(
+      21,
+      41,
+      toBinary(Wave3DisplayPropertyUploadSchema, incremental),
+    ));
+    assert.equal(decodedIncremental.kind, 'display');
+    if (decodedIncremental.kind === 'display') {
+      const merged = mergeWave3DisplayUpdate(prior, decodedIncremental.update);
+      assert.equal(merged.state.mode, 'cool');
+      assert.equal(merged.state.targetTemperatureCelsius, 22);
+      assert.equal(merged.state.airflowSpeed, 60);
     }
   });
 
@@ -106,31 +154,36 @@ describe('WAVE 3 codec', () => {
     }
   });
 
-  it('decodes a configuration acknowledgement and preserves its sequence', () => {
-    const acknowledgement = create(Wave3ConfigWriteAckSchema, {
-      actionId: 91,
-      configOk: true,
-      cfgWaveOperatingMode: 2,
-      cfgTempSet: 24,
-    });
-
-    const decoded = decodeWave3Message(envelope(
-      18,
-      91,
-      toBinary(Wave3ConfigWriteAckSchema, acknowledgement),
-    ));
-
-    assert.equal(decoded.kind, 'acknowledgement');
-    if (decoded.kind === 'acknowledgement') {
-      assert.equal(decoded.sequence, 91);
-      assert.deepEqual(decoded.acknowledgement, {
+  it('reports configOk without conflating action ID and envelope sequence', () => {
+    for (const [configOk, expected] of [
+      [true, true],
+      [false, false],
+      [undefined, undefined],
+    ] as const) {
+      const acknowledgement = create(Wave3ConfigWriteAckSchema, {
         actionId: 91,
-        accepted: true,
-        values: {
-          mode: 'heat',
-          targetTemperatureCelsius: 24,
-        },
+        configOk,
+        cfgWaveOperatingMode: 2,
+        cfgTempSet: 24,
       });
+      const decoded = decodeWave3Message(envelope(
+        18,
+        92,
+        toBinary(Wave3ConfigWriteAckSchema, acknowledgement),
+      ));
+
+      assert.equal(decoded.kind, 'acknowledgement');
+      if (decoded.kind === 'acknowledgement') {
+        assert.equal(decoded.sequence, 92);
+        assert.deepEqual(decoded.acknowledgement, {
+          actionId: 91,
+          reportedConfigOk: expected,
+          values: {
+            mode: 'heat',
+            targetTemperatureCelsius: 24,
+          },
+        });
+      }
     }
   });
 
@@ -165,7 +218,7 @@ describe('WAVE 3 codec', () => {
       assert.equal(message.header?.needAck, 1);
       assert.equal(message.header?.seq, 123);
       assert.equal(message.header?.deviceSn, 'TEST-WAVE3-SERIAL');
-      assert.equal(message.header?.dataLen, message.header?.pdata.length);
+      assert.equal(message.header?.dataLen, message.header?.pdata?.length);
 
       const config = fromBinary(Wave3ConfigWriteSchema, message.header?.pdata ?? new Uint8Array());
       const actual = Object.fromEntries(
@@ -173,6 +226,15 @@ describe('WAVE 3 codec', () => {
       );
       assert.deepEqual(actual, expected);
     }
+
+    assert.equal(
+      bytesToHex(encodeWave3Command(
+        'TEST-WAVE3-SERIAL',
+        123,
+        { type: 'mode', mode: 'cool' },
+      ).bytes),
+      GOLDEN_COOL_COMMAND_HEX,
+    );
   });
 
   it('validates caller-supplied command boundaries', () => {
@@ -229,19 +291,33 @@ describe('WAVE 3 codec', () => {
     assert.equal(mismatch.kind, 'malformed');
     assert.equal(mismatch.diagnostic.reason, 'payload length mismatch');
     assert.equal('payload' in mismatch.diagnostic, false);
+
+    const wrongFunction = decodeWave3Message(envelope(
+      1,
+      89,
+      Uint8Array.of(1),
+      { commandFunction: 7 },
+    ));
+    assert.equal(wrongFunction.kind, 'unknown');
+    assert.equal(wrongFunction.diagnostic.commandFunction, 7);
   });
 
-  it('counts unknown protobuf fields without exposing their bytes', () => {
+  it('reports unsupported values and counts payload/envelope unknowns without exposing bytes', () => {
     const display = create(Wave3DisplayPropertyUploadSchema, { tempAmbient: 20 });
     const payload = concatenate(
       toBinary(Wave3DisplayPropertyUploadSchema, display),
       encodeVarint((700 << 3) | 0),
       encodeVarint(7),
     );
-    const decoded = decodeWave3Message(envelope(1, 51, payload));
+    const packetWithPayloadUnknown = envelope(1, 51, payload);
+    const decoded = decodeWave3Message(concatenate(
+      packetWithPayloadUnknown,
+      encodeVarint((701 << 3) | 0),
+      encodeVarint(8),
+    ));
 
     assert.equal(decoded.kind, 'display');
-    assert.equal(decoded.diagnostic.unknownFieldCount, 1);
+    assert.equal(decoded.diagnostic.unknownFieldCount, 2);
     assert.deepEqual(Object.keys(decoded.diagnostic).sort(), [
       'commandFunction',
       'commandId',
@@ -249,6 +325,53 @@ describe('WAVE 3 codec', () => {
       'sequence',
       'unknownFieldCount',
     ]);
+
+    const unknownMode = create(Wave3DisplayPropertyUploadSchema, {
+      waveOperatingMode: 99,
+    });
+    const decodedUnknownMode = decodeWave3Message(envelope(
+      1,
+      52,
+      toBinary(Wave3DisplayPropertyUploadSchema, unknownMode),
+    ));
+    assert.equal(decodedUnknownMode.kind, 'display');
+    assert.deepEqual(decodedUnknownMode.diagnostic.unsupportedValues, [
+      { field: 'wave_operating_mode', value: 99 },
+    ]);
+
+    const unknownAckMode = create(Wave3ConfigWriteAckSchema, {
+      cfgWaveOperatingMode: 99,
+    });
+    const decodedUnknownAckMode = decodeWave3Message(envelope(
+      18,
+      53,
+      toBinary(Wave3ConfigWriteAckSchema, unknownAckMode),
+    ));
+    assert.equal(decodedUnknownAckMode.kind, 'acknowledgement');
+    assert.deepEqual(decodedUnknownAckMode.diagnostic.unsupportedValues, [
+      { field: 'cfg_wave_operating_mode', value: 99 },
+    ]);
+  });
+
+  it('applies XOR only when both evidenced conditions hold', () => {
+    const payload = Uint8Array.of(0x10, 0x20, 0x30);
+    assert.strictEqual(transformWave3Payload(payload, 0, 66, 17), payload);
+    assert.strictEqual(transformWave3Payload(payload, 1, 32, 17), payload);
+    assert.deepEqual(
+      transformWave3Payload(payload, 1, 66, 17),
+      Uint8Array.of(0x01, 0x31, 0x21),
+    );
+
+    const decoded = decodeWave3Message(envelope(
+      1,
+      17,
+      hexToBytes('b40f1111b150'),
+      { encryptionType: 1, source: 66 },
+    ));
+    assert.equal(decoded.kind, 'display');
+    if (decoded.kind === 'display') {
+      assert.equal(decoded.update.ambientTemperatureCelsius, 20);
+    }
   });
 });
 
@@ -256,14 +379,18 @@ function envelope(
   commandId: number,
   sequence: number,
   payload: Uint8Array,
-  options: { encryptionType?: number; source?: number } = {},
+  options: {
+    commandFunction?: number;
+    encryptionType?: number;
+    source?: number;
+  } = {},
 ): Uint8Array {
   const message = create(Wave3SetMessageSchema, {
     header: {
       pdata: payload,
       src: options.source ?? 32,
       encType: options.encryptionType ?? 0,
-      cmdFunc: 254,
+      cmdFunc: options.commandFunction ?? 254,
       cmdId: commandId,
       dataLen: payload.length,
       seq: sequence,
@@ -271,6 +398,14 @@ function envelope(
   });
   assert.equal(isFieldSet(message.header!, Wave3SetHeaderSchema.field.dataLen), true);
   return toBinary(Wave3SetMessageSchema, message);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  return Uint8Array.from(Buffer.from(hex, 'hex'));
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('hex');
 }
 
 function encodeVarint(value: number): Uint8Array {

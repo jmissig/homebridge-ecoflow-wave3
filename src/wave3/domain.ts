@@ -1,4 +1,5 @@
 export const WAVE3_MODE_IDS = {
+  off: 0,
   cool: 1,
   heat: 2,
   fan: 3,
@@ -7,7 +8,7 @@ export const WAVE3_MODE_IDS = {
 } as const;
 
 export type Wave3Mode = keyof typeof WAVE3_MODE_IDS;
-export type Wave3ControllableMode = Exclude<Wave3Mode, 'dry'>;
+export type Wave3ControllableMode = Exclude<Wave3Mode, 'dry' | 'off'>;
 export type Wave3AirflowSpeed = 20 | 40 | 60 | 80 | 100;
 export type Wave3Submode = 0 | 2 | 3 | 4;
 
@@ -20,9 +21,31 @@ export interface Wave3State {
   targetTemperatureCelsius?: number;
   targetTemperatureLowerCelsius?: number;
   targetTemperatureUpperCelsius?: number;
-  targetHumidityPercent?: number;
   airflowSpeed?: number;
   submode?: number;
+}
+
+export interface Wave3ModeParameters {
+  submode?: number;
+  airflowSpeed?: number;
+  targetTemperatureCelsius?: number;
+  targetTemperatureLowerCelsius?: number;
+  targetTemperatureUpperCelsius?: number;
+}
+
+export interface Wave3DisplayUpdate {
+  sleepState?: number;
+  operatingModeId?: number;
+  ambientTemperatureCelsius?: number;
+  ambientHumidityPercent?: number;
+  modeParameters: Readonly<Record<number, Wave3ModeParameters>>;
+}
+
+export interface Wave3DisplayState {
+  sleepState?: number;
+  operatingModeId?: number;
+  modeParameters: Readonly<Record<number, Wave3ModeParameters>>;
+  state: Wave3State;
 }
 
 export interface Wave3RuntimeTemperatures {
@@ -54,6 +77,6 @@ export type Wave3AcknowledgedValues = Partial<{
 
 export interface Wave3Acknowledgement {
   actionId?: number;
-  accepted?: boolean;
+  reportedConfigOk?: boolean;
   values: Wave3AcknowledgedValues;
 }

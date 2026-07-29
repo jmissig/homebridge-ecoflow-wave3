@@ -4,9 +4,10 @@ A focused Homebridge plugin for controlling the EcoFlow WAVE 3 through HomeKit.
 
 ## Status
 
-The repository currently contains the Homebridge 2 plugin baseline and a
-pinned protocol dossier. EcoFlow authentication, MQTT, protobuf handling,
-device control, and working HomeKit characteristics are not implemented yet.
+The repository currently contains the Homebridge 2 plugin baseline, a pinned
+protocol dossier, and a tested WAVE 3 protobuf codec/domain layer. EcoFlow
+authentication, MQTT, device control, and working HomeKit characteristics are
+not implemented yet.
 
 The planned first slice is one primary `HeaterCooler` accessory for a
 user-configured WAVE 3. Nothing is considered hardware-supported until it has

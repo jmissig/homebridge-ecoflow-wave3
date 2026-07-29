@@ -5,7 +5,7 @@
 // Copyright its contributors. Modified to retain only the messages and fields
 // required by this WAVE 3-only Homebridge plugin.
 
-syntax = "proto2";
+syntax = "proto3";
 
 package ecoflow.wave3.v1;
 
@@ -13,7 +13,6 @@ message Wave3WaveOperatingModeParamItem {
   optional uint32 submode = 1;
   optional uint32 airflow_speed = 2;
   optional float temp_set = 3;
-  optional float humi_set = 4;
   optional float temp_thermostatic_upper_limit = 5;
   optional float temp_thermostatic_lower_limit = 6;
 }

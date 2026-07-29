@@ -212,6 +212,10 @@ Submodes used upstream are normal `0`, boost `2`, sleep `3`, and eco `4`.
 
 - `dev_sleep_state`, not only `wave_operating_mode`, should govern whether the
   normalized device is powered.
+- Display uploads can be incremental. Preserve the reported sleep state,
+  operating-mode ID, and per-mode parameter updates in a protobuf-free
+  accumulator before deriving the active normalized state. Mode `0` is off
+  even when `dev_sleep_state` is `0`.
 - The active mode list may be absent, incomplete, or shorter than the mode
   value; decoding must tolerate that without inventing targets.
 - Dry, presets, humidity targets, condensate, battery, drainage, and

@@ -231,6 +231,29 @@ describe('WAVE 3 codec', () => {
       })).kind,
       'malformed',
     );
+    for (const quotaMap of [
+      {
+        wave_operating_mode: 1,
+        temp_ambient: 1_000_000_000,
+      },
+      {
+        wave_operating_mode: 1,
+        humi_ambient: -4,
+      },
+      {
+        wave_operating_mode: 5,
+        current_temp_lower: 29,
+        current_temp_upper: 17,
+      },
+    ]) {
+      assert.equal(
+        decodeWave3QuotaReply(jsonBytes({
+          operateType: 'latestQuotas',
+          data: { online: 1, quotaMap },
+        })).kind,
+        'malformed',
+      );
+    }
   });
 
   it('reports configOk without conflating action ID and envelope sequence', () => {

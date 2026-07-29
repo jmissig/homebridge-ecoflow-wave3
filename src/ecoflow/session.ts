@@ -11,6 +11,10 @@ import type {
   MqttMessage,
   MqttTransport,
 } from './mqtt.js';
+import {
+  decodeWave3Message,
+  hasWave3DisplayEvidence,
+} from '../wave3/codec.js';
 
 export interface Wave3Topics {
   property: string;
@@ -26,6 +30,7 @@ export interface Wave3InboundMessage {
   serialNumber: string;
   kind: Wave3InboundMessageKind;
   payload: Uint8Array;
+  generation: number;
 }
 
 export interface CloudSessionLogger {
@@ -69,6 +74,7 @@ export class EcoFlowCloudSession {
     string,
     { requestId: string; generation: number }
   >();
+  private readonly lastDisplaySequenceByDevice = new Map<string, number>();
   private detachListeners: Array<() => void> = [];
   private establishPromise?: Promise<void>;
   private lifecycleController?: AbortController;
@@ -257,6 +263,7 @@ export class EcoFlowCloudSession {
     this.mqttConnected = false;
     this.authenticated = undefined;
     this.pendingRefreshes.clear();
+    this.lastDisplaySequenceByDevice.clear();
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
@@ -290,6 +297,8 @@ export class EcoFlowCloudSession {
         this.mqttConnected = true;
         this.connectionGeneration += 1;
         this.pendingRefreshes.clear();
+        this.lastDisplaySequenceByDevice.clear();
+        this.setState('starting');
         this.setupGenerationController?.abort();
         if (!publicOperationWasActive) {
           this.scheduleReconnectSetup();
@@ -299,6 +308,7 @@ export class EcoFlowCloudSession {
         if (!this.stopped) {
           this.abortPublicOperations();
           this.pendingRefreshes.clear();
+          this.lastDisplaySequenceByDevice.clear();
           this.mqttConnected = false;
           this.setState('offline');
           this.logger.warn('EcoFlow MQTT connection was interrupted');
@@ -447,14 +457,15 @@ export class EcoFlowCloudSession {
 
   private handleMessage(message: MqttMessage): void {
     const authenticated = this.authenticated;
-    if (authenticated === undefined) {
+    if (authenticated === undefined || !this.mqttConnected || this.stopped) {
       return;
     }
     for (const device of this.config.devices) {
       const topics = buildWave3Topics(authenticated.userId, device.serialNumber);
       const kind = inboundKindForTopic(message.topic, topics);
       if (kind !== undefined) {
-        if (kind === 'property') {
+        if (kind === 'property'
+          && this.propertySupersedesRefresh(device.serialNumber, message.payload)) {
           this.pendingRefreshes.delete(device.serialNumber);
         } else if (kind === 'getReply'
           && !this.consumeMatchingRefresh(device.serialNumber, message.payload)) {
@@ -464,6 +475,7 @@ export class EcoFlowCloudSession {
           serialNumber: device.serialNumber,
           kind,
           payload: message.payload,
+          generation: this.connectionGeneration,
         };
         for (const listener of this.messageListeners) {
           listener(inbound);
@@ -506,6 +518,7 @@ export class EcoFlowCloudSession {
     this.mqttConnected = false;
     this.authenticated = undefined;
     this.pendingRefreshes.clear();
+    this.lastDisplaySequenceByDevice.clear();
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
@@ -666,6 +679,23 @@ export class EcoFlowCloudSession {
     return true;
   }
 
+  private propertySupersedesRefresh(
+    serialNumber: string,
+    payload: Uint8Array,
+  ): boolean {
+    const decoded = decodeWave3Message(payload);
+    if (decoded.kind !== 'display'
+      || !hasWave3DisplayEvidence(decoded.update)
+      || !isNewerSequence(
+        decoded.sequence,
+        this.lastDisplaySequenceByDevice.get(serialNumber),
+      )) {
+      return false;
+    }
+    this.lastDisplaySequenceByDevice.set(serialNumber, decoded.sequence);
+    return true;
+  }
+
   private clearPendingRefresh(serialNumber: string, requestId: string): void {
     if (this.pendingRefreshes.get(serialNumber)?.requestId === requestId) {
       this.pendingRefreshes.delete(serialNumber);
@@ -732,6 +762,14 @@ function parseRefreshReplyId(payload: Uint8Array): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function isNewerSequence(candidate: number, previous: number | undefined): boolean {
+  if (previous === undefined) {
+    return true;
+  }
+  const difference = (candidate - previous) >>> 0;
+  return difference !== 0 && difference < 0x8000_0000;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number): Promise<T> {

@@ -215,6 +215,14 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
       update,
       'ambientHumidityPercent',
     );
+    if (update.ambientTemperatureCelsius !== undefined
+      && !isSupportedAmbientTemperature(update.ambientTemperatureCelsius)) {
+      throw new TypeError('quota ambient temperature is unsupported');
+    }
+    if (update.ambientHumidityPercent !== undefined
+      && (update.ambientHumidityPercent < 0 || update.ambientHumidityPercent > 100)) {
+      throw new TypeError('quota ambient humidity is unsupported');
+    }
     if (update.sleepState !== undefined && update.sleepState !== 0 && update.sleepState !== 1) {
       throw new TypeError('quota sleep state is unsupported');
     }
@@ -265,6 +273,12 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
     if (parameters.submode !== undefined
       && ![0, 2, 3, 4].includes(parameters.submode)) {
       throw new TypeError('quota submode is unsupported');
+    }
+    if (parameters.targetTemperatureLowerCelsius !== undefined
+      && parameters.targetTemperatureUpperCelsius !== undefined
+      && parameters.targetTemperatureLowerCelsius
+        > parameters.targetTemperatureUpperCelsius) {
+      throw new TypeError('quota automatic temperature range is invalid');
     }
     if (Object.values(parameters).some(value => value !== undefined)) {
       (update.modeParameters as Record<number, Wave3ModeParameters>)[
@@ -388,6 +402,14 @@ export function mergeWave3DisplayUpdate(
     modeParameters,
     state,
   };
+}
+
+export function hasWave3DisplayEvidence(update: Wave3DisplayUpdate): boolean {
+  return update.sleepState !== undefined
+    || update.operatingModeId !== undefined
+    || update.ambientTemperatureCelsius !== undefined
+    || update.ambientHumidityPercent !== undefined
+    || Object.keys(update.modeParameters).length > 0;
 }
 
 function normalizeDisplayUpdate(

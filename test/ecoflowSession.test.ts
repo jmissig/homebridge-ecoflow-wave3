@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { create, toBinary } from '@bufbuild/protobuf';
+
 import type { EcoFlowMqttCredentials } from '../src/ecoflow/auth.js';
 import { parseEcoFlowWave3Config } from '../src/ecoflow/config.js';
 import type {
@@ -21,6 +23,11 @@ import {
   type CloudSessionLogger,
   type Wave3InboundMessage,
 } from '../src/ecoflow/session.js';
+import {
+  Wave3DisplayPropertyUploadSchema,
+  Wave3RuntimePropertyUploadSchema,
+  Wave3SetMessageSchema,
+} from '../src/proto/gen/ecoflow/wave3/v1/wave3_pb.js';
 import { Wave3Controller } from '../src/wave3/controller.js';
 
 const EXPECTED_REFRESH_PAYLOAD = JSON.stringify({
@@ -79,6 +86,7 @@ describe('EcoFlow cloud session', () => {
       serialNumber: 'TESTWAVE30002',
       kind: 'property',
       payload: Uint8Array.of(1, 2),
+      generation: 0,
     }]);
 
     await session.publishCommand('TESTWAVE30001', Uint8Array.of(3, 4));
@@ -153,40 +161,70 @@ describe('EcoFlow cloud session', () => {
 
     connection.emitDisconnect();
     assert.equal(controller.snapshot.availability, 'reconnecting');
+    const propertyTopic = buildWave3Topics('TEST_USER', 'TESTWAVE30001').property;
+    connection.emitMessage({
+      topic: propertyTopic,
+      payload: displayPacket(10, 2, 26, 23),
+    });
+    assert.equal(controller.snapshot.availability, 'reconnecting');
+    assert.deepEqual(controller.snapshot.state, {});
+
     connection.emitConnect();
     await flushAsyncWork();
     assert.equal(session.state, 'online');
     assert.equal(controller.snapshot.availability, 'stale');
 
     connection.emitMessage({
-      topic: getReply,
-      payload: jsonBytes({
-        id: '999910001',
-        operateType: 'latestQuotas',
-        data: { online: 0 },
-      }),
+      topic: propertyTopic,
+      payload: runtimePacket(11, 42),
     });
     assert.equal(controller.snapshot.availability, 'stale');
-
-    connection.emitMessage({
-      topic: buildWave3Topics('TEST_USER', 'TESTWAVE30001').property,
-      payload: Uint8Array.of(0xff),
-    });
     connection.emitMessage({
       topic: getReply,
       payload: jsonBytes({
         id: '999910003',
         operateType: 'latestQuotas',
-        data: { online: 0 },
+        data: {
+          online: 1,
+          quotaMap: {
+            dev_sleep_state: 0,
+            wave_operating_mode: 1,
+            current_temp_set: 22,
+          },
+        },
       }),
     });
-    assert.equal(controller.snapshot.availability, 'stale');
+    assert.equal(controller.snapshot.availability, 'online');
 
     await session.requestState('TESTWAVE30001');
+    connection.emitMessage({
+      topic: propertyTopic,
+      payload: displayPacket(12, 2, 25, 23),
+    });
     connection.emitMessage({
       topic: getReply,
       payload: jsonBytes({
         id: '999910005',
+        operateType: 'latestQuotas',
+        data: { online: 0 },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.state.mode, 'heat');
+
+    await session.requestState('TESTWAVE30001');
+    connection.emitMessage({
+      topic: propertyTopic,
+      payload: Uint8Array.of(0xff),
+    });
+    connection.emitMessage({
+      topic: propertyTopic,
+      payload: displayPacket(11, 1, 24, 22),
+    });
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        id: '999910006',
         operateType: 'latestQuotas',
         data: { online: 0 },
       }),
@@ -826,6 +864,57 @@ async function flushAsyncWork(): Promise<void> {
 
 function jsonBytes(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
+}
+
+function displayPacket(
+  sequence: number,
+  mode: number,
+  ambientTemperature: number,
+  targetTemperature: number,
+): Uint8Array {
+  const modeParameters = Array.from({ length: mode + 1 }, () => ({}));
+  modeParameters[mode] = { tempSet: targetTemperature };
+  return wave3Envelope(
+    21,
+    sequence,
+    toBinary(Wave3DisplayPropertyUploadSchema, create(
+      Wave3DisplayPropertyUploadSchema,
+      {
+        waveOperatingMode: mode,
+        tempAmbient: ambientTemperature,
+        waveModeInfo: { listInfo: modeParameters },
+      },
+    )),
+  );
+}
+
+function runtimePacket(sequence: number, condenserTemperature: number): Uint8Array {
+  return wave3Envelope(
+    22,
+    sequence,
+    toBinary(Wave3RuntimePropertyUploadSchema, create(
+      Wave3RuntimePropertyUploadSchema,
+      { tempCondenser: condenserTemperature },
+    )),
+  );
+}
+
+function wave3Envelope(
+  commandId: number,
+  sequence: number,
+  payload: Uint8Array,
+): Uint8Array {
+  return toBinary(Wave3SetMessageSchema, create(Wave3SetMessageSchema, {
+    header: {
+      pdata: payload,
+      src: 32,
+      dest: 66,
+      cmdFunc: 254,
+      cmdId: commandId,
+      dataLen: payload.length,
+      seq: sequence,
+    },
+  }));
 }
 
 async function completesWithin(promise: Promise<void>, milliseconds: number): Promise<void> {

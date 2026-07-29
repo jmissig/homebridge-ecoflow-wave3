@@ -7,6 +7,7 @@ import {
   decodeWave3QuotaReply,
   decodeWave3Message,
   encodeWave3Command,
+  hasWave3DisplayEvidence,
   mergeWave3DisplayUpdate,
 } from './codec.js';
 import type {
@@ -71,6 +72,7 @@ export class Wave3Controller {
   private displayRevision = 0;
   private lastDisplaySequence?: number;
   private lastRuntimeSequence?: number;
+  private activeGeneration?: number;
   private nextSequence: number;
   private stopped = false;
   private hasCurrentGenerationState = false;
@@ -207,12 +209,24 @@ export class Wave3Controller {
     if (this.stopped || message.serialNumber !== this.serialNumber) {
       return;
     }
+    if (this.activeGeneration !== undefined
+      && message.generation < this.activeGeneration) {
+      return;
+    }
+    if (this.activeGeneration === undefined
+      || message.generation > this.activeGeneration) {
+      this.clearCurrentGenerationState();
+      this.activeGeneration = message.generation;
+    }
     if (message.kind === 'getReply') {
       this.handleQuotaReply(message.payload);
       return;
     }
     const decoded = decodeWave3Message(message.payload);
     if (message.kind === 'property' && decoded.kind === 'display') {
+      if (!hasWave3DisplayEvidence(decoded.update)) {
+        return;
+      }
       if (!isNewerSequence(decoded.sequence, this.lastDisplaySequence)) {
         return;
       }
@@ -254,7 +268,7 @@ export class Wave3Controller {
       this.updateSnapshot('offline');
       return;
     }
-    if (decoded.update === undefined || !hasDisplayEvidence(decoded.update)) {
+    if (decoded.update === undefined || !hasWave3DisplayEvidence(decoded.update)) {
       this.updateFreshnessForOnlineSession();
       return;
     }
@@ -373,6 +387,7 @@ export class Wave3Controller {
     this.displayRevision = 0;
     this.lastDisplaySequence = undefined;
     this.lastRuntimeSequence = undefined;
+    this.activeGeneration = undefined;
   }
 
   private markStateFresh(): void {
@@ -529,14 +544,6 @@ function updateProvidesCommandEvidence(
   case 'submode':
     return parameters?.submode !== undefined;
   }
-}
-
-function hasDisplayEvidence(update: Wave3DisplayUpdate): boolean {
-  return update.sleepState !== undefined
-    || update.operatingModeId !== undefined
-    || update.ambientTemperatureCelsius !== undefined
-    || update.ambientHumidityPercent !== undefined
-    || Object.keys(update.modeParameters).length > 0;
 }
 
 function closeEnough(actual: number | undefined, expected: number): boolean {

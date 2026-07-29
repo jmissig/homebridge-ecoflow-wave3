@@ -142,6 +142,10 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.availability, 'stale');
     assert.deepEqual(controller.snapshot.state, {});
 
+    session.emitPacket('property', displayPacket(4, { mode: 99 }));
+    assert.equal(controller.snapshot.availability, 'stale');
+    assert.deepEqual(controller.snapshot.state, {});
+
     session.emitPacket('getReply', quotaReply({ online: 0 }));
     assert.equal(controller.snapshot.availability, 'offline');
 
@@ -668,6 +672,7 @@ describe('WAVE 3 controller', () => {
 
 class FakeControllerSession implements Wave3ControllerSession {
   public state: CloudSessionState = 'online';
+  public generation = 0;
   public readonly publishCalls: Array<{ serialNumber: string; payload: Uint8Array }> = [];
   public requestStateCalls = 0;
   public abortedPublishCalls = 0;
@@ -717,11 +722,19 @@ class FakeControllerSession implements Wave3ControllerSession {
 
   emitPacket(kind: Wave3InboundMessage['kind'], payload: Uint8Array): void {
     for (const listener of this.messageListeners) {
-      listener({ serialNumber: TEST_SERIAL, kind, payload });
+      listener({
+        serialNumber: TEST_SERIAL,
+        kind,
+        payload,
+        generation: this.generation,
+      });
     }
   }
 
   emitState(state: CloudSessionState): void {
+    if (state === 'starting') {
+      this.generation += 1;
+    }
     this.state = state;
     for (const listener of this.stateListeners) {
       listener(state);

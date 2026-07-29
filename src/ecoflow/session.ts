@@ -62,6 +62,7 @@ export class EcoFlowCloudSession {
   private authenticated?: EcoFlowAuthenticatedSession;
   private readonly messageListeners = new Set<(message: Wave3InboundMessage) => void>();
   private readonly errorListeners = new Set<(error: EcoFlowCloudSessionError) => void>();
+  private readonly stateListeners = new Set<(state: CloudSessionState) => void>();
   private readonly activeOperations = new Set<Promise<unknown>>();
   private readonly publicOperationControllers = new Set<AbortController>();
   private detachListeners: Array<() => void> = [];
@@ -91,7 +92,7 @@ export class EcoFlowCloudSession {
     if (this.state !== 'idle') {
       throw new EcoFlowCloudSessionError('EcoFlow cloud session has already been started');
     }
-    this.state = 'starting';
+    this.setState('starting');
     this.logger.info('Authenticating with EcoFlow private cloud');
 
     const controller = new AbortController();
@@ -125,7 +126,7 @@ export class EcoFlowCloudSession {
         throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
       }
       this.authenticated = undefined;
-      this.state = 'failed';
+      this.setState('failed');
       throw new EcoFlowCloudSessionError('EcoFlow private cloud authentication failed');
     }
     if (this.stopped) {
@@ -145,7 +146,7 @@ export class EcoFlowCloudSession {
         throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
       }
       this.authenticated = undefined;
-      this.state = 'failed';
+      this.setState('failed');
       throw new EcoFlowCloudSessionError('EcoFlow MQTT connection failed');
     }
     if (this.stopped) {
@@ -165,7 +166,7 @@ export class EcoFlowCloudSession {
       if (this.stopped) {
         throw new EcoFlowCloudSessionError('EcoFlow cloud session was stopped during startup');
       }
-      this.state = 'failed';
+      this.setState('failed');
       await this.closeConnectionAfterFailure();
       throw error;
     } finally {
@@ -183,6 +184,11 @@ export class EcoFlowCloudSession {
   onError(listener: (error: EcoFlowCloudSessionError) => void): () => void {
     this.errorListeners.add(listener);
     return () => this.errorListeners.delete(listener);
+  }
+
+  onStateChange(listener: (state: CloudSessionState) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
   }
 
   async publishCommand(serialNumber: string, payload: Uint8Array): Promise<void> {
@@ -222,7 +228,7 @@ export class EcoFlowCloudSession {
 
   private async performStop(): Promise<void> {
     this.stopped = true;
-    this.state = 'stopped';
+    this.setState('stopped');
     this.lifecycleController?.abort();
     this.setupGenerationController?.abort();
     this.abortPublicOperations();
@@ -272,7 +278,7 @@ export class EcoFlowCloudSession {
         if (!this.stopped) {
           this.abortPublicOperations();
           this.mqttConnected = false;
-          this.state = 'offline';
+          this.setState('offline');
           this.logger.warn('EcoFlow MQTT connection was interrupted');
         }
       }),
@@ -295,7 +301,7 @@ export class EcoFlowCloudSession {
           return;
         }
         const error = new EcoFlowCloudSessionError('EcoFlow MQTT reconnect setup failed');
-        this.state = 'failed';
+        this.setState('failed');
         this.logger.error(error.message);
         this.detachConnectionListeners();
         const connection = this.connection;
@@ -404,7 +410,7 @@ export class EcoFlowCloudSession {
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
     }
     this.assertSetupActive(connection, generation);
-    this.state = 'online';
+    this.setState('online');
   }
 
   private handleMessage(message: MqttMessage): void {
@@ -540,7 +546,7 @@ export class EcoFlowCloudSession {
   private async performConnectionFailureCleanup(
     expectedConnection: MqttConnection,
   ): Promise<void> {
-    this.state = 'failed';
+    this.setState('failed');
     this.detachConnectionListeners();
     this.connection = undefined;
     this.mqttConnected = false;
@@ -553,6 +559,16 @@ export class EcoFlowCloudSession {
   private abortPublicOperations(): void {
     for (const controller of this.publicOperationControllers) {
       controller.abort();
+    }
+  }
+
+  private setState(state: CloudSessionState): void {
+    if (this.state === state) {
+      return;
+    }
+    this.state = state;
+    for (const listener of this.stateListeners) {
+      listener(state);
     }
   }
 

@@ -47,11 +47,14 @@ describe('EcoFlow cloud session', () => {
       requestIds,
     );
     const messages: Wave3InboundMessage[] = [];
+    const states: string[] = [];
     session.onMessage(message => messages.push(message));
+    session.onStateChange(state => states.push(state));
 
     await session.start();
 
     assert.equal(session.state, 'online');
+    assert.deepEqual(states, ['starting', 'online']);
     assert.equal(mqtt.credentials?.host, 'mqtt.example.test');
     assert.equal(connection.subscribeCalls.length, 1);
     assert.deepEqual(
@@ -95,6 +98,7 @@ describe('EcoFlow cloud session', () => {
     await session.stop();
     await session.stop();
     assert.equal(session.state, 'stopped');
+    assert.deepEqual(states, ['starting', 'online', 'stopped']);
     assert.equal(connection.closeCalls, 1);
     assert.deepEqual(connection.closeForces, [true]);
     assert.equal(connection.totalListenerCount(), 0);

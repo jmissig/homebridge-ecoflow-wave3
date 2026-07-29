@@ -112,20 +112,20 @@ the first command set without importing Homebridge or connecting to EcoFlow.
 explicit WAVE 3 serials, subscribe, refresh, reconnect, publish bytes, and shut
 down cleanly.
 
-## Next — Phase 4: Confirmed-state controller
+## Phase 4: Confirmed-state controller
 
-- [ ] Build one controller per WAVE 3 around the codec and cloud session.
-- [ ] Merge partial display/runtime messages into immutable normalized state.
-- [ ] Track online, stale, reconnecting, and stopped states explicitly.
-- [ ] Correlate command acknowledgements by sequence ID where the protocol
+- [x] Build one controller per WAVE 3 around the codec and cloud session.
+- [x] Merge partial display/runtime messages into immutable normalized state.
+- [x] Track online, stale, reconnecting, and stopped states explicitly.
+- [x] Correlate command acknowledgements by sequence ID where the protocol
   supports it.
-- [ ] Distinguish MQTT publication, broker acknowledgement, WAVE command
+- [x] Distinguish MQTT publication, broker acknowledgement, WAVE command
   acknowledgement, and observed device-state confirmation.
-- [ ] Define bounded command timeouts and error results.
-- [ ] Do not make optimistic state the authoritative HomeKit state.
-- [ ] Coalesce or serialize conflicting climate commands so mode and target
+- [x] Define bounded command timeouts and error results.
+- [x] Do not make optimistic state the authoritative HomeKit state.
+- [x] Coalesce or serialize conflicting climate commands so mode and target
   changes cannot race.
-- [ ] Add deterministic tests for partial updates, stale state, delayed
+- [x] Add deterministic tests for partial updates, stale state, delayed
   acknowledgements, rejected/unknown acknowledgements, timeouts, reconnect
   during a command, duplicate messages, and out-of-order state.
 
@@ -133,7 +133,7 @@ down cleanly.
 the chosen acknowledgement/state-confirmation policy and fail predictably
 otherwise.
 
-## Phase 5: Homebridge platform and primary climate accessory
+## Next — Phase 5: Homebridge platform and primary climate accessory
 
 - [ ] Validate config before starting any account or MQTT work.
 - [ ] Discover/register only WAVE 3 accessories after

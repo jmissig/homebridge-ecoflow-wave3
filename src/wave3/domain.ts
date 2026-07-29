@@ -80,3 +80,35 @@ export interface Wave3Acknowledgement {
   reportedConfigOk?: boolean;
   values: Wave3AcknowledgedValues;
 }
+
+export type Wave3Availability =
+  | 'offline'
+  | 'reconnecting'
+  | 'online'
+  | 'stale'
+  | 'stopped';
+
+export interface Wave3ControllerSnapshot {
+  availability: Wave3Availability;
+  state: Readonly<Wave3State>;
+  runtimeTemperatures: Readonly<Wave3RuntimeTemperatures>;
+  updatedAt?: number;
+}
+
+export type Wave3CommandFailure =
+  | 'publicationFailed'
+  | 'acknowledgementRejected'
+  | 'timeout'
+  | 'disconnected'
+  | 'stopped';
+
+export type Wave3CommandResult =
+  | {
+    status: 'confirmed';
+    sequence: number;
+  }
+  | {
+    status: 'failed';
+    sequence: number;
+    reason: Wave3CommandFailure;
+  };

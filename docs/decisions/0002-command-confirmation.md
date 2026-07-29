@@ -1,0 +1,47 @@
+# Decision 0002: Command confirmation policy
+
+- Date: 2026-07-28
+- Status: accepted for fake-backed implementation; hardware validation pending
+
+## Context
+
+MQTT QoS 1 confirms broker delivery, not device acceptance. The pinned WAVE 3
+protocol also exposes configuration-write acknowledgements and display-state
+uploads, but it does not demonstrate the complete semantics of `configOk`,
+`actionId`, or acknowledgement sequence correlation.
+
+HomeKit must not rubber-band to optimistic values or report a command as
+successful merely because MQTT publication completed.
+
+## Decision
+
+The controller serializes commands and considers one successful only after:
+
+1. MQTT publication completes.
+2. A configuration-write acknowledgement arrives with the same envelope
+   sequence as the command.
+3. `configOk` is explicitly `true`.
+4. The acknowledgement echoes values consistent with the command.
+5. A newer display upload, received after that acknowledgement, confirms the
+   requested normalized state.
+
+A state upload received before acknowledgement cannot confirm the command.
+Duplicate and older telemetry sequences do not overwrite newer state. A
+positive acknowledgement triggers a state-refresh request.
+
+Publication failure, explicit/ambiguous acknowledgement, timeout, disconnect,
+or shutdown returns a typed failure. Commands are serialized so climate mode,
+target, range, fan, and submode writes cannot race. Cached confirmed state is
+never changed optimistically.
+
+## Consequences
+
+- This policy is deliberately conservative and may reject commands that the
+  device actually applied.
+- `configOk` absence is treated as rejection until hardware proves another
+  interpretation.
+- Exact sequence correlation and 32-bit telemetry ordering remain protocol
+  inferences. Phase 6 must validate them before commands are enabled against
+  the household WAVE 3.
+- HomeKit can distinguish publication failure, rejection, timeout,
+  disconnect, and shutdown without exposing transport details.

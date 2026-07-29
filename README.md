@@ -16,6 +16,11 @@ The planned first slice is one primary `HeaterCooler` accessory for a
 user-configured WAVE 3. Nothing is considered hardware-supported until it has
 been validated against the household unit.
 
+Until live telemetry identifies actual compressor/heater activity, the current
+heater/cooler state is conservatively `INACTIVE` or `IDLE`, not inferred from
+the selected mode. Dry and fan-only modes are not disguised as climate target
+modes; an evidenced cool/heat/auto target is retained while the unit is off.
+
 ## Development
 
 Until the plugin is published, install it from this checkout:

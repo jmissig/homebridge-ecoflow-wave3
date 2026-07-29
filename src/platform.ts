@@ -32,6 +32,7 @@ import {
 export interface Wave3AccessoryContext {
   schemaVersion: 1;
   serialNumber: string;
+  lastTargetMode?: 'auto' | 'cool' | 'heat';
 }
 
 export interface PlatformCloudSession extends Wave3ControllerSession {
@@ -200,9 +201,13 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         this.log.info('Restored a configured WAVE 3 accessory from cache');
       }
 
+      const lastTargetMode = accessory.context.lastTargetMode;
       accessory.context = {
         schemaVersion: 1,
         serialNumber: device.serialNumber,
+        ...(lastTargetMode === 'auto' || lastTargetMode === 'cool' || lastTargetMode === 'heat'
+          ? { lastTargetMode }
+          : {}),
       };
       this.api.updatePlatformAccessories([accessory]);
 

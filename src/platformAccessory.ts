@@ -52,6 +52,7 @@ export class Wave3PlatformAccessory {
   private snapshot: Wave3ControllerSnapshot;
   private readonly detachSnapshot: () => void;
   private writeTail: Promise<void> = Promise.resolve();
+  private lastTargetState?: number;
   private stopped = false;
 
   constructor(
@@ -60,6 +61,10 @@ export class Wave3PlatformAccessory {
     private readonly controller: Wave3AccessoryController,
   ) {
     this.snapshot = controller.snapshot;
+    this.lastTargetState = targetStateForMode(
+      accessory.context.lastTargetMode,
+      this.platform.Characteristic.TargetHeaterCoolerState,
+    );
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'EcoFlow')
       .setCharacteristic(this.platform.Characteristic.Model, 'WAVE 3')
@@ -154,7 +159,14 @@ export class Wave3PlatformAccessory {
     this.heaterCoolerService
       .getCharacteristic(characteristicType)
       .onGet(() => this.readCharacteristic(key))
-      .onSet(value => this.enqueueWrite(() => command(value)));
+      .onSet(async value => {
+        await this.enqueueWrite(() => command(value));
+        setImmediate(() => {
+          if (!this.stopped) {
+            this.pushSnapshot(this.snapshot);
+          }
+        });
+      });
   }
 
   private bindReadOnly(
@@ -168,10 +180,7 @@ export class Wave3PlatformAccessory {
 
   private readCharacteristic(key: HomeKitClimateKey): CharacteristicValue {
     this.requireOnline();
-    const value = mapSnapshotToHomeKit(
-      this.snapshot,
-      this.platform.Characteristic,
-    )[key];
+    const value = this.mapSnapshot(this.snapshot)[key];
     if (value === undefined) {
       throw this.communicationError();
     }
@@ -184,7 +193,10 @@ export class Wave3PlatformAccessory {
       let requestedCommand: Wave3Command;
       try {
         requestedCommand = command();
-      } catch {
+      } catch (error) {
+        if (error instanceof CommandNotAllowedInCurrentStateError) {
+          throw this.currentStateError();
+        }
         throw this.invalidValueError();
       }
       const result = await this.controller.execute(requestedCommand);
@@ -205,7 +217,7 @@ export class Wave3PlatformAccessory {
       return;
     }
 
-    const values = mapSnapshotToHomeKit(snapshot, this.platform.Characteristic);
+    const values = this.mapSnapshot(snapshot);
     const characteristic = this.platform.Characteristic;
     const mappings = [
       [characteristic.Active, values.active],
@@ -247,6 +259,25 @@ export class Wave3PlatformAccessory {
     }
   }
 
+  private mapSnapshot(snapshot: Wave3ControllerSnapshot): HomeKitClimateValues {
+    const values = mapSnapshotToHomeKit(
+      snapshot,
+      this.platform.Characteristic,
+      this.lastTargetState,
+    );
+    if (values.targetState !== undefined
+      && (snapshot.state.mode === 'auto'
+        || snapshot.state.mode === 'cool'
+        || snapshot.state.mode === 'heat')) {
+      this.lastTargetState = values.targetState;
+      if (this.accessory.context.lastTargetMode !== snapshot.state.mode) {
+        this.accessory.context.lastTargetMode = snapshot.state.mode;
+        this.platform.api.updatePlatformAccessories([this.accessory]);
+      }
+    }
+    return values;
+  }
+
   private communicationError(): Error {
     return new this.platform.api.hap.HapStatusError(
       this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
@@ -256,6 +287,12 @@ export class Wave3PlatformAccessory {
   private invalidValueError(): Error {
     return new this.platform.api.hap.HapStatusError(
       this.platform.api.hap.HAPStatus.INVALID_VALUE_IN_REQUEST,
+    );
+  }
+
+  private currentStateError(): Error {
+    return new this.platform.api.hap.HapStatusError(
+      this.platform.api.hap.HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE,
     );
   }
 
@@ -272,6 +309,7 @@ export class Wave3PlatformAccessory {
 export function mapSnapshotToHomeKit(
   snapshot: Wave3ControllerSnapshot,
   characteristic: EcoFlowWave3Platform['Characteristic'],
+  lastTargetState?: number,
 ): HomeKitClimateValues {
   const state = snapshot.state;
   const active = state.powered === undefined
@@ -279,7 +317,11 @@ export function mapSnapshotToHomeKit(
     : state.powered
       ? characteristic.Active.ACTIVE
       : characteristic.Active.INACTIVE;
-  const targetState = targetHomeKitState(state.mode, characteristic.TargetHeaterCoolerState);
+  const targetState = targetHomeKitState(
+    state,
+    characteristic.TargetHeaterCoolerState,
+    lastTargetState,
+  );
   return {
     active,
     currentState: currentHomeKitState(state, characteristic.CurrentHeaterCoolerState),
@@ -287,10 +329,14 @@ export function mapSnapshotToHomeKit(
     currentTemperature: state.ambientTemperatureCelsius,
     coolingThreshold: state.mode === 'auto'
       ? state.targetTemperatureUpperCelsius
-      : state.targetTemperatureCelsius,
+      : state.mode === 'cool'
+        ? state.targetTemperatureCelsius
+        : undefined,
     heatingThreshold: state.mode === 'auto'
       ? state.targetTemperatureLowerCelsius
-      : state.targetTemperatureCelsius,
+      : state.mode === 'heat'
+        ? state.targetTemperatureCelsius
+        : undefined,
     rotationSpeed: isAirflowSpeed(state.airflowSpeed)
       ? state.airflowSpeed
       : undefined,
@@ -307,46 +353,45 @@ function currentHomeKitState(
   if (state.powered !== true || state.mode === undefined) {
     return undefined;
   }
-  if (state.mode === 'cool' || state.mode === 'dry') {
-    return values.COOLING;
-  }
-  if (state.mode === 'heat') {
-    return values.HEATING;
-  }
-  if (state.mode === 'auto') {
-    const ambient = state.ambientTemperatureCelsius;
-    if (ambient !== undefined
-      && state.targetTemperatureUpperCelsius !== undefined
-      && ambient > state.targetTemperatureUpperCelsius) {
-      return values.COOLING;
-    }
-    if (ambient !== undefined
-      && state.targetTemperatureLowerCelsius !== undefined
-      && ambient < state.targetTemperatureLowerCelsius) {
-      return values.HEATING;
-    }
-  }
   return values.IDLE;
 }
 
 function targetHomeKitState(
-  mode: Wave3State['mode'],
+  state: Readonly<Wave3State>,
   values: EcoFlowWave3Platform['Characteristic']['TargetHeaterCoolerState'],
+  lastTargetState?: number,
 ): number | undefined {
-  switch (mode) {
+  switch (state.mode) {
   case 'cool':
-  case 'dry':
     return values.COOL;
   case 'heat':
     return values.HEAT;
   case 'auto':
-  case 'fan':
     return values.AUTO;
   case 'off':
-    return values.AUTO;
-  case undefined:
+    return state.powered === false ? lastTargetState : undefined;
+  case 'dry':
+  case 'fan':
     return undefined;
+  case undefined:
+    return state.powered === false ? lastTargetState : undefined;
   }
+}
+
+function targetStateForMode(
+  mode: Wave3AccessoryContext['lastTargetMode'],
+  values: EcoFlowWave3Platform['Characteristic']['TargetHeaterCoolerState'],
+): number | undefined {
+  if (mode === 'auto') {
+    return values.AUTO;
+  }
+  if (mode === 'cool') {
+    return values.COOL;
+  }
+  if (mode === 'heat') {
+    return values.HEAT;
+  }
+  return undefined;
 }
 
 function targetStateCommand(
@@ -371,14 +416,18 @@ function thresholdCommand(
   state: Readonly<Wave3State>,
 ): Wave3Command {
   validateTemperature(celsius);
-  if (state.mode !== 'auto') {
+  if ((kind === 'cooling' && state.mode === 'cool')
+    || (kind === 'heating' && state.mode === 'heat')) {
     return { type: 'targetTemperature', celsius };
+  }
+  if (state.mode !== 'auto') {
+    throw new CommandNotAllowedInCurrentStateError();
   }
   const other = kind === 'cooling'
     ? state.targetTemperatureLowerCelsius
     : state.targetTemperatureUpperCelsius;
   if (other === undefined) {
-    throw new RangeError('automatic temperature range is incomplete');
+    throw new CommandNotAllowedInCurrentStateError();
   }
   const lowerCelsius = kind === 'heating' ? celsius : other;
   const upperCelsius = kind === 'cooling' ? celsius : other;
@@ -408,3 +457,5 @@ function isAirflowSpeed(value: number | undefined): value is 20 | 40 | 60 | 80 |
     || value === 80
     || value === 100;
 }
+
+class CommandNotAllowedInCurrentStateError extends Error {}

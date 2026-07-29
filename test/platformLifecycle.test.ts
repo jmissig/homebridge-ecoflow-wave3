@@ -36,6 +36,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const expectedFirstUuid = uuidFor('FIRST1234');
     const expectedSecondUuid = uuidFor('SECOND5678');
     const first = new FakeCachedAccessory('Old Bedroom Name', expectedFirstUuid);
+    first.context.lastTargetMode = 'heat';
     const duplicate = new FakeCachedAccessory('Duplicate', expectedFirstUuid);
     const stale = new FakeCachedAccessory('Old Unit', uuidFor('REMOVED9999'));
     harness.platform.configureAccessory(first as unknown as PlatformAccessory);
@@ -53,6 +54,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.deepEqual(first.context, {
       schemaVersion: 1,
       serialNumber: 'FIRST1234',
+      lastTargetMode: 'heat',
     });
     assert.equal(harness.updated.length, 2);
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);

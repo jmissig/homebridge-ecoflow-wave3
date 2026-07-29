@@ -39,11 +39,11 @@ describe('HomeKit climate mapping', () => {
     }), Characteristic);
     assert.deepEqual(cool, {
       active: Characteristic.Active.ACTIVE,
-      currentState: Characteristic.CurrentHeaterCoolerState.COOLING,
+      currentState: Characteristic.CurrentHeaterCoolerState.IDLE,
       targetState: Characteristic.TargetHeaterCoolerState.COOL,
       currentTemperature: 25,
       coolingThreshold: 22,
-      heatingThreshold: 22,
+      heatingThreshold: undefined,
       rotationSpeed: 60,
     });
 
@@ -51,8 +51,9 @@ describe('HomeKit climate mapping', () => {
       powered: true,
       mode: 'heat',
     }), Characteristic);
-    assert.equal(heat.currentState, Characteristic.CurrentHeaterCoolerState.HEATING);
+    assert.equal(heat.currentState, Characteristic.CurrentHeaterCoolerState.IDLE);
     assert.equal(heat.targetState, Characteristic.TargetHeaterCoolerState.HEAT);
+    assert.equal(heat.coolingThreshold, undefined);
 
     const autoCooling = mapSnapshotToHomeKit(snapshot({
       powered: true,
@@ -61,7 +62,7 @@ describe('HomeKit climate mapping', () => {
       targetTemperatureLowerCelsius: 19,
       targetTemperatureUpperCelsius: 24,
     }), Characteristic);
-    assert.equal(autoCooling.currentState, Characteristic.CurrentHeaterCoolerState.COOLING);
+    assert.equal(autoCooling.currentState, Characteristic.CurrentHeaterCoolerState.IDLE);
     assert.equal(autoCooling.targetState, Characteristic.TargetHeaterCoolerState.AUTO);
     assert.equal(autoCooling.heatingThreshold, 19);
     assert.equal(autoCooling.coolingThreshold, 24);
@@ -73,14 +74,16 @@ describe('HomeKit climate mapping', () => {
       targetTemperatureLowerCelsius: 19,
       targetTemperatureUpperCelsius: 24,
     }), Characteristic);
-    assert.equal(autoHeating.currentState, Characteristic.CurrentHeaterCoolerState.HEATING);
+    assert.equal(autoHeating.currentState, Characteristic.CurrentHeaterCoolerState.IDLE);
 
     const fan = mapSnapshotToHomeKit(snapshot({
       powered: true,
       mode: 'fan',
     }), Characteristic);
     assert.equal(fan.currentState, Characteristic.CurrentHeaterCoolerState.IDLE);
-    assert.equal(fan.targetState, Characteristic.TargetHeaterCoolerState.AUTO);
+    assert.equal(fan.targetState, undefined);
+    assert.equal(fan.coolingThreshold, undefined);
+    assert.equal(fan.heatingThreshold, undefined);
 
     const inactive = mapSnapshotToHomeKit(snapshot({
       powered: false,
@@ -114,7 +117,7 @@ describe('WAVE 3 HomeKit accessory', () => {
       Characteristic.TargetHeaterCoolerState,
       Characteristic.TargetHeaterCoolerState.HEAT,
     );
-    await setCharacteristic(service, Characteristic.CoolingThresholdTemperature, 21);
+    await setCharacteristic(service, Characteristic.HeatingThresholdTemperature, 21);
     await setCharacteristic(service, Characteristic.RotationSpeed, 80);
     assert.deepEqual(controller.commands, [
       { type: 'power', on: false },
@@ -289,6 +292,157 @@ describe('WAVE 3 HomeKit accessory', () => {
     ]);
   });
 
+  it('rejects thresholds outside their confirmed operating mode and recovers the write queue', async () => {
+    const cases: Array<{
+      mode: Wave3ControllerSnapshot['state']['mode'];
+      characteristic: typeof Characteristic.HeatingThresholdTemperature
+        | typeof Characteristic.CoolingThresholdTemperature;
+    }> = [
+      { mode: 'cool', characteristic: Characteristic.HeatingThresholdTemperature },
+      { mode: 'heat', characteristic: Characteristic.CoolingThresholdTemperature },
+      { mode: 'fan', characteristic: Characteristic.HeatingThresholdTemperature },
+      { mode: 'dry', characteristic: Characteristic.CoolingThresholdTemperature },
+      { mode: 'off', characteristic: Characteristic.HeatingThresholdTemperature },
+      { mode: undefined, characteristic: Characteristic.CoolingThresholdTemperature },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const controller = new FakeController(snapshot({
+        powered: testCase.mode !== 'off',
+        ...(testCase.mode === undefined ? {} : { mode: testCase.mode }),
+        targetTemperatureCelsius: 22,
+      }));
+      const accessory = new FakeAccessory(
+        `Test WAVE 3 ${index}`,
+        `uuid-mode-${index}`,
+        `SERIALMODE${index}`,
+      );
+      new Wave3PlatformAccessory(
+        platformForAccessoryTests(),
+        accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+        controller,
+      );
+      const error = await setCharacteristicError(
+        accessory.heaterCooler!,
+        testCase.characteristic,
+        23,
+        true,
+      );
+      assert.equal(error, HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
+      assert.deepEqual(controller.commands, []);
+    }
+
+    const incompleteAuto = new FakeController(snapshot({
+      powered: true,
+      mode: 'auto',
+      targetTemperatureUpperCelsius: 25,
+    }));
+    const autoAccessory = new FakeAccessory('Auto WAVE 3', 'uuid-auto', 'SERIALAUTO');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      autoAccessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      incompleteAuto,
+    );
+    const incompleteError = await setCharacteristicError(
+      autoAccessory.heaterCooler!,
+      Characteristic.CoolingThresholdTemperature,
+      24,
+      true,
+    );
+    assert.equal(incompleteError, HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
+
+    incompleteAuto.emit(snapshot({
+      powered: true,
+      mode: 'cool',
+      targetTemperatureCelsius: 22,
+    }));
+    await setCharacteristic(
+      autoAccessory.heaterCooler!,
+      Characteristic.CoolingThresholdTemperature,
+      23,
+      true,
+    );
+    assert.deepEqual(incompleteAuto.commands, [
+      { type: 'targetTemperature', celsius: 23 },
+    ]);
+  });
+
+  it('uses idle for unknown activity, preserves an evidenced inactive target, and rejects unsupported targets', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      ambientTemperatureCelsius: 18,
+      targetTemperatureCelsius: 22,
+    }));
+    const accessory = new FakeAccessory('Bedroom WAVE 3', 'uuid-state', 'SERIALSTATE');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+    assert.equal(
+      await getCharacteristic(
+        accessory.heaterCooler!,
+        Characteristic.CurrentHeaterCoolerState,
+      ),
+      Characteristic.CurrentHeaterCoolerState.IDLE,
+    );
+    assert.equal(accessory.context.lastTargetMode, 'cool');
+
+    controller.emit(snapshot({ powered: false, mode: 'off' }));
+    await Promise.resolve();
+    assert.equal(
+      await getCharacteristic(
+        accessory.heaterCooler!,
+        Characteristic.TargetHeaterCoolerState,
+      ),
+      Characteristic.TargetHeaterCoolerState.COOL,
+    );
+
+    controller.emit(snapshot({ powered: true, mode: 'fan' }));
+    await Promise.resolve();
+    const targetError = await getCharacteristicError(
+      accessory.heaterCooler!,
+      Characteristic.TargetHeaterCoolerState,
+    );
+    assert.equal(targetError, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+  });
+
+  it('reconciles a newer confirmed snapshot after HAP completes an older write', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      targetTemperatureCelsius: 20,
+    }));
+    const accessory = new FakeAccessory('Office WAVE 3', 'uuid-race', 'SERIALRACE');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+    controller.afterApply = current => {
+      current.emit(snapshot({
+        powered: true,
+        mode: 'cool',
+        targetTemperatureCelsius: 22,
+      }));
+    };
+
+    await setCharacteristic(
+      accessory.heaterCooler!,
+      Characteristic.CoolingThresholdTemperature,
+      21,
+      true,
+    );
+    await afterImmediate();
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 22);
+    assert.equal(
+      accessory.heaterCooler!
+        .getCharacteristic(Characteristic.CoolingThresholdTemperature)
+        .value,
+      22,
+    );
+  });
+
   it('pushes snapshots asynchronously and reports offline or missing state as HAP errors', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
@@ -323,7 +477,7 @@ describe('WAVE 3 HomeKit accessory', () => {
     );
     assert.equal(
       service.getCharacteristic(Characteristic.CurrentHeaterCoolerState).value,
-      Characteristic.CurrentHeaterCoolerState.HEATING,
+      Characteristic.CurrentHeaterCoolerState.IDLE,
     );
 
     controller.emit({
@@ -353,6 +507,7 @@ class FakeController implements Wave3AccessoryController {
   private readonly listeners = new Set<(snapshot: Wave3ControllerSnapshot) => void>();
   nextResult: Wave3CommandResult = { status: 'confirmed', sequence: 10 };
   nextGate?: Promise<void>;
+  afterApply?: (controller: FakeController) => void;
   stopped = false;
 
   constructor(public snapshot: Wave3ControllerSnapshot) {}
@@ -373,6 +528,9 @@ class FakeController implements Wave3AccessoryController {
     await gate;
     if (this.nextResult.status === 'confirmed') {
       this.applyConfirmedCommand(command);
+      const afterApply = this.afterApply;
+      this.afterApply = undefined;
+      afterApply?.(this);
     }
     return this.nextResult;
   }
@@ -459,6 +617,7 @@ function platformForAccessoryTests(): EcoFlowWave3Platform {
         },
         HapStatusError,
       },
+      updatePlatformAccessories: () => undefined,
     },
   } as unknown as EcoFlowWave3Platform;
 }
@@ -540,4 +699,10 @@ function deferred(): {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+async function afterImmediate(): Promise<void> {
+  await new Promise<void>(resolve => {
+    setImmediate(resolve);
+  });
 }

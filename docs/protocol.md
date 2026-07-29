@@ -160,6 +160,9 @@ Observed configuration-write header values:
 | `payload_ver` | 1 |
 | `is_rw_cmd` | 1 |
 | `from` | `Android` |
+| `data_len` | encoded configuration payload byte length |
+| `device_sn` | configured WAVE 3 serial number |
+| `pdata` | encoded `Wave3ConfigWrite` payload |
 
 The command sequence is a random integer from 10 through 999 in the upstream
 implementation.

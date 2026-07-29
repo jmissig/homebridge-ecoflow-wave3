@@ -51,7 +51,12 @@ Use Buf Protobuf-ES:
 
 Use Node's built-in test runner through `tsx` rather than introducing a larger
 test framework. This keeps TypeScript tests ESM-native and the test surface
-small.
+small. Run a separate strict, no-emit TypeScript check over `src` and `test`
+before executing tests.
+
+The Buf dependencies, generation scripts, and generated-output verification
+are Phase 2 implementation work. This Phase 1 decision records the toolchain
+without adding unused runtime dependencies before the first schema lands.
 
 ## Consequences
 

@@ -88,27 +88,28 @@ the first command set without importing Homebridge or connecting to EcoFlow.
 ## Phase 3: Private EcoFlow cloud session
 
 - [ ] Define strict typed plugin configuration and `config.schema.json` fields
-  for account login, region/API host, display name, and optional WAVE 3
-  selection.
+  for account login, region/API host, display name, and required WAVE 3 serial
+  number.
 - [ ] Constrain API hosts to reviewed EcoFlow regional endpoints by default;
   require an explicit advanced override for any other host.
 - [ ] Implement the private HTTPS authentication flow without logging
   passwords, tokens, authorization headers, or full device identifiers.
-- [ ] Discover account devices and retain only positively identified WAVE 3
-  units; ignore every unrelated EcoFlow product.
+- [ ] Treat every configured serial as WAVE 3 because the pinned private API
+  exposes no device-list endpoint; do not query or register unrelated EcoFlow
+  products.
 - [ ] Acquire temporary MQTT credentials and connect with TLS verification.
 - [ ] Implement WAVE-3-only topic construction, subscription, initial state
   refresh, publication, disconnect, and clean shutdown.
 - [ ] Re-subscribe and request current state after every reconnect without
   duplicating listeners or timers.
 - [ ] Put HTTP and MQTT behind fakeable boundaries.
-- [ ] Test success, invalid credentials, wrong region, no WAVE 3, multiple
-  WAVE 3 units, disconnect, reconnect, subscription failure, refresh failure,
-  and secret redaction without using a live account.
+- [ ] Test success, invalid credentials, wrong region, missing/invalid serial,
+  multiple configured WAVE 3 units, disconnect, reconnect, subscription
+  failure, refresh failure, and secret redaction without using a live account.
 
-**Phase 3 exit:** a fully fake-backed session can authenticate, select only
-WAVE 3 devices, subscribe, refresh, reconnect, publish bytes, and shut down
-cleanly.
+**Phase 3 exit:** a fully fake-backed session can authenticate, configure only
+explicit WAVE 3 serials, subscribe, refresh, reconnect, publish bytes, and shut
+down cleanly.
 
 ## Phase 4: Confirmed-state controller
 

@@ -32,7 +32,8 @@
     "build": "rimraf ./dist && tsc",
     "lint": "eslint . --max-warnings=0",
     "test": "tsx --test test/**/*.test.ts",
-    "verify": "npm run lint && npm test && npm run build",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "verify": "npm run lint && npm run typecheck:test && npm test && npm run build",
     "prepublishOnly": "npm run verify",
     "watch": "npm run build && npm link && nodemon"
   },

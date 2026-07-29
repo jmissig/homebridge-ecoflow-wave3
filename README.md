@@ -21,7 +21,6 @@ git clone https://github.com/jmissig/homebridge-ecoflow-wave3.git
 cd homebridge-ecoflow-wave3
 npm install
 npm run verify
-npm link
 ```
 
 The current package is deliberately private and inert. `npm link` and live

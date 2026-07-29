@@ -86,25 +86,25 @@ Primary upstream evidence:
 **Phase 2 exit:** protocol tests can decode known synthetic messages and encode
 the first command set without importing Homebridge or connecting to EcoFlow.
 
-## Next — Phase 3: Private EcoFlow cloud session
+## Phase 3: Private EcoFlow cloud session
 
-- [ ] Define strict typed plugin configuration and `config.schema.json` fields
+- [x] Define strict typed plugin configuration and `config.schema.json` fields
   for account login, region/API host, display name, and required WAVE 3 serial
   number.
-- [ ] Constrain API hosts to reviewed EcoFlow regional endpoints by default;
+- [x] Constrain API hosts to reviewed EcoFlow regional endpoints by default;
   require an explicit advanced override for any other host.
-- [ ] Implement the private HTTPS authentication flow without logging
+- [x] Implement the private HTTPS authentication flow without logging
   passwords, tokens, authorization headers, or full device identifiers.
-- [ ] Treat every configured serial as WAVE 3 because the pinned private API
+- [x] Treat every configured serial as WAVE 3 because the pinned private API
   exposes no device-list endpoint; do not query or register unrelated EcoFlow
   products.
-- [ ] Acquire temporary MQTT credentials and connect with TLS verification.
-- [ ] Implement WAVE-3-only topic construction, subscription, initial state
+- [x] Acquire temporary MQTT credentials and connect with TLS verification.
+- [x] Implement WAVE-3-only topic construction, subscription, initial state
   refresh, publication, disconnect, and clean shutdown.
-- [ ] Re-subscribe and request current state after every reconnect without
+- [x] Re-subscribe and request current state after every reconnect without
   duplicating listeners or timers.
-- [ ] Put HTTP and MQTT behind fakeable boundaries.
-- [ ] Test success, invalid credentials, wrong region, missing/invalid serial,
+- [x] Put HTTP and MQTT behind fakeable boundaries.
+- [x] Test success, invalid credentials, wrong region, missing/invalid serial,
   multiple configured WAVE 3 units, disconnect, reconnect, subscription
   failure, refresh failure, and secret redaction without using a live account.
 
@@ -112,7 +112,7 @@ the first command set without importing Homebridge or connecting to EcoFlow.
 explicit WAVE 3 serials, subscribe, refresh, reconnect, publish bytes, and shut
 down cleanly.
 
-## Phase 4: Confirmed-state controller
+## Next — Phase 4: Confirmed-state controller
 
 - [ ] Build one controller per WAVE 3 around the codec and cloud session.
 - [ ] Merge partial display/runtime messages into immutable normalized state.

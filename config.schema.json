@@ -5,13 +5,65 @@
   "strictValidation": true,
   "schema": {
     "type": "object",
-    "required": ["name"],
+    "required": ["name", "email", "password", "apiHost", "devices"],
     "additionalProperties": false,
     "properties": {
       "name": {
         "title": "Name",
         "type": "string",
-        "default": "EcoFlow WAVE 3"
+        "default": "EcoFlow WAVE 3",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "email": {
+        "title": "EcoFlow Account Email",
+        "type": "string",
+        "format": "email"
+      },
+      "password": {
+        "title": "EcoFlow Account Password",
+        "type": "string",
+        "format": "password",
+        "minLength": 1
+      },
+      "apiHost": {
+        "title": "EcoFlow API Region",
+        "type": "string",
+        "default": "api.ecoflow.com",
+        "oneOf": [
+          { "title": "Global", "enum": ["api.ecoflow.com"] },
+          { "title": "Americas", "enum": ["api-a.ecoflow.com"] },
+          { "title": "Europe", "enum": ["api-e.ecoflow.com"] }
+        ]
+      },
+      "advancedApiHostOverride": {
+        "title": "Advanced: Unreviewed API Host Override",
+        "description": "Danger: account credentials will be sent to this host. Leave blank unless you have independently verified it.",
+        "type": "string",
+        "pattern": "^[A-Za-z0-9.-]+$"
+      },
+      "devices": {
+        "title": "WAVE 3 Units",
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["name", "serialNumber"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "title": "Display Name",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "serialNumber": {
+              "title": "WAVE 3 Serial Number",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{4,64}$"
+            }
+          }
+        }
       }
     }
   }

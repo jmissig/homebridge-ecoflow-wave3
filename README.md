@@ -5,9 +5,9 @@ A focused Homebridge plugin for controlling the EcoFlow WAVE 3 through HomeKit.
 ## Status
 
 The repository currently contains the Homebridge 2 plugin baseline, a pinned
-protocol dossier, and a tested WAVE 3 protobuf codec/domain layer. EcoFlow
-authentication, MQTT, device control, and working HomeKit characteristics are
-not implemented yet.
+protocol dossier, a tested WAVE 3 protobuf codec/domain layer, and a fakeable
+private-cloud HTTP/MQTT session. Device control and working HomeKit
+characteristics are not implemented yet.
 
 The planned first slice is one primary `HeaterCooler` accessory for a
 user-configured WAVE 3. Nothing is considered hardware-supported until it has
@@ -30,10 +30,9 @@ implemented.
 
 ## Configuration
 
-The final configuration schema has not been implemented. Current upstream
-evidence does not provide private-API device discovery, so the first working
-configuration is expected to require an explicit WAVE 3 serial number in
-addition to EcoFlow account credentials and region.
+The strict configuration schema requires EcoFlow account credentials, a
+reviewed regional API host, and at least one explicitly named WAVE 3 serial.
+Current upstream evidence does not provide private-API device discovery.
 
 ## What we know
 

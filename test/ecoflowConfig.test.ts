@@ -112,6 +112,47 @@ describe('EcoFlow WAVE 3 configuration', () => {
         runtimeAccepted: false,
       },
       {
+        candidate: baseConfig({ name: '🌊 WAVE 3 🌊' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ name: 'A' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ name: '.WAVE 3' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ name: 'WAVE 3.' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({
+          devices: [{ name: 'Chambre d’été 3', serialNumber: 'TESTWAVE30001' }],
+        }),
+        schemaAccepted: true,
+        runtimeAccepted: true,
+      },
+      {
+        candidate: baseConfig({
+          devices: [{ name: '🌊 WAVE 3 🌊', serialNumber: 'TESTWAVE30001' }],
+        }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({
+          devices: [{ name: 'Z', serialNumber: 'TESTWAVE30001' }],
+        }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
         candidate: baseConfig({
           devices: [{ name: 'Bedroom', serialNumber: ' TESTWAVE30001 ' }],
         }),

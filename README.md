@@ -40,6 +40,9 @@ Unit tests do not contact EcoFlow, an MQTT broker, Homebridge, or hardware.
 The strict configuration schema requires EcoFlow account credentials, a
 reviewed regional API host, and at least one explicitly named WAVE 3 serial.
 Current upstream evidence does not provide private-API device discovery.
+Platform and accessory names must follow HomeKit naming rules: at least two
+characters, starting and ending with a Unicode letter or number, with only
+letters, numbers, spaces, apostrophes, and common punctuation between them.
 
 ## What we know
 

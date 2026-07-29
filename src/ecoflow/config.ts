@@ -26,6 +26,9 @@ export class ConfigurationError extends Error {
   }
 }
 
+const HOMEKIT_NAME_PATTERN =
+  /^[\p{L}\p{N}][\p{L}\p{N}\p{Zs}\u2019'&!._:;()/,-]*[\p{L}\p{N}]$/u;
+
 export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
   const config = requireRecord(value, 'configuration');
   rejectUnknownKeys(config, [
@@ -119,8 +122,10 @@ function isHostname(value: string): boolean {
 }
 
 function validateDisplayName(value: string, field: string): void {
-  if (/[\r\n]/.test(value)) {
-    throw new ConfigurationError(`${field} must be a single line`);
+  if (!HOMEKIT_NAME_PATTERN.test(value)) {
+    throw new ConfigurationError(
+      `${field} must be a HomeKit-safe name that starts and ends with a letter or number`,
+    );
   }
 }
 

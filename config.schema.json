@@ -12,9 +12,9 @@
         "title": "Name",
         "type": "string",
         "default": "EcoFlow WAVE 3",
-        "minLength": 1,
+        "minLength": 2,
         "maxLength": 64,
-        "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+        "pattern": "^[\\p{L}\\p{N}][\\p{L}\\p{N}\\p{Zs}’'&!._:;()/,-]*[\\p{L}\\p{N}]$"
       },
       "email": {
         "title": "EcoFlow Account Email",
@@ -64,9 +64,9 @@
             "name": {
               "title": "Display Name",
               "type": "string",
-              "minLength": 1,
+              "minLength": 2,
               "maxLength": 64,
-              "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+              "pattern": "^[\\p{L}\\p{N}][\\p{L}\\p{N}\\p{Zs}’'&!._:;()/,-]*[\\p{L}\\p{N}]$"
             },
             "serialNumber": {
               "title": "WAVE 3 Serial Number",

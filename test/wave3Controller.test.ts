@@ -130,6 +130,18 @@ describe('WAVE 3 controller', () => {
       { status: 'failed', sequence: 10, reason: 'disconnected' },
     );
 
+    session.emitPacket('property', displayPacket(2, { ambientTemperature: 25 }));
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.deepEqual(controller.snapshot.state, {
+      ambientTemperatureCelsius: 25,
+    });
+
+    session.emitState('offline');
+    session.emitState('online');
+    session.emitPacket('property', envelope(99, 3, Uint8Array.of(1, 2, 3)));
+    assert.equal(controller.snapshot.availability, 'stale');
+    assert.deepEqual(controller.snapshot.state, {});
+
     session.emitPacket('getReply', quotaReply({ online: 0 }));
     assert.equal(controller.snapshot.availability, 'offline');
 

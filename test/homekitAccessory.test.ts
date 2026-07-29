@@ -321,17 +321,28 @@ describe('WAVE 3 HomeKit accessory', () => {
     accessory.on(AccessoryEventTypes.CHARACTERISTIC_WARNING, warning => {
       warnings.push(warning);
     });
-
-    new Wave3PlatformAccessory(
-      platformForAccessoryTests(),
-      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
-      new FakeController(snapshot({
-        powered: true,
-        mode: 'heat',
-        targetTemperatureCelsius: 30,
-        airflowSpeed: 100,
-      })),
-    );
+    const consoleWarnings: unknown[][] = [];
+    const originalConsoleWarn = console.warn;
+    console.warn = (...values: unknown[]) => {
+      consoleWarnings.push(values);
+    };
+    try {
+      new Wave3PlatformAccessory(
+        platformForAccessoryTests(),
+        accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+        new FakeController(snapshot({
+          powered: true,
+          mode: 'heat',
+          targetTemperatureCelsius: 30,
+          airflowSpeed: 100,
+        })),
+      );
+      (accessory as unknown as {
+        validateAccessory(mainAccessory?: boolean): void;
+      }).validateAccessory(false);
+    } finally {
+      console.warn = originalConsoleWarn;
+    }
 
     assert.equal(
       accessory.getService(Service.AccessoryInformation)!
@@ -343,6 +354,7 @@ describe('WAVE 3 HomeKit accessory', () => {
       'Configured WAVE 3',
     );
     assert.deepEqual(warnings, []);
+    assert.deepEqual(consoleWarnings, []);
   });
 
   it('rejects thresholds outside their confirmed operating mode and recovers the write queue', async () => {

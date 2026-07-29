@@ -330,12 +330,7 @@ export class Wave3Controller {
       return;
     }
     if (state === 'offline' || state === 'starting') {
-      this.cancelStaleTimer?.();
-      this.cancelStaleTimer = undefined;
-      this.hasCurrentGenerationState = false;
-      this.deviceReportedOnline = undefined;
-      this.lastDisplaySequence = undefined;
-      this.lastRuntimeSequence = undefined;
+      this.clearCurrentGenerationState();
       if (this.pending?.publicationCompleted !== false) {
         this.settlePending('disconnected');
       }
@@ -343,8 +338,7 @@ export class Wave3Controller {
       return;
     }
     if (state === 'failed') {
-      this.hasCurrentGenerationState = false;
-      this.deviceReportedOnline = undefined;
+      this.clearCurrentGenerationState();
       if (this.pending?.publicationCompleted !== false) {
         this.settlePending('disconnected');
       }
@@ -362,9 +356,23 @@ export class Wave3Controller {
 
   private handleSessionFailure(): void {
     if (!this.stopped) {
+      this.clearCurrentGenerationState();
       this.settlePending('disconnected');
       this.updateSnapshot('offline');
     }
+  }
+
+  private clearCurrentGenerationState(): void {
+    this.cancelStaleTimer?.();
+    this.cancelStaleTimer = undefined;
+    this.hasCurrentGenerationState = false;
+    this.deviceReportedOnline = undefined;
+    this.displayState = undefined;
+    this.runtimeTemperatures = {};
+    this.updatedAt = undefined;
+    this.displayRevision = 0;
+    this.lastDisplaySequence = undefined;
+    this.lastRuntimeSequence = undefined;
   }
 
   private markStateFresh(): void {

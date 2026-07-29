@@ -151,6 +151,16 @@ describe('EcoFlow WAVE 3 configuration', () => {
         runtimeAccepted: false,
       },
       {
+        candidate: baseConfig({ advancedApiHostOverride: '127.1' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ advancedApiHostOverride: '127.0.0.1' }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
         candidate: baseConfig({ unknownField: true }),
         schemaAccepted: false,
         runtimeAccepted: false,

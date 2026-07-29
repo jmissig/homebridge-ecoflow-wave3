@@ -97,6 +97,9 @@ No item currently has **Hardware** confidence.
 - The client uses a clean session and a 15-second keepalive.
 - Subscriptions and publications use QoS 1.
 - The client subscribes after every successful connection.
+- `EcoflowDeviceInfo.topics()` supplies all non-null device topics to the
+  subscription list, including the `set` and `get` publication topics as well
+  as `property`, `set_reply`, and `get_reply`.
 
 For a configured serial number `{sn}` and authenticated `{userId}`:
 
@@ -127,6 +130,8 @@ A matching get reply contains `data.online` and `data.quotaMap`.
 
 - The Homebridge transport should subscribe before publishing the initial
   refresh.
+- The first slice retains the pinned client's five-topic subscription shape;
+  narrowing it to inbound-only topics requires broker or hardware evidence.
 - Every reconnect should re-subscribe and refresh exactly once.
 - MQTT.js automatic resubscription is disabled because the session owns that
   ordering. If a reconnect subscription or refresh fails, the session closes

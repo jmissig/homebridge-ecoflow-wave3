@@ -93,12 +93,15 @@ function validateApiHost(reviewedHost: string, advancedOverride: string | undefi
 }
 
 function isHostname(value: string): boolean {
-  if (value.length > 253 || value.toLowerCase() === 'localhost') {
+  const labels = value.split('.');
+  if (value.length > 253
+    || value.toLowerCase() === 'localhost'
+    || !/[A-Za-z]/.test(labels.at(-1) ?? '')) {
     return false;
   }
   try {
     const url = new URL(`https://${value}`);
-    const labelsAreValid = value.split('.').every(label => (
+    const labelsAreValid = labels.every(label => (
       label.length >= 1
       && label.length <= 63
       && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)

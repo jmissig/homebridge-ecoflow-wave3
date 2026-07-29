@@ -16,8 +16,12 @@ export interface MqttConnection {
   onConnect(listener: () => void): () => void;
   onDisconnect(listener: () => void): () => void;
   onMessage(listener: (message: MqttMessage) => void): () => void;
-  subscribe(topics: readonly string[]): Promise<void>;
-  publish(topic: string, payload: Uint8Array | string): Promise<void>;
+  subscribe(topics: readonly string[], signal?: AbortSignal): Promise<void>;
+  publish(
+    topic: string,
+    payload: Uint8Array | string,
+    signal?: AbortSignal,
+  ): Promise<void>;
   close(force?: boolean): Promise<void>;
 }
 
@@ -111,6 +115,8 @@ export function buildMqttClientOptions(
 }
 
 class MqttJsConnection implements MqttConnection {
+  private readonly pendingOperations = new Set<Promise<unknown>>();
+
   constructor(private readonly client: MqttClient) {}
 
   onConnect(listener: () => void): () => void {
@@ -131,22 +137,45 @@ class MqttJsConnection implements MqttConnection {
     return () => this.client.off('message', mqttListener);
   }
 
-  async subscribe(topics: readonly string[]): Promise<void> {
+  async subscribe(topics: readonly string[], signal?: AbortSignal): Promise<void> {
     const subscriptions: ISubscriptionMap = Object.fromEntries(
       topics.map(topic => [topic, { qos: 1 }]),
     );
-    await this.client.subscribeAsync(subscriptions);
+    await this.runOperation(this.client.subscribeAsync(subscriptions), signal);
   }
 
-  async publish(topic: string, payload: Uint8Array | string): Promise<void> {
-    await this.client.publishAsync(
-      topic,
-      typeof payload === 'string' ? payload : Buffer.from(payload),
-      { qos: 1 },
+  async publish(
+    topic: string,
+    payload: Uint8Array | string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.runOperation(
+      this.client.publishAsync(
+        topic,
+        typeof payload === 'string' ? payload : Buffer.from(payload),
+        { qos: 1 },
+      ),
+      signal,
     );
   }
 
   async close(force = false): Promise<void> {
     await this.client.endAsync(force);
+    await Promise.allSettled([...this.pendingOperations]);
+  }
+
+  private async runOperation<T>(
+    operation: Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (signal?.aborted === true) {
+      throw new Error('MQTT operation was cancelled');
+    }
+    this.pendingOperations.add(operation);
+    void operation.then(
+      () => this.pendingOperations.delete(operation),
+      () => this.pendingOperations.delete(operation),
+    );
+    return operation;
   }
 }

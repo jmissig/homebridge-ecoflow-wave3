@@ -151,6 +151,42 @@ describe('EcoFlow cloud session', () => {
     await session.stop();
   });
 
+  it('drains an uncooperative superseded operation before restart and shutdown', async () => {
+    const refreshGate = new Deferred<void>();
+    const connection = new FakeMqttConnection();
+    connection.publishGate = refreshGate;
+    connection.ignoreOperationAbort = true;
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+      new CapturingLogger(),
+      undefined,
+      1_000,
+    );
+    const start = session.start();
+    await flushAsyncWork();
+
+    connection.emitDisconnect();
+    connection.emitConnect();
+    await flushAsyncWork();
+    assert.equal(connection.subscribeCalls.length, 1);
+    assert.notEqual(session.state, 'online');
+
+    let stopSettled = false;
+    const stopping = session.stop().then(() => {
+      stopSettled = true;
+    });
+    await flushAsyncWork();
+    assert.equal(stopSettled, false);
+
+    refreshGate.resolve();
+    await stopping;
+    await assert.rejects(start, /stopped during startup/);
+    assert.equal(stopSettled, true);
+    assert.equal(session.state, 'stopped');
+  });
+
   it('surfaces bounded subscription and refresh failures and closes the connection', async () => {
     const subscriptionFailure = new FakeMqttConnection();
     subscriptionFailure.failSubscribe = true;
@@ -335,7 +371,10 @@ describe('EcoFlow cloud session', () => {
       10,
     );
     await session.start();
-    await session.stop();
+    const firstStop = session.stop();
+    const joinedStop = session.stop();
+    assert.equal(joinedStop, firstStop);
+    await firstStop;
     assert.equal(session.state, 'stopped');
     assert.equal(connection.closeCalls, 1);
     assert.equal(logger.messages.includes('EcoFlow MQTT connection did not close cleanly'), true);
@@ -440,6 +479,7 @@ class FakeMqttConnection implements MqttConnection {
   public closeCalls = 0;
   public failSubscribe = false;
   public failPublish = false;
+  public ignoreOperationAbort = false;
   public subscribeGate?: Deferred<void>;
   public publishGate?: Deferred<void>;
   public closeGate?: Deferred<void>;
@@ -462,16 +502,20 @@ class FakeMqttConnection implements MqttConnection {
     return () => this.messageListeners.delete(listener);
   }
 
-  async subscribe(topics: readonly string[]): Promise<void> {
+  async subscribe(topics: readonly string[], signal?: AbortSignal): Promise<void> {
     this.subscribeCalls.push([...topics]);
-    await this.subscribeGate?.promise;
+    await waitForGate(this.subscribeGate?.promise, signal, this.ignoreOperationAbort);
     if (this.failSubscribe) {
       throw new Error('TEST_MQTT_PASSWORD TESTWAVE30001');
     }
   }
 
-  async publish(topic: string, payload: Uint8Array | string): Promise<void> {
-    await this.publishGate?.promise;
+  async publish(
+    topic: string,
+    payload: Uint8Array | string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await waitForGate(this.publishGate?.promise, signal, this.ignoreOperationAbort);
     if (this.failPublish) {
       throw new Error('TEST_MQTT_PASSWORD TESTWAVE30001');
     }
@@ -595,6 +639,21 @@ function neverUntilAborted<T>(signal?: AbortSignal): Promise<T> {
       { once: true },
     );
   });
+}
+
+async function waitForGate(
+  gate: Promise<void> | undefined,
+  signal: AbortSignal | undefined,
+  ignoreAbort: boolean,
+): Promise<void> {
+  if (gate === undefined) {
+    return;
+  }
+  if (ignoreAbort) {
+    await gate;
+    return;
+  }
+  await Promise.race([gate, neverUntilAborted(signal)]);
 }
 
 function sequentialRequestIds(): () => string {

@@ -34,6 +34,9 @@ Broker publication completion and the device acknowledgement can arrive in
 either order. The controller retains an early matching acknowledgement and
 qualifying later display evidence, but does not report success unless MQTT
 publication subsequently succeeds. Publication failure still wins.
+Semantically identical duplicate acknowledgements are ignored; contradictory
+acknowledgements with the same sequence make acceptance ambiguous and reject
+the command.
 
 Publication failure, explicit/ambiguous acknowledgement, timeout, disconnect,
 or shutdown returns a typed failure. Commands are serialized so climate mode,

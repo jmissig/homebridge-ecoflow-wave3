@@ -47,6 +47,7 @@ interface PendingCommand {
   publicationCompleted: boolean;
   publicationController: AbortController;
   acknowledgement?: Wave3Acknowledgement;
+  acknowledgementAmbiguous: boolean;
   acknowledgementRevision?: number;
   observedStateConfirmed: boolean;
   resolve: (result: Wave3CommandResult) => void;
@@ -154,6 +155,7 @@ export class Wave3Controller {
         sequence,
         publicationCompleted: false,
         publicationController,
+        acknowledgementAmbiguous: false,
         observedStateConfirmed: false,
         resolve,
         cancelTimeout,
@@ -236,9 +238,18 @@ export class Wave3Controller {
     acknowledgement: Wave3Acknowledgement,
   ): void {
     const pending = this.pending;
-    if (pending === undefined
-      || pending.sequence !== sequence
-      || pending.acknowledgement !== undefined) {
+    if (pending === undefined || pending.sequence !== sequence) {
+      return;
+    }
+    if (pending.acknowledgement !== undefined) {
+      if (acknowledgementsEqual(pending.acknowledgement, acknowledgement)) {
+        return;
+      }
+      pending.acknowledgementAmbiguous = true;
+      pending.observedStateConfirmed = false;
+      if (pending.publicationCompleted) {
+        this.settlePending('acknowledgementRejected');
+      }
       return;
     }
     pending.acknowledgement = acknowledgement;
@@ -253,7 +264,8 @@ export class Wave3Controller {
     if (acknowledgement === undefined) {
       return;
     }
-    if (acknowledgement.reportedConfigOk !== true
+    if (pending.acknowledgementAmbiguous
+      || acknowledgement.reportedConfigOk !== true
       || !acknowledgementMatchesCommand(acknowledgement, pending.command)) {
       this.settlePending('acknowledgementRejected');
       return;
@@ -399,6 +411,26 @@ function acknowledgementMatchesCommand(
   case 'submode':
     return values.submode === command.submode;
   }
+}
+
+function acknowledgementsEqual(
+  left: Wave3Acknowledgement,
+  right: Wave3Acknowledgement,
+): boolean {
+  if (left.actionId !== right.actionId
+    || left.reportedConfigOk !== right.reportedConfigOk) {
+    return false;
+  }
+  const keys = new Set([
+    ...Object.keys(left.values),
+    ...Object.keys(right.values),
+  ] as Array<keyof Wave3Acknowledgement['values']>);
+  for (const key of keys) {
+    if (left.values[key] !== right.values[key]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function stateMatchesCommand(state: Wave3State, command: Wave3Command): boolean {

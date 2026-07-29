@@ -193,6 +193,106 @@ describe('WAVE 3 controller', () => {
     assert.equal(session.requestStateCalls, 0);
   });
 
+  it('rejects contradictory same-sequence acknowledgements without overriding publication failure', async () => {
+    const publishedSession = new FakeControllerSession();
+    const publishedController = new Wave3Controller(TEST_SERIAL, publishedSession, {
+      initialSequence: 49,
+    });
+    const publishedResult = publishedController.execute({
+      type: 'airflowSpeed',
+      speed: 60,
+    });
+    await flushAsyncWork();
+    publishedSession.emitPacket('setReply', acknowledgementPacket(49, {
+      configOk: true,
+      airflowSpeed: 60,
+    }));
+    publishedSession.emitPacket('setReply', acknowledgementPacket(49, {
+      configOk: false,
+      airflowSpeed: 60,
+    }));
+    assert.deepEqual(await publishedResult, {
+      status: 'failed',
+      sequence: 49,
+      reason: 'acknowledgementRejected',
+    });
+
+    const earlySession = new FakeControllerSession();
+    const earlyGate = new Deferred<void>();
+    earlySession.publishGate = earlyGate;
+    const earlyController = new Wave3Controller(TEST_SERIAL, earlySession, {
+      initialSequence: 51,
+    });
+    const earlyResult = earlyController.execute({ type: 'airflowSpeed', speed: 60 });
+    await flushAsyncWork();
+    earlySession.emitPacket('setReply', acknowledgementPacket(51, {
+      configOk: true,
+      airflowSpeed: 60,
+    }));
+    earlySession.emitPacket('property', displayPacket(112, {
+      mode: 1,
+      airflowSpeed: 60,
+    }));
+    earlySession.emitPacket('setReply', acknowledgementPacket(51, {
+      configOk: false,
+      airflowSpeed: 60,
+    }));
+    earlyGate.resolve();
+    assert.deepEqual(await earlyResult, {
+      status: 'failed',
+      sequence: 51,
+      reason: 'acknowledgementRejected',
+    });
+
+    const failedSession = new FakeControllerSession();
+    const failedGate = new Deferred<void>();
+    failedSession.publishGate = failedGate;
+    const failedController = new Wave3Controller(TEST_SERIAL, failedSession, {
+      initialSequence: 52,
+    });
+    const failedResult = failedController.execute({ type: 'airflowSpeed', speed: 60 });
+    await flushAsyncWork();
+    failedSession.emitPacket('setReply', acknowledgementPacket(52, {
+      configOk: false,
+      airflowSpeed: 60,
+    }));
+    failedSession.emitPacket('setReply', acknowledgementPacket(52, {
+      configOk: true,
+      airflowSpeed: 60,
+    }));
+    failedSession.emitPacket('property', displayPacket(113, {
+      mode: 1,
+      airflowSpeed: 60,
+    }));
+    failedSession.failPublish = true;
+    failedGate.resolve();
+    assert.deepEqual(await failedResult, {
+      status: 'failed',
+      sequence: 52,
+      reason: 'publicationFailed',
+    });
+  });
+
+  it('ignores semantically identical duplicate acknowledgements', async () => {
+    const session = new FakeControllerSession();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 53,
+    });
+    const result = controller.execute({ type: 'airflowSpeed', speed: 80 });
+    await flushAsyncWork();
+    const acknowledgement = {
+      configOk: true,
+      airflowSpeed: 80,
+    };
+    session.emitPacket('setReply', acknowledgementPacket(53, acknowledgement));
+    session.emitPacket('setReply', acknowledgementPacket(53, acknowledgement));
+    session.emitPacket('property', displayPacket(114, {
+      mode: 1,
+      airflowSpeed: 80,
+    }));
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 53 });
+  });
+
   it('requires command-specific fields in the post-ack display update', async () => {
     const session = new FakeControllerSession();
     const controller = new Wave3Controller(TEST_SERIAL, session, {

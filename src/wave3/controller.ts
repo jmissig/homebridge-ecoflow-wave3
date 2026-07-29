@@ -25,7 +25,11 @@ export interface Wave3ControllerSession {
   onMessage(listener: (message: Wave3InboundMessage) => void): () => void;
   onError(listener: (error: EcoFlowCloudSessionError) => void): () => void;
   onStateChange(listener: (state: CloudSessionState) => void): () => void;
-  publishCommand(serialNumber: string, payload: Uint8Array): Promise<void>;
+  publishCommand(
+    serialNumber: string,
+    payload: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<void>;
   requestState(serialNumber: string): Promise<void>;
 }
 
@@ -41,7 +45,10 @@ interface PendingCommand {
   command: Wave3Command;
   sequence: number;
   publicationCompleted: boolean;
+  publicationController: AbortController;
+  acknowledgement?: Wave3Acknowledgement;
   acknowledgementRevision?: number;
+  observedStateConfirmed: boolean;
   resolve: (result: Wave3CommandResult) => void;
   cancelTimeout: () => void;
 }
@@ -57,6 +64,7 @@ export class Wave3Controller {
   private pending?: PendingCommand;
   private commandTail: Promise<void> = Promise.resolve();
   private cancelStaleTimer?: () => void;
+  private readonly activePublications = new Set<Promise<void>>();
   private updatedAt?: number;
   private displayRevision = 0;
   private lastDisplaySequence?: number;
@@ -131,8 +139,12 @@ export class Wave3Controller {
     if (this.session.state !== 'online') {
       return { status: 'failed', sequence, reason: 'disconnected' };
     }
+    if (this.activePublications.size > 0) {
+      return { status: 'failed', sequence, reason: 'disconnected' };
+    }
 
     const encoded = encodeWave3Command(this.serialNumber, sequence, command);
+    const publicationController = new AbortController();
     const result = new Promise<Wave3CommandResult>(resolve => {
       const cancelTimeout = this.schedule(() => {
         this.settlePending('timeout');
@@ -141,20 +153,49 @@ export class Wave3Controller {
         command,
         sequence,
         publicationCompleted: false,
+        publicationController,
+        observedStateConfirmed: false,
         resolve,
         cancelTimeout,
       };
     });
 
+    let publication: Promise<void>;
     try {
-      await this.session.publishCommand(this.serialNumber, encoded.bytes);
-      if (this.pending?.sequence === sequence) {
-        this.pending.publicationCompleted = true;
-      }
+      publication = this.session.publishCommand(
+        this.serialNumber,
+        encoded.bytes,
+        publicationController.signal,
+      );
     } catch {
       this.settlePending('publicationFailed');
+      return result;
     }
+    this.activePublications.add(publication);
+    void publication.then(
+      () => {
+        this.activePublications.delete(publication);
+        this.handlePublicationSuccess(sequence);
+      },
+      () => {
+        this.activePublications.delete(publication);
+        if (this.pending?.sequence === sequence) {
+          this.settlePending('publicationFailed');
+        }
+      },
+    );
     return result;
+  }
+
+  private handlePublicationSuccess(sequence: number): void {
+    const pending = this.pending;
+    if (pending === undefined || pending.sequence !== sequence) {
+      return;
+    }
+    pending.publicationCompleted = true;
+    if (pending.acknowledgement !== undefined) {
+      this.applyAcknowledgement(pending);
+    }
   }
 
   private handleMessage(message: Wave3InboundMessage): void {
@@ -197,7 +238,19 @@ export class Wave3Controller {
     const pending = this.pending;
     if (pending === undefined
       || pending.sequence !== sequence
-      || !pending.publicationCompleted) {
+      || pending.acknowledgement !== undefined) {
+      return;
+    }
+    pending.acknowledgement = acknowledgement;
+    pending.acknowledgementRevision = this.displayRevision;
+    if (pending.publicationCompleted) {
+      this.applyAcknowledgement(pending);
+    }
+  }
+
+  private applyAcknowledgement(pending: PendingCommand): void {
+    const acknowledgement = pending.acknowledgement;
+    if (acknowledgement === undefined) {
       return;
     }
     if (acknowledgement.reportedConfigOk !== true
@@ -205,10 +258,10 @@ export class Wave3Controller {
       this.settlePending('acknowledgementRejected');
       return;
     }
-    if (pending.acknowledgementRevision !== undefined) {
+    if (pending.observedStateConfirmed) {
+      this.settlePending(undefined);
       return;
     }
-    pending.acknowledgementRevision = this.displayRevision;
     void this.session.requestState(this.serialNumber).catch(() => {
       this.settlePending('disconnected');
     });
@@ -216,13 +269,17 @@ export class Wave3Controller {
 
   private confirmPendingFromObservedState(update: Wave3DisplayUpdate): void {
     const pending = this.pending;
-    if (pending?.acknowledgementRevision === undefined
+    if (pending?.acknowledgement === undefined
+      || pending.acknowledgementRevision === undefined
       || this.displayRevision <= pending.acknowledgementRevision
       || !updateProvidesCommandEvidence(update, this.displayState, pending.command)
       || !stateMatchesCommand(this.displayState?.state ?? {}, pending.command)) {
       return;
     }
-    this.settlePending(undefined);
+    pending.observedStateConfirmed = true;
+    if (pending.publicationCompleted) {
+      this.settlePending(undefined);
+    }
   }
 
   private handleSessionState(state: CloudSessionState): void {
@@ -307,6 +364,9 @@ export class Wave3Controller {
     }
     this.pending = undefined;
     pending.cancelTimeout();
+    if (!pending.publicationCompleted) {
+      pending.publicationController.abort();
+    }
     pending.resolve(reason === undefined
       ? { status: 'confirmed', sequence: pending.sequence }
       : { status: 'failed', sequence: pending.sequence, reason });

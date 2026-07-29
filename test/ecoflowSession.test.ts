@@ -235,6 +235,31 @@ describe('EcoFlow cloud session', () => {
     }
   });
 
+  it('cancels a controller-owned publication and fails its connection generation', async () => {
+    const connection = new FakeMqttConnection();
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+    );
+    await session.start();
+    connection.publishGate = new Deferred<void>();
+    const controller = new AbortController();
+    const publishing = session.publishCommand(
+      'TESTWAVE30001',
+      Uint8Array.of(9),
+      controller.signal,
+    );
+    await flushAsyncWork();
+    controller.abort();
+
+    await assert.rejects(publishing, /publication failed/);
+    assert.equal(session.state, 'failed');
+    assert.equal(connection.closeCalls, 1);
+    assert.equal(connection.totalListenerCount(), 0);
+    await session.stop();
+  });
+
   it('joins public-publish failure cleanup when stop is called concurrently', async () => {
     const connection = new FakeMqttConnection();
     const session = new EcoFlowCloudSession(

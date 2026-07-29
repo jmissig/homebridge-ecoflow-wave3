@@ -191,7 +191,11 @@ export class EcoFlowCloudSession {
     return () => this.stateListeners.delete(listener);
   }
 
-  async publishCommand(serialNumber: string, payload: Uint8Array): Promise<void> {
+  async publishCommand(
+    serialNumber: string,
+    payload: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
     try {
@@ -199,13 +203,17 @@ export class EcoFlowCloudSession {
         connection,
         topics.set,
         payload,
+        signal,
       );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow command publication failed');
     }
   }
 
-  async requestState(serialNumber: string): Promise<void> {
+  async requestState(
+    serialNumber: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
     try {
@@ -213,6 +221,7 @@ export class EcoFlowCloudSession {
         connection,
         topics.get,
         this.buildRefreshPayload(),
+        signal,
       );
     } catch {
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
@@ -497,6 +506,7 @@ export class EcoFlowCloudSession {
     connection: MqttConnection,
     topic: string,
     payload: Uint8Array | string,
+    externalSignal?: AbortSignal,
   ): Promise<void> {
     const lifecycleSignal = this.lifecycleController?.signal;
     if (lifecycleSignal === undefined) {
@@ -505,7 +515,11 @@ export class EcoFlowCloudSession {
     const generation = this.connectionGeneration;
     const controller = new AbortController();
     this.publicOperationControllers.add(controller);
-    const signal = AbortSignal.any([lifecycleSignal, controller.signal]);
+    const signal = AbortSignal.any([
+      lifecycleSignal,
+      controller.signal,
+      ...(externalSignal === undefined ? [] : [externalSignal]),
+    ]);
     try {
       const operation = this.trackOperation(
         connection.publish(topic, payload, signal),

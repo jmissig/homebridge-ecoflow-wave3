@@ -163,6 +163,36 @@ describe('WAVE 3 controller', () => {
     });
   });
 
+  it('retains acknowledgement and observed state that arrive before publication completes', async () => {
+    const session = new FakeControllerSession();
+    const publicationGate = new Deferred<void>();
+    session.publishGate = publicationGate;
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 48,
+    });
+    let settled = false;
+    const result = controller.execute({ type: 'airflowSpeed', speed: 60 }).then(value => {
+      settled = true;
+      return value;
+    });
+    await flushAsyncWork();
+
+    session.emitPacket('setReply', acknowledgementPacket(48, {
+      configOk: true,
+      airflowSpeed: 60,
+    }));
+    session.emitPacket('property', displayPacket(111, {
+      mode: 1,
+      airflowSpeed: 60,
+    }));
+    await flushAsyncWork();
+    assert.equal(settled, false);
+
+    publicationGate.resolve();
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 48 });
+    assert.equal(session.requestStateCalls, 0);
+  });
+
   it('requires command-specific fields in the post-ack display update', async () => {
     const session = new FakeControllerSession();
     const controller = new Wave3Controller(TEST_SERIAL, session, {
@@ -359,6 +389,61 @@ describe('WAVE 3 controller', () => {
     assert.deepEqual(await second, { status: 'confirmed', sequence: 61 });
   });
 
+  it('aborts hanging publication on timeout and stop without blocking command completion', async () => {
+    const timeoutSession = new FakeControllerSession();
+    timeoutSession.publishGate = new Deferred<void>();
+    const clock = new FakeClock();
+    const timeoutController = new Wave3Controller(TEST_SERIAL, timeoutSession, {
+      schedule: clock.schedule,
+      commandTimeoutMilliseconds: 100,
+      initialSequence: 65,
+    });
+    const timedOut = timeoutController.execute({ type: 'power', on: true });
+    await flushAsyncWork();
+    clock.advance(100);
+    assert.deepEqual(await timedOut, {
+      status: 'failed',
+      sequence: 65,
+      reason: 'timeout',
+    });
+    await flushAsyncWork();
+    assert.equal(timeoutSession.abortedPublishCalls, 1);
+
+    assert.deepEqual(
+      await timeoutController.execute({ type: 'power', on: false }),
+      { status: 'failed', sequence: 66, reason: 'disconnected' },
+    );
+    timeoutSession.publishGate = undefined;
+    timeoutSession.emitState('online');
+    const recovered = timeoutController.execute({ type: 'airflowSpeed', speed: 40 });
+    await flushAsyncWork();
+    timeoutSession.emitPacket('setReply', acknowledgementPacket(67, {
+      configOk: true,
+      airflowSpeed: 40,
+    }));
+    timeoutSession.emitPacket('property', displayPacket(205, {
+      mode: 1,
+      airflowSpeed: 40,
+    }));
+    assert.deepEqual(await recovered, { status: 'confirmed', sequence: 67 });
+
+    const stopSession = new FakeControllerSession();
+    stopSession.publishGate = new Deferred<void>();
+    const stopController = new Wave3Controller(TEST_SERIAL, stopSession, {
+      initialSequence: 75,
+    });
+    const stopped = stopController.execute({ type: 'power', on: true });
+    await flushAsyncWork();
+    stopController.stop();
+    assert.deepEqual(await stopped, {
+      status: 'failed',
+      sequence: 75,
+      reason: 'stopped',
+    });
+    await flushAsyncWork();
+    assert.equal(stopSession.abortedPublishCalls, 1);
+  });
+
   it('fails commands predictably on publication, disconnect, and stop', async () => {
     const publicationSession = new FakeControllerSession();
     publicationSession.failPublish = true;
@@ -414,6 +499,7 @@ class FakeControllerSession implements Wave3ControllerSession {
   public state: CloudSessionState = 'online';
   public readonly publishCalls: Array<{ serialNumber: string; payload: Uint8Array }> = [];
   public requestStateCalls = 0;
+  public abortedPublishCalls = 0;
   public failPublish = false;
   public publishGate?: Deferred<void>;
   private readonly messageListeners = new Set<(message: Wave3InboundMessage) => void>();
@@ -435,9 +521,19 @@ class FakeControllerSession implements Wave3ControllerSession {
     return () => this.stateListeners.delete(listener);
   }
 
-  async publishCommand(serialNumber: string, payload: Uint8Array): Promise<void> {
+  async publishCommand(
+    serialNumber: string,
+    payload: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<void> {
     this.publishCalls.push({ serialNumber, payload });
-    await this.publishGate?.promise;
+    try {
+      await waitForGate(this.publishGate, signal);
+    } catch {
+      this.abortedPublishCalls += 1;
+      this.emitState('failed');
+      throw new Error('synthetic publish cancellation');
+    }
     if (this.failPublish) {
       this.emitState('failed');
       throw new Error('synthetic publish failure');
@@ -466,6 +562,29 @@ class FakeControllerSession implements Wave3ControllerSession {
       + this.errorListeners.size
       + this.stateListeners.size;
   }
+}
+
+async function waitForGate(
+  gate: Deferred<void> | undefined,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (gate === undefined) {
+    return;
+  }
+  if (signal === undefined) {
+    await gate.promise;
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const handleAbort = (): void => {
+      reject(new Error('synthetic abort'));
+    };
+    signal.addEventListener('abort', handleAbort, { once: true });
+    void gate.promise.then(() => {
+      signal.removeEventListener('abort', handleAbort);
+      resolve();
+    });
+  });
 }
 
 class FakeClock {

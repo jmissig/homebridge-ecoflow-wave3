@@ -30,10 +30,17 @@ update that merely leaves a matching cached value in place, cannot confirm the
 command. Duplicate and older telemetry sequences do not overwrite newer
 state. A positive acknowledgement triggers a state-refresh request.
 
+Broker publication completion and the device acknowledgement can arrive in
+either order. The controller retains an early matching acknowledgement and
+qualifying later display evidence, but does not report success unless MQTT
+publication subsequently succeeds. Publication failure still wins.
+
 Publication failure, explicit/ambiguous acknowledgement, timeout, disconnect,
 or shutdown returns a typed failure. Commands are serialized so climate mode,
 target, range, fan, and submode writes cannot race. Cached confirmed state is
-never changed optimistically.
+never changed optimistically. One command deadline covers publication,
+acknowledgement, and observed-state confirmation; timeout or shutdown aborts
+an in-flight publication so it cannot hold the command queue indefinitely.
 
 ## Consequences
 

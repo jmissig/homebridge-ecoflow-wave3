@@ -11,7 +11,8 @@ coverage/
 *.lcov
 
 # Homebridge development state and configuration
-test/hbConfig/
+test/hbConfig/*
+!test/hbConfig/config.json
 .homebridge/
 
 # Logs and diagnostics

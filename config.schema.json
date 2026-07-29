@@ -1,0 +1,18 @@
+{
+  "pluginAlias": "EcoFlowWave3",
+  "pluginType": "platform",
+  "singular": true,
+  "strictValidation": true,
+  "schema": {
+    "type": "object",
+    "required": ["name"],
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "EcoFlow WAVE 3"
+      }
+    }
+  }
+}

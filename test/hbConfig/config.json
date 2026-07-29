@@ -1,0 +1,18 @@
+{
+  "bridge": {
+    "name": "EcoFlow WAVE 3 Development",
+    "username": "AA:BB:CC:DD:EE:FF",
+    "port": 51826,
+    "pin": "031-45-154"
+  },
+  "plugins": [
+    "homebridge-ecoflow-wave3"
+  ],
+  "platforms": [
+    {
+      "name": "EcoFlow WAVE 3",
+      "platform": "EcoFlowWave3"
+    }
+  ],
+  "accessories": []
+}

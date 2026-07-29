@@ -22,12 +22,13 @@ The controller serializes commands and considers one successful only after:
    sequence as the command.
 3. `configOk` is explicitly `true`.
 4. The acknowledgement echoes values consistent with the command.
-5. A newer display upload, received after that acknowledgement, confirms the
-   requested normalized state.
+5. A newer display upload, received after that acknowledgement, contains the
+   command-specific field and confirms the requested normalized state.
 
-A state upload received before acknowledgement cannot confirm the command.
-Duplicate and older telemetry sequences do not overwrite newer state. A
-positive acknowledgement triggers a state-refresh request.
+A state upload received before acknowledgement, or an unrelated partial
+update that merely leaves a matching cached value in place, cannot confirm the
+command. Duplicate and older telemetry sequences do not overwrite newer
+state. A positive acknowledgement triggers a state-refresh request.
 
 Publication failure, explicit/ambiguous acknowledgement, timeout, disconnect,
 or shutdown returns a typed failure. Commands are serialized so climate mode,

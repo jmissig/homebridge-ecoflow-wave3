@@ -137,6 +137,71 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.state.mode, 'heat');
   });
 
+  it('cannot confirm before publication succeeds', async () => {
+    const session = new FakeControllerSession();
+    const publicationGate = new Deferred<void>();
+    session.publishGate = publicationGate;
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 45,
+    });
+    const result = controller.execute({ type: 'mode', mode: 'heat' });
+    await flushAsyncWork();
+
+    session.emitPacket('setReply', acknowledgementPacket(45, {
+      configOk: true,
+      mainPower: true,
+      mode: 2,
+    }));
+    session.emitPacket('property', displayPacket(110, { mode: 2 }));
+    session.failPublish = true;
+    publicationGate.resolve();
+
+    assert.deepEqual(await result, {
+      status: 'failed',
+      sequence: 45,
+      reason: 'publicationFailed',
+    });
+  });
+
+  it('requires command-specific fields in the post-ack display update', async () => {
+    const session = new FakeControllerSession();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 46,
+    });
+    session.emitPacket('property', displayPacket(120, {
+      mode: 1,
+      targetTemperature: 22,
+    }));
+
+    let settled = false;
+    const result = controller.execute({
+      type: 'targetTemperature',
+      celsius: 22,
+    }).then(value => {
+      settled = true;
+      return value;
+    });
+    await flushAsyncWork();
+    session.emitPacket('setReply', acknowledgementPacket(46, {
+      configOk: true,
+      targetTemperature: 22,
+    }));
+    session.emitPacket('property', displayPacket(121, {
+      modeParametersOnly: true,
+      mode: 1,
+      ambientTemperature: 25,
+    }));
+    await flushAsyncWork();
+    assert.equal(settled, false);
+
+    session.emitPacket('property', displayPacket(122, {
+      modeParametersOnly: true,
+      mode: 1,
+      targetTemperature: 22,
+    }));
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 46 });
+  });
+
   it('rejects negative, absent, and mismatched acknowledgements', async () => {
     for (const acknowledgement of [
       { configOk: false, airflowSpeed: 60 },
@@ -294,6 +359,23 @@ describe('WAVE 3 controller', () => {
     );
     assert.equal(disconnectedController.snapshot.availability, 'stopped');
   });
+
+  it('performs full cleanup when the session stops', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      schedule: clock.schedule,
+    });
+    session.emitPacket('property', displayPacket(1, { mode: 1 }));
+    assert.equal(session.totalListenerCount(), 3);
+    assert.equal(clock.taskCount, 1);
+
+    session.emitState('stopped');
+
+    assert.equal(controller.snapshot.availability, 'stopped');
+    assert.equal(session.totalListenerCount(), 0);
+    assert.equal(clock.taskCount, 0);
+  });
 });
 
 class FakeControllerSession implements Wave3ControllerSession {
@@ -301,6 +383,7 @@ class FakeControllerSession implements Wave3ControllerSession {
   public readonly publishCalls: Array<{ serialNumber: string; payload: Uint8Array }> = [];
   public requestStateCalls = 0;
   public failPublish = false;
+  public publishGate?: Deferred<void>;
   private readonly messageListeners = new Set<(message: Wave3InboundMessage) => void>();
   private readonly errorListeners = new Set<(error: EcoFlowCloudSessionError) => void>();
   private readonly stateListeners = new Set<(state: CloudSessionState) => void>();
@@ -322,7 +405,9 @@ class FakeControllerSession implements Wave3ControllerSession {
 
   async publishCommand(serialNumber: string, payload: Uint8Array): Promise<void> {
     this.publishCalls.push({ serialNumber, payload });
+    await this.publishGate?.promise;
     if (this.failPublish) {
+      this.emitState('failed');
       throw new Error('synthetic publish failure');
     }
   }
@@ -343,6 +428,12 @@ class FakeControllerSession implements Wave3ControllerSession {
       listener(state);
     }
   }
+
+  totalListenerCount(): number {
+    return this.messageListeners.size
+      + this.errorListeners.size
+      + this.stateListeners.size;
+  }
 }
 
 class FakeClock {
@@ -358,6 +449,10 @@ class FakeClock {
     this.tasks.set(id, { due: this.now + delayMilliseconds, callback });
     return () => this.tasks.delete(id);
   };
+
+  get taskCount(): number {
+    return this.tasks.size;
+  }
 
   advance(milliseconds: number): void {
     this.now += milliseconds;
@@ -477,4 +572,19 @@ function envelope(commandId: number, sequence: number, payload: Uint8Array): Uin
 async function flushAsyncWork(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
   await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+class Deferred<T> {
+  public readonly promise: Promise<T>;
+  private resolvePromise!: (value: T | PromiseLike<T>) => void;
+
+  constructor() {
+    this.promise = new Promise<T>(resolve => {
+      this.resolvePromise = resolve;
+    });
+  }
+
+  resolve(value?: T): void {
+    this.resolvePromise(value as T);
+  }
 }

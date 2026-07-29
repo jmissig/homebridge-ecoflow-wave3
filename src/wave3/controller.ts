@@ -15,6 +15,7 @@ import type {
   Wave3CommandResult,
   Wave3ControllerSnapshot,
   Wave3DisplayState,
+  Wave3DisplayUpdate,
   Wave3RuntimeTemperatures,
   Wave3State,
 } from './domain.js';
@@ -39,6 +40,7 @@ export interface Wave3ControllerOptions {
 interface PendingCommand {
   command: Wave3Command;
   sequence: number;
+  publicationCompleted: boolean;
   acknowledgementRevision?: number;
   resolve: (result: Wave3CommandResult) => void;
   cancelTimeout: () => void;
@@ -138,6 +140,7 @@ export class Wave3Controller {
       this.pending = {
         command,
         sequence,
+        publicationCompleted: false,
         resolve,
         cancelTimeout,
       };
@@ -145,6 +148,9 @@ export class Wave3Controller {
 
     try {
       await this.session.publishCommand(this.serialNumber, encoded.bytes);
+      if (this.pending?.sequence === sequence) {
+        this.pending.publicationCompleted = true;
+      }
     } catch {
       this.settlePending('publicationFailed');
     }
@@ -164,7 +170,7 @@ export class Wave3Controller {
       this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
       this.displayRevision += 1;
       this.markFresh();
-      this.confirmPendingFromObservedState();
+      this.confirmPendingFromObservedState(decoded.update);
       return;
     }
     if (decoded.kind === 'runtime') {
@@ -189,7 +195,9 @@ export class Wave3Controller {
     acknowledgement: Wave3Acknowledgement,
   ): void {
     const pending = this.pending;
-    if (pending === undefined || pending.sequence !== sequence) {
+    if (pending === undefined
+      || pending.sequence !== sequence
+      || !pending.publicationCompleted) {
       return;
     }
     if (acknowledgement.reportedConfigOk !== true
@@ -206,10 +214,11 @@ export class Wave3Controller {
     });
   }
 
-  private confirmPendingFromObservedState(): void {
+  private confirmPendingFromObservedState(update: Wave3DisplayUpdate): void {
     const pending = this.pending;
     if (pending?.acknowledgementRevision === undefined
       || this.displayRevision <= pending.acknowledgementRevision
+      || !updateProvidesCommandEvidence(update, this.displayState, pending.command)
       || !stateMatchesCommand(this.displayState?.state ?? {}, pending.command)) {
       return;
     }
@@ -225,18 +234,21 @@ export class Wave3Controller {
       this.cancelStaleTimer = undefined;
       this.lastDisplaySequence = undefined;
       this.lastRuntimeSequence = undefined;
-      this.settlePending('disconnected');
+      if (this.pending?.publicationCompleted !== false) {
+        this.settlePending('disconnected');
+      }
       this.updateSnapshot('reconnecting');
       return;
     }
     if (state === 'failed') {
-      this.settlePending('disconnected');
+      if (this.pending?.publicationCompleted !== false) {
+        this.settlePending('disconnected');
+      }
       this.updateSnapshot('offline');
       return;
     }
     if (state === 'stopped') {
-      this.settlePending('stopped');
-      this.updateSnapshot('stopped');
+      this.stop();
       return;
     }
     if (state === 'online') {
@@ -344,6 +356,32 @@ function stateMatchesCommand(state: Wave3State, command: Wave3Command): boolean 
     return state.airflowSpeed === command.speed;
   case 'submode':
     return state.submode === command.submode;
+  }
+}
+
+function updateProvidesCommandEvidence(
+  update: Wave3DisplayUpdate,
+  displayState: Wave3DisplayState | undefined,
+  command: Wave3Command,
+): boolean {
+  const activeModeId = update.operatingModeId ?? displayState?.operatingModeId;
+  const parameters = activeModeId === undefined
+    ? undefined
+    : update.modeParameters[activeModeId];
+  switch (command.type) {
+  case 'power':
+    return update.sleepState !== undefined || update.operatingModeId !== undefined;
+  case 'mode':
+    return update.operatingModeId !== undefined;
+  case 'targetTemperature':
+    return parameters?.targetTemperatureCelsius !== undefined;
+  case 'automaticTemperatureRange':
+    return parameters?.targetTemperatureLowerCelsius !== undefined
+      && parameters.targetTemperatureUpperCelsius !== undefined;
+  case 'airflowSpeed':
+    return parameters?.airflowSpeed !== undefined;
+  case 'submode':
+    return parameters?.submode !== undefined;
   }
 }
 

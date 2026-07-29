@@ -202,6 +202,38 @@ describe('WAVE 3 controller', () => {
     assert.deepEqual(await result, { status: 'confirmed', sequence: 46 });
   });
 
+  it('requires value-consistent post-ack evidence for power', async () => {
+    const session = new FakeControllerSession();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 47,
+    });
+    session.emitPacket('property', displayPacket(130, {
+      mode: 1,
+      sleepState: 1,
+    }));
+    assert.equal(controller.snapshot.state.powered, false);
+
+    let settled = false;
+    const result = controller.execute({ type: 'power', on: false }).then(value => {
+      settled = true;
+      return value;
+    });
+    await flushAsyncWork();
+    session.emitPacket('setReply', acknowledgementPacket(47, {
+      configOk: true,
+      systemPaused: true,
+    }));
+    session.emitPacket('property', displayPacket(131, { mode: 1 }));
+    await flushAsyncWork();
+    assert.equal(settled, false);
+
+    session.emitPacket('property', displayPacket(132, {
+      modeParametersOnly: true,
+      sleepState: 1,
+    }));
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 47 });
+  });
+
   it('rejects negative, absent, and mismatched acknowledgements', async () => {
     for (const acknowledgement of [
       { configOk: false, airflowSpeed: 60 },
@@ -472,6 +504,7 @@ function displayPacket(
   values: {
     mode?: number;
     modeParametersOnly?: boolean;
+    sleepState?: number;
     ambientTemperature?: number;
     targetTemperature?: number;
     airflowSpeed?: number;
@@ -496,6 +529,9 @@ function displayPacket(
     ...(values.ambientTemperature === undefined
       ? {}
       : { tempAmbient: values.ambientTemperature }),
+    ...(values.sleepState === undefined
+      ? {}
+      : { devSleepState: values.sleepState }),
     waveModeInfo: { listInfo },
   });
   return envelope(

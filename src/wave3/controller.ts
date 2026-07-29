@@ -370,7 +370,10 @@ function updateProvidesCommandEvidence(
     : update.modeParameters[activeModeId];
   switch (command.type) {
   case 'power':
-    return update.sleepState !== undefined || update.operatingModeId !== undefined;
+    return command.on
+      ? update.sleepState === 0
+        || (update.operatingModeId !== undefined && update.operatingModeId !== 0)
+      : update.sleepState === 1 || update.operatingModeId === 0;
   case 'mode':
     return update.operatingModeId !== undefined;
   case 'targetTemperature':

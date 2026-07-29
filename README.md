@@ -4,12 +4,13 @@ A focused Homebridge plugin for controlling the EcoFlow WAVE 3 through HomeKit.
 
 ## Status
 
-The repository currently contains the Homebridge 2 plugin baseline, a pinned
-protocol dossier, a tested WAVE 3 protobuf codec/domain layer, and a fakeable
-private-cloud HTTP/MQTT session. A fake-backed controller now maintains
-confirmed state and requires acknowledgement plus later observed state before
-reporting command success. Working HomeKit characteristics are not implemented
-yet.
+The repository contains a Homebridge 2 platform, a pinned protocol dossier, a
+tested WAVE 3 protobuf codec/domain layer, and a fakeable private-cloud
+HTTP/MQTT session. A fake-backed controller maintains confirmed state and
+requires acknowledgement plus later observed state before reporting command
+success. The platform maps that controller to one primary `HeaterCooler`
+service and reconciles explicitly configured WAVE 3 accessories with the
+Homebridge cache.
 
 The planned first slice is one primary `HeaterCooler` accessory for a
 user-configured WAVE 3. Nothing is considered hardware-supported until it has
@@ -26,9 +27,8 @@ npm install
 npm run verify
 ```
 
-The current package is deliberately private and inert. `npm link` and live
-Homebridge use are not useful until the protocol and controller phases are
-implemented.
+The current package remains private while hardware validation is pending.
+Unit tests do not contact EcoFlow, an MQTT broker, Homebridge, or hardware.
 
 ## Configuration
 
@@ -66,13 +66,13 @@ can keep that boundary explicit and avoid carrying unrelated device support.
 
 ## Architecture
 
-1. **`EcoFlowPrivateClient`** — login, token handling, temporary MQTT
+1. **`EcoFlowCloudSession`** — login, token handling, temporary MQTT
    credentials, connection lifecycle, and `/app/...` topics.
 2. **`Wave3Protocol`** — typed protobuf encoding and decoding, with fixtures
    derived from observed device messages.
 3. **`Wave3Controller`** — normalized state, command acknowledgements,
    validation, and reconnect/state-refresh behavior.
-4. **`Wave3Accessory`** — HomeKit presentation as a `HeaterCooler`, with
+4. **`Wave3PlatformAccessory`** — HomeKit presentation as a `HeaterCooler`, with
    carefully chosen companion services where HomeKit lacks a natural
    characteristic.
 

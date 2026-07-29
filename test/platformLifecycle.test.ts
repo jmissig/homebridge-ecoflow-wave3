@@ -1,0 +1,262 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import type {
+  API,
+  Logging,
+  PlatformAccessory,
+  PlatformConfig,
+} from 'homebridge';
+
+import {
+  EcoFlowWave3Platform,
+  type EcoFlowWave3PlatformDependencies,
+  type PlatformCloudSession,
+} from '../src/platform.js';
+import type {
+  Wave3AccessoryController,
+  Wave3PlatformAccessory,
+} from '../src/platformAccessory.js';
+import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
+
+describe('EcoFlow WAVE 3 platform lifecycle', () => {
+  it('validates configuration before creating a session', async () => {
+    const harness = platformHarness({
+      name: 'Invalid',
+      platform: 'EcoFlowWave3',
+    });
+    await harness.platform.launch();
+    assert.equal(harness.sessionCreateCount, 0);
+    assert.equal(harness.registered.length, 0);
+    assert.match(harness.logs.error.join('\n'), /configuration is invalid/);
+  });
+
+  it('restores configured cache entries, prevents duplicates, registers missing devices, and removes stale entries', async () => {
+    const harness = platformHarness(validConfig());
+    const expectedFirstUuid = uuidFor('FIRST1234');
+    const expectedSecondUuid = uuidFor('SECOND5678');
+    const first = new FakeCachedAccessory('Old Bedroom Name', expectedFirstUuid);
+    const duplicate = new FakeCachedAccessory('Duplicate', expectedFirstUuid);
+    const stale = new FakeCachedAccessory('Old Unit', uuidFor('REMOVED9999'));
+    harness.platform.configureAccessory(first as unknown as PlatformAccessory);
+    harness.platform.configureAccessory(duplicate as unknown as PlatformAccessory);
+    harness.platform.configureAccessory(stale as unknown as PlatformAccessory);
+
+    await harness.platform.launch();
+    assert.equal(harness.sessionCreateCount, 1);
+    assert.deepEqual(harness.events.slice(-1), ['session:start']);
+    assert.deepEqual(harness.unregistered, [duplicate, stale]);
+    assert.equal(harness.registered.length, 1);
+    assert.equal(harness.registered[0]?.UUID, expectedSecondUuid);
+    assert.equal(first.displayName, 'Bedroom WAVE 3');
+    assert.deepEqual(first.context, {
+      schemaVersion: 1,
+      serialNumber: 'FIRST1234',
+    });
+    assert.equal(harness.updated.length, 2);
+    assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
+    assert.equal(harness.platform.accessories.size, 2);
+
+    await harness.platform.launch();
+    assert.equal(harness.sessionCreateCount, 1);
+    assert.equal(harness.registered.length, 1);
+
+    await Promise.all([
+      harness.platform.shutdown(),
+      harness.platform.shutdown(),
+    ]);
+    assert.equal(harness.sessionStopCount, 1);
+    assert.equal(harness.bindingStopCount, 2);
+    assert.equal(harness.controllerStopCount, 2);
+  });
+
+  it('uses stable serial-derived UUIDs without writing identifiers to logs', async () => {
+    const first = platformHarness(validConfig());
+    const second = platformHarness(validConfig());
+    await first.platform.launch();
+    await second.platform.launch();
+    assert.deepEqual(
+      first.registered.map(accessory => accessory.UUID),
+      second.registered.map(accessory => accessory.UUID),
+    );
+    const logs = Object.values(first.logs).flat().join('\n');
+    assert.doesNotMatch(logs, /FIRST1234|SECOND5678/);
+    assert.doesNotMatch(logs, /token|password|authorization/i);
+  });
+});
+
+class FakeCachedAccessory {
+  context: Record<string, unknown> = {};
+
+  constructor(
+    public displayName: string,
+    public readonly UUID: string,
+  ) {}
+
+  updateDisplayName(name: string): void {
+    this.displayName = name;
+  }
+}
+
+function platformHarness(config: PlatformConfig): {
+  platform: EcoFlowWave3Platform;
+  registered: FakeCachedAccessory[];
+  updated: FakeCachedAccessory[];
+  unregistered: FakeCachedAccessory[];
+  boundSerials: string[];
+  events: string[];
+  logs: Record<'debug' | 'info' | 'warn' | 'error', string[]>;
+  readonly sessionCreateCount: number;
+  readonly sessionStopCount: number;
+  readonly bindingStopCount: number;
+  readonly controllerStopCount: number;
+} {
+  const registered: FakeCachedAccessory[] = [];
+  const updated: FakeCachedAccessory[] = [];
+  const unregistered: FakeCachedAccessory[] = [];
+  const boundSerials: string[] = [];
+  const events: string[] = [];
+  const logs = {
+    debug: [] as string[],
+    info: [] as string[],
+    warn: [] as string[],
+    error: [] as string[],
+  };
+  let sessionCreateCount = 0;
+  let sessionStopCount = 0;
+  let bindingStopCount = 0;
+  let controllerStopCount = 0;
+
+  class Accessory extends FakeCachedAccessory {}
+  const api = {
+    hap: {
+      Service: {},
+      Characteristic: {},
+      uuid: {
+        generate: uuidForSeed,
+      },
+    },
+    platformAccessory: Accessory,
+    registerPlatformAccessories: (
+      _plugin: string,
+      _platform: string,
+      accessories: FakeCachedAccessory[],
+    ) => {
+      events.push('register');
+      registered.push(...accessories);
+    },
+    updatePlatformAccessories: (accessories: FakeCachedAccessory[]) => {
+      events.push('update');
+      updated.push(...accessories);
+    },
+    unregisterPlatformAccessories: (
+      _plugin: string,
+      _platform: string,
+      accessories: FakeCachedAccessory[],
+    ) => {
+      events.push('unregister');
+      unregistered.push(...accessories);
+    },
+    on: () => api,
+  };
+  const logger = {
+    debug: (message: string) => logs.debug.push(message),
+    info: (message: string) => logs.info.push(message),
+    warn: (message: string) => logs.warn.push(message),
+    error: (message: string) => logs.error.push(message),
+  };
+  const dependencies: EcoFlowWave3PlatformDependencies = {
+    createSession: () => {
+      sessionCreateCount += 1;
+      return {
+        state: 'idle',
+        onMessage: () => () => undefined,
+        onError: () => () => undefined,
+        onStateChange: () => () => undefined,
+        publishCommand: async () => undefined,
+        requestState: async () => undefined,
+        start: async () => {
+          events.push('session:start');
+        },
+        stop: async () => {
+          sessionStopCount += 1;
+          events.push('session:stop');
+        },
+      } satisfies PlatformCloudSession;
+    },
+    createController: serialNumber => {
+      boundSerials.push(serialNumber);
+      return {
+        snapshot: {
+          availability: 'offline',
+          state: {},
+          runtimeTemperatures: {},
+        } satisfies Wave3ControllerSnapshot,
+        onSnapshot: () => () => undefined,
+        execute: async () => ({
+          status: 'failed',
+          sequence: 10,
+          reason: 'disconnected',
+        }),
+        stop: () => {
+          controllerStopCount += 1;
+        },
+      } satisfies Wave3AccessoryController;
+    },
+    bindAccessory: () => ({
+      stop: () => {
+        bindingStopCount += 1;
+      },
+    }) as Wave3PlatformAccessory,
+  };
+  const platform = new EcoFlowWave3Platform(
+    logger as unknown as Logging,
+    config,
+    api as unknown as API,
+    dependencies,
+  );
+
+  return {
+    platform,
+    registered,
+    updated,
+    unregistered,
+    boundSerials,
+    events,
+    logs,
+    get sessionCreateCount() {
+      return sessionCreateCount;
+    },
+    get sessionStopCount() {
+      return sessionStopCount;
+    },
+    get bindingStopCount() {
+      return bindingStopCount;
+    },
+    get controllerStopCount() {
+      return controllerStopCount;
+    },
+  };
+}
+
+function validConfig(): PlatformConfig {
+  return {
+    platform: 'EcoFlowWave3',
+    name: 'EcoFlow WAVE 3',
+    email: 'person@example.com',
+    password: 'secret',
+    apiHost: 'api-a.ecoflow.com',
+    devices: [
+      { name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234' },
+      { name: 'Office WAVE 3', serialNumber: 'SECOND5678' },
+    ],
+  };
+}
+
+function uuidFor(serialNumber: string): string {
+  return uuidForSeed(`homebridge-ecoflow-wave3:wave3:${serialNumber}`);
+}
+
+function uuidForSeed(seed: string): string {
+  return `uuid:${seed}`;
+}

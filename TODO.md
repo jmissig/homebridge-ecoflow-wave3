@@ -133,28 +133,28 @@ down cleanly.
 the chosen acknowledgement/state-confirmation policy and fail predictably
 otherwise.
 
-## Next — Phase 5: Homebridge platform and primary climate accessory
+## Complete — Phase 5: Homebridge platform and primary climate accessory
 
-- [ ] Validate config before starting any account or MQTT work.
-- [ ] Discover/register only WAVE 3 accessories after
+- [x] Validate config before starting any account or MQTT work.
+- [x] Discover/register only WAVE 3 accessories after
   `didFinishLaunching`.
-- [ ] Use the WAVE 3 serial number or another verified stable identifier for
+- [x] Use the WAVE 3 serial number or another verified stable identifier for
   accessory UUID generation while redacting it from logs.
-- [ ] Restore existing cached accessories, update their context safely, and
+- [x] Restore existing cached accessories, update their context safely, and
   remove stale WAVE-3-only accessories.
-- [ ] Map the controller to one primary `HeaterCooler` service:
+- [x] Map the controller to one primary `HeaterCooler` service:
   - `Active`
   - `CurrentHeaterCoolerState`
   - `TargetHeaterCoolerState`
   - `CurrentTemperature`
   - cooling and heating thresholds
   - `RotationSpeed` if the five-step mapping remains valid
-- [ ] Keep characteristic getters fast and backed by cached confirmed state.
-- [ ] Push device events asynchronously into HomeKit characteristics.
-- [ ] Surface offline/stale/command-failure state with standard HAP behavior.
-- [ ] Test characteristic-to-command mapping and state-to-characteristic
+- [x] Keep characteristic getters fast and backed by cached confirmed state.
+- [x] Push device events asynchronously into HomeKit characteristics.
+- [x] Surface offline/stale/command-failure state with standard HAP behavior.
+- [x] Test characteristic-to-command mapping and state-to-characteristic
   mapping without a live bridge or device.
-- [ ] Test platform cache restoration, duplicate prevention, and stale removal.
+- [x] Test platform cache restoration, duplicate prevention, and stale removal.
 
 **Phase 5 exit:** fake controller tests exercise the complete HomeKit climate
 surface while `npm run verify` remains network- and hardware-independent.

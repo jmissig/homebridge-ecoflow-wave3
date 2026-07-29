@@ -25,7 +25,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
       name: 'Invalid',
       platform: 'EcoFlowWave3',
     });
-    await harness.platform.launch();
+    await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 0);
     assert.equal(harness.registered.length, 0);
     assert.match(harness.logs.error.join('\n'), /configuration is invalid/);
@@ -42,7 +42,8 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     harness.platform.configureAccessory(duplicate as unknown as PlatformAccessory);
     harness.platform.configureAccessory(stale as unknown as PlatformAccessory);
 
-    await harness.platform.launch();
+    assert.equal(harness.sessionCreateCount, 0);
+    await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 1);
     assert.deepEqual(harness.events.slice(-1), ['session:start']);
     assert.deepEqual(harness.unregistered, [duplicate, stale]);
@@ -57,7 +58,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
     assert.equal(harness.platform.accessories.size, 2);
 
-    await harness.platform.launch();
+    await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 1);
     assert.equal(harness.registered.length, 1);
 
@@ -73,8 +74,8 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
   it('uses stable serial-derived UUIDs without writing identifiers to logs', async () => {
     const first = platformHarness(validConfig());
     const second = platformHarness(validConfig());
-    await first.platform.launch();
-    await second.platform.launch();
+    await first.signalDidFinishLaunching();
+    await second.signalDidFinishLaunching();
     assert.deepEqual(
       first.registered.map(accessory => accessory.UUID),
       second.registered.map(accessory => accessory.UUID),
@@ -82,6 +83,27 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const logs = Object.values(first.logs).flat().join('\n');
     assert.doesNotMatch(logs, /FIRST1234|SECOND5678/);
     assert.doesNotMatch(logs, /token|password|authorization/i);
+  });
+
+  it('makes shutdown terminal and joins launch work already in progress', async () => {
+    const gate = deferred();
+    const harness = platformHarness(validConfig(), gate);
+    const launch = harness.signalDidFinishLaunching();
+    await Promise.resolve();
+    assert.equal(harness.sessionCreateCount, 1);
+
+    const shutdown = harness.platform.shutdown();
+    assert.equal(harness.sessionStopCount, 1);
+    gate.resolve();
+    await Promise.all([launch, shutdown]);
+    await harness.signalDidFinishLaunching();
+    assert.equal(harness.sessionCreateCount, 1);
+    assert.equal(harness.sessionStopCount, 1);
+
+    const stoppedBeforeLaunch = platformHarness(validConfig());
+    await stoppedBeforeLaunch.platform.shutdown();
+    await stoppedBeforeLaunch.signalDidFinishLaunching();
+    assert.equal(stoppedBeforeLaunch.sessionCreateCount, 0);
   });
 });
 
@@ -98,7 +120,10 @@ class FakeCachedAccessory {
   }
 }
 
-function platformHarness(config: PlatformConfig): {
+function platformHarness(
+  config: PlatformConfig,
+  startGate?: ReturnType<typeof deferred>,
+): {
   platform: EcoFlowWave3Platform;
   registered: FakeCachedAccessory[];
   updated: FakeCachedAccessory[];
@@ -106,6 +131,7 @@ function platformHarness(config: PlatformConfig): {
   boundSerials: string[];
   events: string[];
   logs: Record<'debug' | 'info' | 'warn' | 'error', string[]>;
+  signalDidFinishLaunching(): Promise<void>;
   readonly sessionCreateCount: number;
   readonly sessionStopCount: number;
   readonly bindingStopCount: number;
@@ -126,6 +152,7 @@ function platformHarness(config: PlatformConfig): {
   let sessionStopCount = 0;
   let bindingStopCount = 0;
   let controllerStopCount = 0;
+  const eventListeners = new Map<string, () => void>();
 
   class Accessory extends FakeCachedAccessory {}
   const api = {
@@ -157,7 +184,10 @@ function platformHarness(config: PlatformConfig): {
       events.push('unregister');
       unregistered.push(...accessories);
     },
-    on: () => api,
+    on: (event: string, listener: () => void) => {
+      eventListeners.set(event, listener);
+      return api;
+    },
   };
   const logger = {
     debug: (message: string) => logs.debug.push(message),
@@ -177,6 +207,7 @@ function platformHarness(config: PlatformConfig): {
         requestState: async () => undefined,
         start: async () => {
           events.push('session:start');
+          await startGate?.promise;
         },
         stop: async () => {
           sessionStopCount += 1;
@@ -224,6 +255,10 @@ function platformHarness(config: PlatformConfig): {
     boundSerials,
     events,
     logs,
+    async signalDidFinishLaunching() {
+      eventListeners.get('didFinishLaunching')?.();
+      await platform.launch();
+    },
     get sessionCreateCount() {
       return sessionCreateCount;
     },
@@ -259,4 +294,15 @@ function uuidFor(serialNumber: string): string {
 
 function uuidForSeed(seed: string): string {
   return `uuid:${seed}`;
+}
+
+function deferred(): {
+  promise: Promise<void>;
+  resolve(): void;
+  } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }

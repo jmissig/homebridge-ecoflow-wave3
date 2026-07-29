@@ -89,6 +89,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   private session?: PlatformCloudSession;
   private launchPromise?: Promise<void>;
   private shutdownPromise?: Promise<void>;
+  private shutdownStarted = false;
 
   constructor(
     public readonly log: Logging,
@@ -134,6 +135,9 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   }
 
   async launch(): Promise<void> {
+    if (this.shutdownStarted) {
+      return;
+    }
     if (this.launchPromise !== undefined) {
       return this.launchPromise;
     }
@@ -145,6 +149,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     if (this.shutdownPromise !== undefined) {
       return this.shutdownPromise;
     }
+    this.shutdownStarted = true;
     this.shutdownPromise = this.shutdownPlatform();
     return this.shutdownPromise;
   }
@@ -210,7 +215,9 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     try {
       await session.start();
     } catch {
-      this.log.error('EcoFlow WAVE 3 cloud session failed to start');
+      if (!this.shutdownStarted) {
+        this.log.error('EcoFlow WAVE 3 cloud session failed to start');
+      }
     }
   }
 
@@ -224,6 +231,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     }
     this.controllers.clear();
     await this.session?.stop();
+    await this.launchPromise;
   }
 
   private uuidForSerial(serialNumber: string): string {

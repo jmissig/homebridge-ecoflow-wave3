@@ -134,7 +134,7 @@ describe('WAVE 3 HomeKit accessory', () => {
     await setCharacteristic(service, Characteristic.HeatingThresholdTemperature, 19);
     assert.deepEqual(controller.commands.slice(-2), [
       { type: 'automaticTemperatureRange', lowerCelsius: 18, upperCelsius: 26 },
-      { type: 'automaticTemperatureRange', lowerCelsius: 19, upperCelsius: 25 },
+      { type: 'automaticTemperatureRange', lowerCelsius: 19, upperCelsius: 26 },
     ]);
 
     controller.nextResult = {
@@ -150,6 +150,143 @@ describe('WAVE 3 HomeKit accessory', () => {
     assert.equal(error, HAPStatus.OPERATION_TIMED_OUT);
     binding.stop();
     assert.equal(controller.listenerCount, 0);
+  });
+
+  it('serializes state-dependent automatic threshold writes', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'auto',
+      ambientTemperatureCelsius: 22,
+      targetTemperatureLowerCelsius: 18,
+      targetTemperatureUpperCelsius: 25,
+      airflowSpeed: 60,
+    }));
+    const accessory = new FakeAccessory('Bedroom WAVE 3', 'uuid-3', 'SERIAL9012');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+    const service = accessory.heaterCooler!;
+    const gate = deferred();
+    controller.nextGate = gate.promise;
+
+    const cooling = setCharacteristic(
+      service,
+      Characteristic.CoolingThresholdTemperature,
+      26,
+    );
+    await Promise.resolve();
+    const heating = setCharacteristic(
+      service,
+      Characteristic.HeatingThresholdTemperature,
+      19,
+    );
+    await Promise.resolve();
+    assert.deepEqual(controller.commands.slice(-1), [
+      { type: 'automaticTemperatureRange', lowerCelsius: 18, upperCelsius: 26 },
+    ]);
+
+    gate.resolve();
+    await Promise.all([cooling, heating]);
+    assert.deepEqual(controller.commands.slice(-2), [
+      { type: 'automaticTemperatureRange', lowerCelsius: 18, upperCelsius: 26 },
+      { type: 'automaticTemperatureRange', lowerCelsius: 19, upperCelsius: 26 },
+    ]);
+
+    const modeController = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      targetTemperatureCelsius: 22,
+      targetTemperatureLowerCelsius: 18,
+      targetTemperatureUpperCelsius: 25,
+    }));
+    const modeAccessory = new FakeAccessory('Office WAVE 3', 'uuid-5', 'SERIAL7890');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      modeAccessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      modeController,
+    );
+    const modeService = modeAccessory.heaterCooler!;
+    const modeGate = deferred();
+    modeController.nextGate = modeGate.promise;
+    const selectAuto = setCharacteristic(
+      modeService,
+      Characteristic.TargetHeaterCoolerState,
+      Characteristic.TargetHeaterCoolerState.AUTO,
+    );
+    await Promise.resolve();
+    const setUpper = setCharacteristic(
+      modeService,
+      Characteristic.CoolingThresholdTemperature,
+      24,
+    );
+    await Promise.resolve();
+    assert.deepEqual(modeController.commands, [{ type: 'mode', mode: 'auto' }]);
+    modeGate.resolve();
+    await Promise.all([selectAuto, setUpper]);
+    assert.deepEqual(modeController.commands, [
+      { type: 'mode', mode: 'auto' },
+      { type: 'automaticTemperatureRange', lowerCelsius: 18, upperCelsius: 24 },
+    ]);
+  });
+
+  it('advertises exact WAVE temperature and airflow constraints', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'heat',
+      ambientTemperatureCelsius: 20,
+      targetTemperatureCelsius: 30,
+      airflowSpeed: 100,
+    }));
+    const accessory = new FakeAccessory('Office WAVE 3', 'uuid-4', 'SERIAL3456');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+    const service = accessory.heaterCooler!;
+    const heating = service.getCharacteristic(Characteristic.HeatingThresholdTemperature);
+    const cooling = service.getCharacteristic(Characteristic.CoolingThresholdTemperature);
+    const rotation = service.getCharacteristic(Characteristic.RotationSpeed);
+    assert.deepEqual(
+      pickRange(heating.props),
+      { minValue: 16, maxValue: 30, minStep: 0.1 },
+    );
+    assert.deepEqual(
+      pickRange(cooling.props),
+      { minValue: 16, maxValue: 30, minStep: 0.1 },
+    );
+    assert.deepEqual(
+      pickRange(rotation.props),
+      { minValue: 20, maxValue: 100, minStep: 20 },
+    );
+    assert.equal(heating.value, 30);
+
+    await setCharacteristic(
+      service,
+      Characteristic.HeatingThresholdTemperature,
+      30,
+      true,
+    );
+    const invalidTemperature = await setCharacteristicError(
+      service,
+      Characteristic.CoolingThresholdTemperature,
+      15,
+      true,
+    );
+    assert.equal(invalidTemperature, HAPStatus.INVALID_VALUE_IN_REQUEST);
+
+    const invalidAirflow = await setCharacteristicError(
+      service,
+      Characteristic.RotationSpeed,
+      21,
+      true,
+    );
+    assert.equal(invalidAirflow, HAPStatus.INVALID_VALUE_IN_REQUEST);
+    assert.deepEqual(controller.commands.slice(-1), [
+      { type: 'targetTemperature', celsius: 30 },
+    ]);
   });
 
   it('pushes snapshots asynchronously and reports offline or missing state as HAP errors', async () => {
@@ -215,6 +352,7 @@ class FakeController implements Wave3AccessoryController {
   readonly commands: Wave3Command[] = [];
   private readonly listeners = new Set<(snapshot: Wave3ControllerSnapshot) => void>();
   nextResult: Wave3CommandResult = { status: 'confirmed', sequence: 10 };
+  nextGate?: Promise<void>;
   stopped = false;
 
   constructor(public snapshot: Wave3ControllerSnapshot) {}
@@ -230,6 +368,12 @@ class FakeController implements Wave3AccessoryController {
 
   async execute(command: Wave3Command): Promise<Wave3CommandResult> {
     this.commands.push(command);
+    const gate = this.nextGate;
+    this.nextGate = undefined;
+    await gate;
+    if (this.nextResult.status === 'confirmed') {
+      this.applyConfirmedCommand(command);
+    }
     return this.nextResult;
   }
 
@@ -242,6 +386,33 @@ class FakeController implements Wave3AccessoryController {
     for (const listener of this.listeners) {
       listener(value);
     }
+  }
+
+  private applyConfirmedCommand(command: Wave3Command): void {
+    const state = { ...this.snapshot.state };
+    switch (command.type) {
+    case 'power':
+      state.powered = command.on;
+      break;
+    case 'mode':
+      state.powered = true;
+      state.mode = command.mode;
+      break;
+    case 'targetTemperature':
+      state.targetTemperatureCelsius = command.celsius;
+      break;
+    case 'automaticTemperatureRange':
+      state.targetTemperatureLowerCelsius = command.lowerCelsius;
+      state.targetTemperatureUpperCelsius = command.upperCelsius;
+      break;
+    case 'airflowSpeed':
+      state.airflowSpeed = command.speed;
+      break;
+    case 'submode':
+      state.submode = command.submode;
+      break;
+    }
+    this.emit({ ...this.snapshot, state });
   }
 }
 
@@ -326,19 +497,47 @@ async function setCharacteristic(
   service: Service,
   characteristic: WithUUID<new () => Characteristic>,
   value: CharacteristicValue,
+  asClient = false,
 ): Promise<void> {
-  await service.getCharacteristic(characteristic).handleSetRequest(value);
+  await service.getCharacteristic(characteristic).handleSetRequest(
+    value,
+    asClient ? {} as never : undefined,
+  );
 }
 
 async function setCharacteristicError(
   service: Service,
   characteristic: WithUUID<new () => Characteristic>,
   value: CharacteristicValue,
+  asClient = false,
 ): Promise<unknown> {
   try {
-    await setCharacteristic(service, characteristic, value);
+    await setCharacteristic(service, characteristic, value, asClient);
   } catch (error) {
     return error;
   }
   throw new Error('expected characteristic write to fail');
+}
+
+function pickRange(props: Characteristic['props']): {
+  minValue?: number;
+  maxValue?: number;
+  minStep?: number;
+} {
+  return {
+    minValue: props.minValue,
+    maxValue: props.maxValue,
+    minStep: props.minStep,
+  };
+}
+
+function deferred(): {
+  promise: Promise<void>;
+  resolve(): void;
+  } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }

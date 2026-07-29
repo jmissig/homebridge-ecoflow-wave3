@@ -51,6 +51,7 @@ export class Wave3PlatformAccessory {
 
   private snapshot: Wave3ControllerSnapshot;
   private readonly detachSnapshot: () => void;
+  private writeTail: Promise<void> = Promise.resolve();
   private stopped = false;
 
   constructor(
@@ -129,6 +130,14 @@ export class Wave3PlatformAccessory {
       'rotationSpeed',
       value => ({ type: 'airflowSpeed', speed: airflowSpeed(Number(value)) }),
     );
+    for (const threshold of [
+      characteristic.CoolingThresholdTemperature,
+      characteristic.HeatingThresholdTemperature,
+    ]) {
+      this.heaterCoolerService
+        .getCharacteristic(threshold)
+        .setProps({ minValue: 16, maxValue: 30, minStep: 0.1 });
+    }
     this.heaterCoolerService
       .getCharacteristic(characteristic.RotationSpeed)
       .setProps({ minValue: 20, maxValue: 100, minStep: 20 });
@@ -145,19 +154,7 @@ export class Wave3PlatformAccessory {
     this.heaterCoolerService
       .getCharacteristic(characteristicType)
       .onGet(() => this.readCharacteristic(key))
-      .onSet(async value => {
-        this.requireOnline();
-        let requestedCommand: Wave3Command;
-        try {
-          requestedCommand = command(value);
-        } catch {
-          throw this.invalidValueError();
-        }
-        const result = await this.controller.execute(requestedCommand);
-        if (result.status === 'failed') {
-          throw this.commandError(result);
-        }
-      });
+      .onSet(value => this.enqueueWrite(() => command(value)));
   }
 
   private bindReadOnly(
@@ -179,6 +176,24 @@ export class Wave3PlatformAccessory {
       throw this.communicationError();
     }
     return value;
+  }
+
+  private enqueueWrite(command: () => Wave3Command): Promise<void> {
+    const execution = this.writeTail.then(async () => {
+      this.requireOnline();
+      let requestedCommand: Wave3Command;
+      try {
+        requestedCommand = command();
+      } catch {
+        throw this.invalidValueError();
+      }
+      const result = await this.controller.execute(requestedCommand);
+      if (result.status === 'failed') {
+        throw this.commandError(result);
+      }
+    });
+    this.writeTail = execution.catch(() => undefined);
+    return execution;
   }
 
   private pushSnapshot(snapshot: Wave3ControllerSnapshot): void {
@@ -380,14 +395,10 @@ function validateTemperature(celsius: number): void {
 }
 
 function airflowSpeed(value: number): 20 | 40 | 60 | 80 | 100 {
-  if (!Number.isFinite(value)) {
-    throw new RangeError('airflow speed must be numeric');
+  if (!isAirflowSpeed(value)) {
+    throw new RangeError('airflow speed must be one of the five supported steps');
   }
-  const rounded = Math.round(value / 20) * 20;
-  if (rounded !== 20 && rounded !== 40 && rounded !== 60 && rounded !== 80 && rounded !== 100) {
-    throw new RangeError('airflow speed is out of range');
-  }
-  return rounded;
+  return value;
 }
 
 function isAirflowSpeed(value: number | undefined): value is 20 | 40 | 60 | 80 | 100 {

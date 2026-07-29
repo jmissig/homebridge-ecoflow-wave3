@@ -401,31 +401,55 @@ function normalizeDisplayUpdate(
 
   if (has(display, Wave3DisplayPropertyUploadSchema, 'devSleepState')) {
     const sleepState = display.devSleepState!;
-    update.sleepState = sleepState;
-    if (sleepState !== 0 && sleepState !== 1) {
+    if (sleepState === 0 || sleepState === 1) {
+      update.sleepState = sleepState;
+    } else {
       addUnsupportedValue(unsupportedValues, 'dev_sleep_state', sleepState);
     }
   }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'tempAmbient')) {
-    update.ambientTemperatureCelsius = display.tempAmbient;
+    const temperature = display.tempAmbient!;
+    if (isSupportedAmbientTemperature(temperature)) {
+      update.ambientTemperatureCelsius = temperature;
+    } else {
+      addUnsupportedValue(unsupportedValues, 'temp_ambient', temperature);
+    }
   }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'humiAmbient')) {
-    update.ambientHumidityPercent = display.humiAmbient;
+    const humidity = display.humiAmbient!;
+    if (Number.isFinite(humidity) && humidity >= 0 && humidity <= 100) {
+      update.ambientHumidityPercent = humidity;
+    } else {
+      addUnsupportedValue(unsupportedValues, 'humi_ambient', humidity);
+    }
   }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'waveOperatingMode')) {
     const operatingModeId = display.waveOperatingMode!;
-    update.operatingModeId = operatingModeId;
-    if (!WAVE3_MODE_BY_ID.has(operatingModeId)) {
+    if (WAVE3_MODE_BY_ID.has(operatingModeId)) {
+      update.operatingModeId = operatingModeId;
+    } else {
       addUnsupportedValue(unsupportedValues, 'wave_operating_mode', operatingModeId);
     }
   }
 
   display.waveModeInfo?.listInfo.forEach((modeParameters, modeId) => {
+    if (!WAVE3_MODE_BY_ID.has(modeId)) {
+      if (modeParameters.$unknown?.length !== undefined
+        || modeParameters.submode !== undefined
+        || modeParameters.airflowSpeed !== undefined
+        || modeParameters.tempSet !== undefined
+        || modeParameters.tempThermostaticLowerLimit !== undefined
+        || modeParameters.tempThermostaticUpperLimit !== undefined) {
+        addUnsupportedValue(unsupportedValues, 'wave_mode_info.mode_id', modeId);
+      }
+      return;
+    }
     const parameters: Wave3ModeParameters = {};
     if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'submode')) {
       const submode = modeParameters.submode!;
-      parameters.submode = submode;
-      if (![0, 2, 3, 4].includes(submode)) {
+      if ([0, 2, 3, 4].includes(submode)) {
+        parameters.submode = submode;
+      } else {
         addUnsupportedValue(
           unsupportedValues,
           `wave_mode_info[${modeId}].submode`,
@@ -434,30 +458,63 @@ function normalizeDisplayUpdate(
       }
     }
     if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'airflowSpeed')) {
-      parameters.airflowSpeed = modeParameters.airflowSpeed;
+      const airflowSpeed = modeParameters.airflowSpeed!;
+      if ([20, 40, 60, 80, 100].includes(airflowSpeed)) {
+        parameters.airflowSpeed = airflowSpeed;
+      } else {
+        addUnsupportedValue(
+          unsupportedValues,
+          `wave_mode_info[${modeId}].airflow_speed`,
+          airflowSpeed,
+        );
+      }
     }
     if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'tempSet')) {
-      parameters.targetTemperatureCelsius = modeParameters.tempSet;
+      const target = modeParameters.tempSet!;
+      if (isSupportedTargetTemperature(target)) {
+        parameters.targetTemperatureCelsius = target;
+      } else {
+        addUnsupportedValue(
+          unsupportedValues,
+          `wave_mode_info[${modeId}].temp_set`,
+          target,
+        );
+      }
     }
     if (has(
       modeParameters,
       Wave3WaveOperatingModeParamItemSchema,
       'tempThermostaticLowerLimit',
     )) {
-      parameters.targetTemperatureLowerCelsius = modeParameters.tempThermostaticLowerLimit;
+      const lower = modeParameters.tempThermostaticLowerLimit!;
+      if (isSupportedTargetTemperature(lower)) {
+        parameters.targetTemperatureLowerCelsius = lower;
+      } else {
+        addUnsupportedValue(
+          unsupportedValues,
+          `wave_mode_info[${modeId}].temp_thermostatic_lower_limit`,
+          lower,
+        );
+      }
     }
     if (has(
       modeParameters,
       Wave3WaveOperatingModeParamItemSchema,
       'tempThermostaticUpperLimit',
     )) {
-      parameters.targetTemperatureUpperCelsius = modeParameters.tempThermostaticUpperLimit;
+      const upper = modeParameters.tempThermostaticUpperLimit!;
+      if (isSupportedTargetTemperature(upper)) {
+        parameters.targetTemperatureUpperCelsius = upper;
+      } else {
+        addUnsupportedValue(
+          unsupportedValues,
+          `wave_mode_info[${modeId}].temp_thermostatic_upper_limit`,
+          upper,
+        );
+      }
     }
     if (Object.keys(parameters).length > 0) {
       (update.modeParameters as Record<number, Wave3ModeParameters>)[modeId] = parameters;
-      if (!WAVE3_MODE_BY_ID.has(modeId)) {
-        addUnsupportedValue(unsupportedValues, 'wave_mode_info.mode_id', modeId);
-      }
     }
   });
 
@@ -639,6 +696,14 @@ function addUnsupportedValue(
   if (values.length < 8) {
     values.push({ field, value });
   }
+}
+
+function isSupportedAmbientTemperature(value: number): boolean {
+  return Number.isFinite(value) && value >= -270 && value <= 100;
+}
+
+function isSupportedTargetTemperature(value: number): boolean {
+  return Number.isInteger(value) && value >= 16 && value <= 30;
 }
 
 function malformed(payloadLength: number, reason: string): DecodedWave3Message {

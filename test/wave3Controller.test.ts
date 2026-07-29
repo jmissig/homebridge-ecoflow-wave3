@@ -386,10 +386,15 @@ describe('WAVE 3 controller', () => {
       mode: 1,
       ambientTemperature: 25,
     }));
+    session.emitPacket('property', displayPacket(122, {
+      modeParametersOnly: true,
+      mode: 1,
+      targetTemperature: 99,
+    }));
     await flushAsyncWork();
     assert.equal(settled, false);
 
-    session.emitPacket('property', displayPacket(122, {
+    session.emitPacket('property', displayPacket(123, {
       modeParametersOnly: true,
       mode: 1,
       targetTemperature: 22,

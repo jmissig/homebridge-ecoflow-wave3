@@ -111,6 +111,10 @@ describe('EcoFlow cloud session', () => {
       testConfig(),
       successfulHttp(),
       new FakeMqttTransport(connection),
+      undefined,
+      undefined,
+      15_000,
+      sequentialRequestIds(),
     );
     const controller = new Wave3Controller('TESTWAVE30001', session);
 
@@ -122,6 +126,16 @@ describe('EcoFlow cloud session', () => {
     connection.emitMessage({
       topic: getReply,
       payload: jsonBytes({
+        id: '999999999',
+        operateType: 'latestQuotas',
+        data: { online: 0 },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'stale');
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        id: '999910001',
         operateType: 'latestQuotas',
         data: {
           online: 1,
@@ -147,6 +161,32 @@ describe('EcoFlow cloud session', () => {
     connection.emitMessage({
       topic: getReply,
       payload: jsonBytes({
+        id: '999910001',
+        operateType: 'latestQuotas',
+        data: { online: 0 },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'stale');
+
+    connection.emitMessage({
+      topic: buildWave3Topics('TEST_USER', 'TESTWAVE30001').property,
+      payload: Uint8Array.of(0xff),
+    });
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        id: '999910003',
+        operateType: 'latestQuotas',
+        data: { online: 0 },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'stale');
+
+    await session.requestState('TESTWAVE30001');
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        id: '999910005',
         operateType: 'latestQuotas',
         data: { online: 0 },
       }),

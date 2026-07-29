@@ -436,6 +436,55 @@ describe('WAVE 3 codec', () => {
     ]);
   });
 
+  it('omits invalid HomeKit-facing telemetry with bounded diagnostics', () => {
+    const display = create(Wave3DisplayPropertyUploadSchema, {
+      tempAmbient: Number.POSITIVE_INFINITY,
+      humiAmbient: 101,
+      waveOperatingMode: 1,
+      waveModeInfo: {
+        listInfo: [
+          {},
+          {
+            airflowSpeed: 41,
+            tempSet: 99,
+            tempThermostaticLowerLimit: 15,
+            tempThermostaticUpperLimit: 31,
+            submode: 7,
+          },
+        ],
+      },
+    });
+    const decoded = decodeWave3Message(envelope(
+      21,
+      54,
+      toBinary(Wave3DisplayPropertyUploadSchema, display),
+    ));
+    assert.equal(decoded.kind, 'display');
+    if (decoded.kind !== 'display') {
+      return;
+    }
+    assert.deepEqual(decoded.update, {
+      operatingModeId: 1,
+      modeParameters: {},
+    });
+    assert.deepEqual(mergeWave3DisplayUpdate(undefined, decoded.update).state, {
+      powered: true,
+      mode: 'cool',
+    });
+    assert.deepEqual(
+      decoded.diagnostic.unsupportedValues?.map(value => value.field),
+      [
+        'temp_ambient',
+        'humi_ambient',
+        'wave_mode_info[1].submode',
+        'wave_mode_info[1].airflow_speed',
+        'wave_mode_info[1].temp_set',
+        'wave_mode_info[1].temp_thermostatic_lower_limit',
+        'wave_mode_info[1].temp_thermostatic_upper_limit',
+      ],
+    );
+  });
+
   it('applies XOR only when both evidenced conditions hold', () => {
     const payload = Uint8Array.of(0x10, 0x20, 0x30);
     assert.strictEqual(transformWave3Payload(payload, 0, 66, 17), payload);

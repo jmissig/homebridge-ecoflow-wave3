@@ -138,6 +138,10 @@ A matching get reply contains `data.online` and `data.quotaMap`.
   climate evidence arrives. A valid `latestQuotas` get reply supplies that
   evidence; `data.online == 0` makes the device unavailable, and malformed
   replies do not revive cached pre-reconnect state.
+- Each refresh keeps its generated request ID until one matching get reply is
+  consumed. A newer refresh, reconnect, or intervening property message
+  supersedes the pending reply so delayed quota snapshots cannot regress the
+  current connection generation.
 - MQTT.js automatic resubscription is disabled because the session owns that
   ordering. If a reconnect subscription or refresh fails, the session closes
   the connection and requires replacement instead of leaving a partially

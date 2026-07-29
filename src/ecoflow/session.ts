@@ -65,6 +65,10 @@ export class EcoFlowCloudSession {
   private readonly stateListeners = new Set<(state: CloudSessionState) => void>();
   private readonly activeOperations = new Set<Promise<unknown>>();
   private readonly publicOperationControllers = new Set<AbortController>();
+  private readonly pendingRefreshes = new Map<
+    string,
+    { requestId: string; generation: number }
+  >();
   private detachListeners: Array<() => void> = [];
   private establishPromise?: Promise<void>;
   private lifecycleController?: AbortController;
@@ -216,14 +220,20 @@ export class EcoFlowCloudSession {
   ): Promise<void> {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
+    const refresh = this.buildRefreshRequest();
+    this.pendingRefreshes.set(serialNumber, {
+      requestId: refresh.requestId,
+      generation: this.connectionGeneration,
+    });
     try {
       await this.runPublicPublish(
         connection,
         topics.get,
-        this.buildRefreshPayload(),
+        refresh.payload,
         signal,
       );
     } catch {
+      this.clearPendingRefresh(serialNumber, refresh.requestId);
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
     }
   }
@@ -246,6 +256,7 @@ export class EcoFlowCloudSession {
     this.connection = undefined;
     this.mqttConnected = false;
     this.authenticated = undefined;
+    this.pendingRefreshes.clear();
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
@@ -278,6 +289,7 @@ export class EcoFlowCloudSession {
         this.abortPublicOperations();
         this.mqttConnected = true;
         this.connectionGeneration += 1;
+        this.pendingRefreshes.clear();
         this.setupGenerationController?.abort();
         if (!publicOperationWasActive) {
           this.scheduleReconnectSetup();
@@ -286,6 +298,7 @@ export class EcoFlowCloudSession {
       connection.onDisconnect(() => {
         if (!this.stopped) {
           this.abortPublicOperations();
+          this.pendingRefreshes.clear();
           this.mqttConnected = false;
           this.setState('offline');
           this.logger.warn('EcoFlow MQTT connection was interrupted');
@@ -404,15 +417,25 @@ export class EcoFlowCloudSession {
     this.assertSetupActive(connection, generation);
 
     try {
-      for (const { topics } of topicsByDevice) {
-        await withSignalAndTimeout(
-          this.trackOperation(
-            connection.publish(topics.get, this.buildRefreshPayload(), signal),
-            generationOperations,
-          ),
-          signal,
-          this.operationTimeoutMilliseconds,
-        );
+      for (const { serialNumber, topics } of topicsByDevice) {
+        const refresh = this.buildRefreshRequest();
+        this.pendingRefreshes.set(serialNumber, {
+          requestId: refresh.requestId,
+          generation,
+        });
+        try {
+          await withSignalAndTimeout(
+            this.trackOperation(
+              connection.publish(topics.get, refresh.payload, signal),
+              generationOperations,
+            ),
+            signal,
+            this.operationTimeoutMilliseconds,
+          );
+        } catch (error) {
+          this.clearPendingRefresh(serialNumber, refresh.requestId);
+          throw error;
+        }
         this.assertSetupActive(connection, generation);
       }
     } catch {
@@ -431,6 +454,12 @@ export class EcoFlowCloudSession {
       const topics = buildWave3Topics(authenticated.userId, device.serialNumber);
       const kind = inboundKindForTopic(message.topic, topics);
       if (kind !== undefined) {
+        if (kind === 'property') {
+          this.pendingRefreshes.delete(device.serialNumber);
+        } else if (kind === 'getReply'
+          && !this.consumeMatchingRefresh(device.serialNumber, message.payload)) {
+          return;
+        }
         const inbound = {
           serialNumber: device.serialNumber,
           kind,
@@ -476,6 +505,7 @@ export class EcoFlowCloudSession {
     this.connection = undefined;
     this.mqttConnected = false;
     this.authenticated = undefined;
+    this.pendingRefreshes.clear();
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
@@ -625,15 +655,36 @@ export class EcoFlowCloudSession {
     }
   }
 
-  private buildRefreshPayload(): string {
-    return JSON.stringify({
-      from: 'HomeAssistant',
-      id: this.refreshRequestId(),
-      version: '1.1',
-      moduleType: 0,
-      operateType: 'latestQuotas',
-      params: {},
-    });
+  private consumeMatchingRefresh(serialNumber: string, payload: Uint8Array): boolean {
+    const pending = this.pendingRefreshes.get(serialNumber);
+    if (pending === undefined
+      || pending.generation !== this.connectionGeneration
+      || parseRefreshReplyId(payload) !== pending.requestId) {
+      return false;
+    }
+    this.pendingRefreshes.delete(serialNumber);
+    return true;
+  }
+
+  private clearPendingRefresh(serialNumber: string, requestId: string): void {
+    if (this.pendingRefreshes.get(serialNumber)?.requestId === requestId) {
+      this.pendingRefreshes.delete(serialNumber);
+    }
+  }
+
+  private buildRefreshRequest(): { requestId: string; payload: string } {
+    const requestId = this.refreshRequestId();
+    return {
+      requestId,
+      payload: JSON.stringify({
+        from: 'HomeAssistant',
+        id: requestId,
+        version: '1.1',
+        moduleType: 0,
+        operateType: 'latestQuotas',
+        params: {},
+      }),
+    };
   }
 }
 
@@ -661,6 +712,26 @@ function inboundKindForTopic(
     return 'getReply';
   }
   return undefined;
+}
+
+function parseRefreshReplyId(payload: Uint8Array): string | undefined {
+  if (payload.length > 64 * 1024) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(payload),
+    );
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const message = parsed as Record<string, unknown>;
+    return message.operateType === 'latestQuotas' && typeof message.id === 'string'
+      ? message.id
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number): Promise<T> {

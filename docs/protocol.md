@@ -506,6 +506,26 @@ publishing a command.
 
 [Source: household Homebridge diagnostics and narrated Home/EcoFlow actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533539611412922458)
 
+**Hardware — 2026-08-02 incremental confirmation and app coexistence**
+
+- Home's Off-to-Cool/22 °C command received a matching power-only
+  acknowledgement. A later `dev_sleep_state = 0` delta changed merged state to
+  powered-on Cool/22 °C, using the fresh saved Cool profile already reported
+  while the appliance was off. The packet-shaped confirmation policy still
+  timed out despite the requested outcome being authoritative.
+- Home fan commands to 80% and later 20% each received matching airflow
+  acknowledgements and matching per-mode display updates, confirming normally.
+- Inspecting the running appliance in the official app produced foreign
+  traffic but did not disturb plugin state or command correlation.
+- Home's later Off command received `cfg_sys_pause = true`; a display delta
+  with `dev_sleep_state = 1` followed two seconds later and confirmed Off.
+- Confirmation evidence must therefore be accumulated per requested field
+  across fresh pre-command state, same-sequence acknowledgement fragments, and
+  later command-relevant display deltas. A single complete reply or display
+  packet is not a protocol invariant.
+
+[Source: household Homebridge diagnostics and narrated Home/EcoFlow actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533542417222074570)
+
 ## Known uncertainty
 
 - No private device-list endpoint is evidenced by the pinned upstream code.

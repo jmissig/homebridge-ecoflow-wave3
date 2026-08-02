@@ -754,6 +754,77 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.state.targetTemperatureCelsius, 22);
   });
 
+  it('confirms Off-to-Cool from fresh saved profile state and a power-only acknowledgement', async () => {
+    const session = new FakeControllerSession();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 149,
+    });
+    session.emitPacket('property', displayPacket(1, {
+      mode: 1,
+      sleepState: 1,
+      targetTemperature: 22,
+    }));
+
+    const result = controller.execute({
+      type: 'mode',
+      mode: 'cool',
+      targetTemperatureCelsius: 22,
+    });
+    await flushAsyncWork();
+    session.emitPacket('setReply', acknowledgementPacket(149, {
+      configOk: true,
+      mainPower: true,
+    }));
+    session.emitPacket('property', displayPacket(2, { sleepState: 0 }));
+
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 149 });
+    assert.equal(controller.snapshot.state.powered, true);
+    assert.equal(controller.snapshot.state.mode, 'cool');
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 22);
+  });
+
+  it('accumulates confirming command fields across separate display deltas', async () => {
+    const session = new FakeControllerSession();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 150,
+    });
+    session.emitPacket('property', displayPacket(1, {
+      mode: 5,
+      sleepState: 0,
+      lowerTemperature: 18,
+      upperTemperature: 25,
+    }));
+
+    let settled = false;
+    const result = controller.execute({
+      type: 'automaticTemperatureRange',
+      lowerCelsius: 19,
+      upperCelsius: 24,
+    }).then(value => {
+      settled = true;
+      return value;
+    });
+    await flushAsyncWork();
+    session.emitPacket('setReply', acknowledgementPacket(150, {
+      configOk: true,
+      lowerTemperature: 19,
+    }));
+    session.emitPacket('property', displayPacket(2, {
+      modeParametersOnly: true,
+      mode: 5,
+      upperTemperature: 24,
+    }));
+    await flushAsyncWork();
+    assert.equal(settled, false);
+
+    session.emitPacket('property', displayPacket(3, {
+      modeParametersOnly: true,
+      mode: 5,
+      lowerTemperature: 19,
+    }));
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 150 });
+  });
+
   it('logs a redacted semantic lifecycle for composite commands', async () => {
     const session = new FakeControllerSession();
     const logs: string[] = [];
@@ -815,6 +886,35 @@ describe('WAVE 3 controller', () => {
     assert.ok(logs.some(message => message.includes(
       'controller command completed sequence=581 outcome=failed:disconnected command={"type":"power","on":false}',
     )));
+  });
+
+  it('logs an expired confirmation deadline as unconfirmed rather than failed', async () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const logs: string[] = [];
+    const controller = readyController(session, {
+      initialSequence: 582,
+      schedule: clock.schedule,
+      logger: {
+        debug: message => logs.push(message),
+        info: message => logs.push(message),
+        warn: message => logs.push(message),
+        error: message => logs.push(message),
+      },
+    });
+    const result = controller.execute({ type: 'airflowSpeed', speed: 60 });
+    await flushAsyncWork();
+    clock.advance(10_000);
+
+    assert.deepEqual(await result, {
+      status: 'failed',
+      sequence: 582,
+      reason: 'timeout',
+    });
+    assert.ok(logs.some(message => message.includes(
+      'controller command completed sequence=582 outcome=unconfirmed:timeout',
+    )));
+    assert.equal(logs.some(message => message.includes('outcome=failed:timeout')), false);
   });
 
   it('replays delayed M7 Off-to-Cool and Cool-to-Heat command evidence', async () => {

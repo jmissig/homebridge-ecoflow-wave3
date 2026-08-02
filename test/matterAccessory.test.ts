@@ -1179,7 +1179,7 @@ describe('WAVE 3 Matter accessory', () => {
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
         'confirmed thermostat restoration',
       );
-      assert.match(errors.at(-1)!, /did not confirm the command/);
+      assert.match(errors.at(-1)!, /command confirmation timed out/);
 
       const airflowCommands = controller.commands.filter(command => command.type === 'airflowSpeed').length;
       await endpoint.set({ fanControl: { percentSetting: 40 } });
@@ -1199,25 +1199,25 @@ describe('WAVE 3 Matter accessory', () => {
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Requested setpoint adjustment is not active',
-      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: EcoFlow WAVE 3 did not confirm the command',
+      'EcoFlow WAVE 3 Matter setpoint adjustment command confirmation timed out: EcoFlow WAVE 3 did not confirm within the command deadline',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: EcoFlow WAVE 3 rejected the command',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: EcoFlow WAVE 3 is not currently controllable',
       'EcoFlow WAVE 3 Matter power command failed: EcoFlow cloud did not accept the command',
       'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 rejected the command',
-      'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 did not confirm the command',
+      'EcoFlow WAVE 3 Matter power command confirmation timed out: EcoFlow WAVE 3 did not confirm within the command deadline',
       ...Array<string>(5).fill(
         'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 is not currently controllable',
       ),
       'EcoFlow WAVE 3 Matter system mode command failed: EcoFlow WAVE 3 is not currently controllable',
       'EcoFlow WAVE 3 Matter fan speed command failed: EcoFlow WAVE 3 is not currently controllable',
-      'EcoFlow WAVE 3 Matter system mode command failed: EcoFlow WAVE 3 did not confirm the command',
+      'EcoFlow WAVE 3 Matter system mode command confirmation timed out: EcoFlow WAVE 3 did not confirm within the command deadline',
     ]);
     assert.equal(errors.some(message => /cloud did not accept the command/.test(message)), true);
     assert.equal(errors.some(message => /rejected the command/.test(message)), true);
-    assert.equal(errors.some(message => /did not confirm the command/.test(message)), true);
+    assert.equal(errors.some(message => /command confirmation timed out/.test(message)), true);
     assert.equal(errors.some(message => /not currently controllable/.test(message)), true);
     assert.equal(
-      errors.some(message => /system mode command failed.*did not confirm the command/.test(message)),
+      errors.some(message => /system mode command confirmation timed out/.test(message)),
       true,
     );
   });

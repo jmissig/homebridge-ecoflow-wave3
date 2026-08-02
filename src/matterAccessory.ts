@@ -879,7 +879,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       .catch(error => {
         if (!this.stopped) {
           this.logger.error(
-            `EcoFlow WAVE 3 Matter ${description} command failed: ${errorMessage(error)}`,
+            `EcoFlow WAVE 3 Matter ${description} command ${commandErrorOutcome(error)}: ${errorMessage(error)}`,
           );
           this.restoreConfirmedState();
         }
@@ -904,7 +904,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     })
       .catch(error => {
         this.logger.error(
-          `EcoFlow WAVE 3 Matter ${description} command failed: ${errorMessage(error)}`,
+          `EcoFlow WAVE 3 Matter ${description} command ${commandErrorOutcome(error)}: ${errorMessage(error)}`,
         );
         throw error;
       })
@@ -1659,10 +1659,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function commandErrorOutcome(error: unknown): string {
+  return error instanceof MatterStatus.Timeout ? 'confirmation timed out' : 'failed';
+}
+
 function matterErrorForFailure(reason: Wave3CommandFailure): Error {
   switch (reason) {
   case 'timeout':
-    return new MatterStatus.Timeout('EcoFlow WAVE 3 did not confirm the command');
+    return new MatterStatus.Timeout('EcoFlow WAVE 3 did not confirm within the command deadline');
   case 'disconnected':
   case 'stopped':
     return new MatterStatus.InvalidInState('EcoFlow WAVE 3 is not currently controllable');

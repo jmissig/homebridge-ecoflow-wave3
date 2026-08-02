@@ -14,17 +14,19 @@ import {
   hasWave3DisplayEvidence,
   mergeWave3DisplayUpdate,
 } from './codec.js';
-import type {
-  Wave3Acknowledgement,
-  Wave3Command,
-  Wave3CommandFailure,
-  Wave3CommandResult,
-  Wave3ControllerSnapshot,
-  Wave3DisplayState,
-  Wave3DisplayUpdate,
-  Wave3FirmwareVersions,
-  Wave3RuntimeTemperatures,
-  Wave3State,
+import {
+  WAVE3_MODE_IDS,
+  type Wave3AcknowledgedValues,
+  type Wave3Acknowledgement,
+  type Wave3Command,
+  type Wave3CommandFailure,
+  type Wave3CommandResult,
+  type Wave3ControllerSnapshot,
+  type Wave3DisplayState,
+  type Wave3DisplayUpdate,
+  type Wave3FirmwareVersions,
+  type Wave3RuntimeTemperatures,
+  type Wave3State,
 } from './domain.js';
 
 export interface Wave3AccessoryController {
@@ -59,6 +61,8 @@ export interface Wave3ControllerOptions {
 interface PendingCommand {
   command: Wave3Command;
   sequence: number;
+  baselineEvidenceFields: ReadonlySet<CommandEvidenceField>;
+  observedEvidenceFields: Set<CommandEvidenceField>;
   publicationCompleted: boolean;
   publicationController: AbortController;
   acknowledgement?: Wave3Acknowledgement;
@@ -189,6 +193,8 @@ export class Wave3Controller {
       this.pending = {
         command,
         sequence,
+        baselineEvidenceFields: matchingDisplayStateFields(this.displayState, command),
+        observedEvidenceFields: new Set(),
         publicationCompleted: false,
         publicationController,
         acknowledgementRejected: false,
@@ -422,6 +428,7 @@ export class Wave3Controller {
       + `waitingFields=${JSON.stringify(progress.waitingFields)} `
       + 'waitingForObservedState=true',
     );
+    this.evaluatePendingConfirmation(pending);
     if (pending.publicationCompleted) {
       this.applyAcknowledgement(pending);
     }
@@ -454,10 +461,24 @@ export class Wave3Controller {
     const pending = this.pending;
     if (pending?.acknowledgement === undefined
       || pending.acknowledgementRevision === undefined
-      || this.displayRevision <= pending.acknowledgementRevision
-      || !(acknowledgementCoversCommand(pending.acknowledgement, pending.command)
-        ? updateProvidesAnyCommandEvidence(update, this.displayState, pending.command)
-        : updateProvidesCommandEvidence(update, this.displayState, pending.command))
+      || this.displayRevision <= pending.acknowledgementRevision) {
+      return;
+    }
+    for (const field of matchingObservedUpdateFields(
+      update,
+      this.displayState,
+      pending.command,
+    )) {
+      pending.observedEvidenceFields.add(field);
+    }
+    this.evaluatePendingConfirmation(pending);
+  }
+
+  private evaluatePendingConfirmation(pending: PendingCommand): void {
+    const acknowledgement = pending.acknowledgement;
+    if (acknowledgement === undefined
+      || pending.observedEvidenceFields.size === 0
+      || !allCommandFieldsHaveEvidence(pending, acknowledgement)
       || !stateMatchesCommand(this.displayState?.state ?? {}, pending.command)) {
       return;
     }
@@ -593,7 +614,7 @@ export class Wave3Controller {
     }
     this.logger.debug(
       `EcoFlow diagnostics: controller command completed sequence=${pending.sequence} `
-      + `outcome=${reason === undefined ? 'confirmed' : `failed:${reason}`} `
+      + `outcome=${commandOutcome(reason)} `
       + `command=${describeCommand(pending.command)}`,
     );
     pending.resolve(reason === undefined
@@ -608,7 +629,7 @@ export class Wave3Controller {
   ): Wave3CommandResult {
     this.logger.debug(
       `EcoFlow diagnostics: controller command completed sequence=${sequence} `
-      + `outcome=failed:${reason} command=${describeCommand(command)}`,
+      + `outcome=${commandOutcome(reason)} command=${describeCommand(command)}`,
     );
     return { status: 'failed', sequence, reason };
   }
@@ -618,6 +639,13 @@ export class Wave3Controller {
     this.nextSequence = sequence >= 999 ? 10 : sequence + 1;
     return sequence;
   }
+}
+
+function commandOutcome(reason: Wave3CommandFailure | undefined): string {
+  if (reason === undefined) {
+    return 'confirmed';
+  }
+  return reason === 'timeout' ? 'unconfirmed:timeout' : `failed:${reason}`;
 }
 
 type AcknowledgementFragmentRelation =
@@ -722,11 +750,19 @@ function acknowledgementProgress(
   };
 }
 
-function acknowledgementCoversCommand(
+type CommandEvidenceField = keyof Wave3AcknowledgedValues;
+
+function allCommandFieldsHaveEvidence(
+  pending: PendingCommand,
   acknowledgement: Wave3Acknowledgement,
-  command: Wave3Command,
 ): boolean {
-  return acknowledgementProgress(acknowledgement, command).waitingFields.length === 0;
+  const acknowledgedFields = new Set(
+    acknowledgementProgress(acknowledgement, pending.command).acknowledgedFields,
+  );
+  return (Object.keys(expectedAcknowledgementValues(pending.command)) as CommandEvidenceField[])
+    .every(field => acknowledgedFields.has(field)
+      || pending.baselineEvidenceFields.has(field)
+      || pending.observedEvidenceFields.has(field));
 }
 
 function describeCommand(command: Wave3Command): string {
@@ -767,74 +803,102 @@ function stateMatchesCommand(state: Wave3State, command: Wave3Command): boolean 
   }
 }
 
-function updateProvidesCommandEvidence(
-  update: Wave3DisplayUpdate,
+function matchingDisplayStateFields(
   displayState: Wave3DisplayState | undefined,
   command: Wave3Command,
-): boolean {
-  const activeModeId = update.operatingModeId ?? displayState?.operatingModeId;
-  const parameters = activeModeId === undefined
-    ? undefined
-    : update.modeParameters[activeModeId];
-  switch (command.type) {
-  case 'power':
-    return command.on
-      ? update.sleepState === 0
-        || (update.operatingModeId !== undefined && update.operatingModeId !== 0)
-      : update.sleepState === 1 || update.operatingModeId === 0;
-  case 'mode':
-    return update.operatingModeId !== undefined
-      && (command.targetTemperatureCelsius === undefined
-        || parameters?.targetTemperatureCelsius !== undefined)
-      && (command.targetTemperatureLowerCelsius === undefined
-        || parameters?.targetTemperatureLowerCelsius !== undefined)
-      && (command.targetTemperatureUpperCelsius === undefined
-        || parameters?.targetTemperatureUpperCelsius !== undefined);
-  case 'targetTemperature':
-    return parameters?.targetTemperatureCelsius !== undefined;
-  case 'automaticTemperatureRange':
-    return parameters?.targetTemperatureLowerCelsius !== undefined
-      && parameters.targetTemperatureUpperCelsius !== undefined;
-  case 'airflowSpeed':
-    return parameters?.airflowSpeed !== undefined;
-  case 'submode':
-    return parameters?.submode !== undefined;
+): ReadonlySet<CommandEvidenceField> {
+  const matching = new Set<CommandEvidenceField>();
+  if (displayState === undefined) {
+    return matching;
   }
+  for (const [field, expected] of Object.entries(
+    expectedAcknowledgementValues(command),
+  ) as Array<[CommandEvidenceField, boolean | number | string]>) {
+    if (displayFieldMatchesExpected(displayState, field, expected)) {
+      matching.add(field);
+    }
+  }
+  return matching;
 }
 
-function updateProvidesAnyCommandEvidence(
+function matchingObservedUpdateFields(
   update: Wave3DisplayUpdate,
   displayState: Wave3DisplayState | undefined,
   command: Wave3Command,
-): boolean {
-  const activeModeId = update.operatingModeId ?? displayState?.operatingModeId;
+): ReadonlySet<CommandEvidenceField> {
+  const matching = new Set<CommandEvidenceField>();
+  if (displayState === undefined) {
+    return matching;
+  }
+  const activeModeId = command.type === 'mode'
+    ? WAVE3_MODE_IDS[command.mode]
+    : displayState.operatingModeId;
   const parameters = activeModeId === undefined
     ? undefined
     : update.modeParameters[activeModeId];
-  switch (command.type) {
-  case 'power':
-    return command.on
-      ? update.sleepState === 0
-        || (update.operatingModeId !== undefined && update.operatingModeId !== 0)
-      : update.sleepState === 1 || update.operatingModeId === 0;
+  const evidencedFields = new Set<CommandEvidenceField>();
+  if (update.sleepState === 0
+    || (update.operatingModeId !== undefined && update.operatingModeId !== 0)) {
+    evidencedFields.add('mainPower');
+  }
+  if (update.sleepState === 1 || update.operatingModeId === 0) {
+    evidencedFields.add('systemPaused');
+  }
+  if (update.operatingModeId !== undefined || update.sleepState === 0) {
+    evidencedFields.add('mode');
+  }
+  if (parameters?.targetTemperatureCelsius !== undefined) {
+    evidencedFields.add('targetTemperatureCelsius');
+  }
+  if (parameters?.targetTemperatureLowerCelsius !== undefined) {
+    evidencedFields.add('targetTemperatureLowerCelsius');
+  }
+  if (parameters?.targetTemperatureUpperCelsius !== undefined) {
+    evidencedFields.add('targetTemperatureUpperCelsius');
+  }
+  if (parameters?.airflowSpeed !== undefined) {
+    evidencedFields.add('airflowSpeed');
+  }
+  if (parameters?.submode !== undefined) {
+    evidencedFields.add('submode');
+  }
+  for (const [field, expected] of Object.entries(
+    expectedAcknowledgementValues(command),
+  ) as Array<[CommandEvidenceField, boolean | number | string]>) {
+    if (evidencedFields.has(field)
+      && displayFieldMatchesExpected(displayState, field, expected)) {
+      matching.add(field);
+    }
+  }
+  return matching;
+}
+
+function displayFieldMatchesExpected(
+  displayState: Wave3DisplayState,
+  field: CommandEvidenceField,
+  expected: boolean | number | string,
+): boolean {
+  switch (field) {
+  case 'mainPower':
+    return displayState.state.powered === expected;
+  case 'systemPaused':
+    return expected === true && displayState.state.powered === false;
   case 'mode':
-    return update.sleepState !== undefined
-      || update.operatingModeId !== undefined
-      || (command.targetTemperatureCelsius !== undefined
-        && parameters?.targetTemperatureCelsius !== undefined)
-      || (command.targetTemperatureLowerCelsius !== undefined
-        && parameters?.targetTemperatureLowerCelsius !== undefined)
-      || (command.targetTemperatureUpperCelsius !== undefined
-        && parameters?.targetTemperatureUpperCelsius !== undefined);
-  case 'targetTemperature':
-    return parameters?.targetTemperatureCelsius !== undefined;
-  case 'automaticTemperatureRange':
-    return parameters?.targetTemperatureLowerCelsius !== undefined
-      || parameters?.targetTemperatureUpperCelsius !== undefined;
+    return typeof expected === 'string'
+      && displayState.operatingModeId === WAVE3_MODE_IDS[expected as keyof typeof WAVE3_MODE_IDS];
+  case 'targetTemperatureCelsius':
+    return typeof expected === 'number'
+      && closeEnough(displayState.state.targetTemperatureCelsius, expected);
+  case 'targetTemperatureLowerCelsius':
+    return typeof expected === 'number'
+      && closeEnough(displayState.state.targetTemperatureLowerCelsius, expected);
+  case 'targetTemperatureUpperCelsius':
+    return typeof expected === 'number'
+      && closeEnough(displayState.state.targetTemperatureUpperCelsius, expected);
   case 'airflowSpeed':
-    return parameters?.airflowSpeed !== undefined;
+    return displayState.state.airflowSpeed === expected;
   case 'submode':
-    return parameters?.submode !== undefined;
+    return displayState.state.submode === expected;
   }
 }
 

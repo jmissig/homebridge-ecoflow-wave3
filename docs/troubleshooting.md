@@ -84,14 +84,16 @@ controller command completed sequence=… outcome=…
 ```
 
 EcoFlow may split a composite command into several acknowledgement packets or
-omit some echoed fields. A positive related acknowledgement plus later
-authoritative state can confirm the complete command. An explicit rejection,
-conflicting value, timeout, or disconnect still fails closed.
+omit some echoed fields. The plugin accumulates per-field evidence from fresh
+pre-command state, matching acknowledgement fragments, and later display
+deltas; no one packet must restate the complete command. An explicit rejection,
+conflicting value, confirmation timeout, or disconnect still fails closed.
 
 Matter.js commits valid writable thermostat/fan attributes before the cloud
-round trip finishes. If EcoFlow later rejects or fails to confirm a write, the
-plugin logs the failure and restores the latest confirmed device state; Apple
-Home may briefly show the requested value before that reconciliation.
+round trip finishes. If EcoFlow later rejects a write, the plugin logs a
+failure; if the evidence deadline expires without rejection, it instead logs
+`confirmation timed out`. Both restore the latest confirmed device state, so
+Apple Home may briefly show the requested value before that reconciliation.
 
 ## The WAVE selected its remembered 26°C target
 

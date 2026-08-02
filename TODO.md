@@ -89,6 +89,8 @@ and controller reconciliation.
   unattended freshness window.
 - [ ] Startup with recent cache versus missing/expired cache and exactly one
   explicit refresh.
+- [x] Upgrade an older Auto-capable cached endpoint to the Heat/Cool-only
+  Matter shape without restoring an illegal Auto value or requiring re-pairing.
 - [ ] Normal and debug logs remain useful with credentials, identifiers, and
   raw payloads redacted.
 

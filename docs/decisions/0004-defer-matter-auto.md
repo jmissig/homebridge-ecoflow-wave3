@@ -41,5 +41,10 @@ standard contract:
   midpoint target, fractional values, and observed 4°C minimum range.
 - Removing Auto also removes Matter's Auto-only `MinSetpointDeadBand`
   attribute; the WAVE-specific range rules remain in the semantic planner.
+- The endpoint context schema is versioned across this feature-shape change.
+  On upgrade, the platform unregisters the older cached endpoint before
+  recreating the same UUID, preventing Homebridge from restoring a now-illegal
+  cached `SystemMode.Auto` value without requiring the Matter bridge to be
+  paired again.
 - This is a controller-interoperability deferral, not a claim that WAVE Auto is
   unsupported.

@@ -15,7 +15,10 @@ import {
   MATTER_TEMPERATURE_DISPLAY_MODE,
   MATTER_THERMOSTAT_UI_CLUSTER,
 } from './matter/constants.js';
-import type { Wave3MatterAccessoryContext } from './matter/context.js';
+import {
+  MATTER_ACCESSORY_SCHEMA_VERSION,
+  type Wave3MatterAccessoryContext,
+} from './matter/context.js';
 import {
   forgetAllDesiredAttributes,
   forgetDesiredCluster,
@@ -100,7 +103,7 @@ export function createWave3MatterAccessory(
     ?? cachedContext?.firmwareRevision
     ?? cached?.firmwareRevision;
   const context: Wave3MatterAccessoryContext = {
-    schemaVersion: 1,
+    schemaVersion: MATTER_ACCESSORY_SCHEMA_VERSION,
     serialNumber: device.serialNumber,
     currentTemperatureSource: device.currentTemperatureSource,
     lastSystemMode: validSystemMode(cachedContext?.lastSystemMode)

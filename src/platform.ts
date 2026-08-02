@@ -17,7 +17,10 @@ import {
 import { NodeHttpsTransport } from './ecoflow/http.js';
 import { MqttJsTransport } from './ecoflow/mqtt.js';
 import { EcoFlowCloudSession } from './ecoflow/session.js';
-import type { Wave3MatterAccessoryContext } from './matter/context.js';
+import {
+  MATTER_ACCESSORY_SCHEMA_VERSION,
+  type Wave3MatterAccessoryContext,
+} from './matter/context.js';
 import {
   createWave3MatterAccessory,
   isRecentCachedState,
@@ -236,13 +239,16 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       }
       const uuid = this.uuidForSerial(device.serialNumber);
       const cachedAccessory = this.matterAccessories.get(uuid);
-      const sourceChanged = cachedAccessory !== undefined
-        && cachedAccessory.context.currentTemperatureSource !== device.currentTemperatureSource;
-      if (sourceChanged
+      const endpointShapeChanged = cachedAccessory !== undefined
+        && (
+          cachedAccessory.context.schemaVersion !== MATTER_ACCESSORY_SCHEMA_VERSION
+          || cachedAccessory.context.currentTemperatureSource !== device.currentTemperatureSource
+        );
+      if (endpointShapeChanged
         || !isRecentCachedState(cachedAccessory?.context.lastConfirmedAt)) {
         devicesNeedingFullDisplayState.push(device.serialNumber);
       }
-      if (sourceChanged) {
+      if (endpointShapeChanged) {
         await this.matter!.unregisterPlatformAccessories(
           PLUGIN_NAME,
           PLATFORM_NAME,
@@ -269,7 +275,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         uuid,
         device,
         controller.snapshot,
-        sourceChanged ? undefined : cachedAccessory,
+        endpointShapeChanged ? undefined : cachedAccessory,
       );
       this.matterAccessories.set(uuid, accessory);
       await this.matter!.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
@@ -284,7 +290,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         }
         break;
       }
-      if (cachedAccessory === undefined || sourceChanged) {
+      if (cachedAccessory === undefined || endpointShapeChanged) {
         this.log.info('Registered a configured Matter WAVE 3 accessory');
       } else {
         this.log.info('Restored a configured Matter WAVE 3 accessory from cache');

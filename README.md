@@ -24,10 +24,22 @@ EcoFlow app.
 - Current and target temperature
 - Ambient humidity, alongside the ambient current-temperature reading
 - Cooling, heating, and automatic modes
-- Fan Only, Dry, and Sleep modes through the standard Matter system-mode enum
+- Matter protocol mappings for Fan Only, Dry, and Sleep system modes
 - Fan speed
 - Device firmware revision in Matter bridged-device information
 - One Matter accessory for each explicitly configured WAVE 3
+
+> [!NOTE]
+> As of the iOS 27 beta, neither Apple Home nor the Eve app presents Fan Only,
+> Dry, or Sleep as selectable modes for this Matter accessory. Their protocol
+> mappings exist, but control from those apps and real-device behavior have not
+> yet been verified. Sleep maps to the WAVE's Night/Sleep operating submode,
+> not to a sleep timer.
+>
+> The WAVE also appears to retain separate parameters for each operating mode,
+> including mode-specific target temperatures. Alternative controls therefore
+> need careful state modeling rather than simple additive mode switches.
+> [Told: household controller observation and WAVE behavior from Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533528620189089966)
 
 Matter power and setpoint-adjustment commands wait for EcoFlow confirmation.
 Standard thermostat-mode, target-temperature, and fan attributes are committed

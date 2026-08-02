@@ -251,6 +251,20 @@ and confirm Matter state does not rubber-band.
 - [ ] Fan Only mode.
 - [ ] Dry mode.
 - [ ] Sleep mode.
+- [ ] Resolve controller presentation and saved-profile semantics for Fan
+  Only, Dry, and Sleep:
+  - Apple Home on the iOS 27 beta and the Eve app do not present Fan Only,
+    Dry, or Sleep from this Matter Room Air Conditioner, so app-originated
+    control and hardware behavior remain unverified.
+  - Investigate a controller-visible standard or optional composed-control
+    representation before treating these mappings as a usable feature.
+  - Model each WAVE operating mode as a saved parameter profile rather than a
+    purely additive flag: observed mode state includes separate airflow and
+    target values, and selecting a mode may restore its own saved temperature
+    or humidity target. Any alternative control must carry or deliberately
+    reconcile those mode-specific values without overwriting another mode's
+    profile.
+  [told: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533528620189089966)
 - [ ] Eco/Normal and Boost only if represented through standard Matter
   programming/preset semantics.
 - [ ] `ambient`, `outlet`, and `none` temperature-source configurations.

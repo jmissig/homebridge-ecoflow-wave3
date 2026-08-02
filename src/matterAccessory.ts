@@ -636,7 +636,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       await this.execute({ type: 'submode', submode: 0 });
     }
     if (this.snapshot.state.mode !== mode || !this.snapshot.state.powered) {
-      await this.execute({ type: 'mode', mode });
+      await this.execute(await this.modeCommand(mode));
     }
   }
 
@@ -1185,6 +1185,19 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
 
   private async startupCommand(): Promise<Wave3ModeCommand | undefined> {
     const intent = this.stagedOffThermostatIntent;
+    const presentedThermostat = await this.presentedThermostat();
+    const systemMode = intent?.systemMode
+      ?? numberOrUndefined(presentedThermostat.systemMode)
+      ?? this.accessory.context.lastSystemMode;
+    const mode = systemMode === undefined ? undefined : waveModeForSystemMode(systemMode);
+    return mode === undefined ? undefined : modeCommandForThermostat(mode, presentedThermostat, intent);
+  }
+
+  private async modeCommand(mode: Exclude<Wave3Mode, 'off'>): Promise<Wave3ModeCommand> {
+    return modeCommandForThermostat(mode, await this.presentedThermostat());
+  }
+
+  private async presentedThermostat(): Promise<Record<string, unknown>> {
     let liveThermostat: Record<string, unknown> | undefined;
     try {
       liveThermostat = await this.matter.getAccessoryState(
@@ -1195,56 +1208,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       // Endpoint state may be temporarily unavailable during startup. The
       // cached presentation remains a safe fallback for a plain power-on.
     }
-    const presentedThermostat = {
+    return {
       ...this.accessory.clusters?.thermostat,
       ...liveThermostat,
     };
-    const systemMode = intent?.systemMode
-      ?? numberOrUndefined(presentedThermostat.systemMode)
-      ?? this.accessory.context.lastSystemMode;
-    const mode = systemMode === undefined ? undefined : waveModeForSystemMode(systemMode);
-    if (mode === undefined) {
-      return undefined;
-    }
-    if (mode === 'cool') {
-      return {
-        type: 'mode',
-        mode,
-        targetTemperatureCelsius: intent?.coolingCelsius
-          ?? matterSetpointCelsius(presentedThermostat.occupiedCoolingSetpoint),
-      };
-    }
-    if (mode === 'heat') {
-      return {
-        type: 'mode',
-        mode,
-        targetTemperatureCelsius: intent?.heatingCelsius
-          ?? matterSetpointCelsius(presentedThermostat.occupiedHeatingSetpoint),
-      };
-    }
-    if (mode === 'auto') {
-      let lower = intent?.heatingCelsius
-        ?? matterSetpointCelsius(presentedThermostat.occupiedHeatingSetpoint);
-      let upper = intent?.coolingCelsius
-        ?? matterSetpointCelsius(presentedThermostat.occupiedCoolingSetpoint);
-      if (lower === undefined || upper === undefined) {
-        return { type: 'mode', mode };
-      }
-      if (lower > upper) {
-        if (intent?.heatingCelsius !== undefined && intent.coolingCelsius === undefined) {
-          upper = lower;
-        } else {
-          lower = upper;
-        }
-      }
-      return {
-        type: 'mode',
-        mode,
-        targetTemperatureLowerCelsius: lower,
-        targetTemperatureUpperCelsius: upper,
-      };
-    }
-    return { type: 'mode', mode };
   }
 
   private clustersForPresentation(
@@ -1345,6 +1312,52 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     this.accessory.context.firmwareRevision = firmwareRevision;
     this.presentedFirmwareRevision = firmwareRevision;
   }
+}
+
+function modeCommandForThermostat(
+  mode: Exclude<Wave3Mode, 'off'>,
+  thermostat: Record<string, unknown>,
+  intent?: StagedOffThermostatIntent,
+): Wave3ModeCommand {
+  if (mode === 'cool') {
+    return {
+      type: 'mode',
+      mode,
+      targetTemperatureCelsius: intent?.coolingCelsius
+        ?? matterSetpointCelsius(thermostat.occupiedCoolingSetpoint),
+    };
+  }
+  if (mode === 'heat') {
+    return {
+      type: 'mode',
+      mode,
+      targetTemperatureCelsius: intent?.heatingCelsius
+        ?? matterSetpointCelsius(thermostat.occupiedHeatingSetpoint),
+    };
+  }
+  if (mode === 'auto') {
+    let lower = intent?.heatingCelsius
+      ?? matterSetpointCelsius(thermostat.occupiedHeatingSetpoint);
+    let upper = intent?.coolingCelsius
+      ?? matterSetpointCelsius(thermostat.occupiedCoolingSetpoint);
+    if (lower === undefined || upper === undefined) {
+      return { type: 'mode', mode };
+    }
+    if (lower > upper) {
+      if (intent?.heatingCelsius !== undefined && intent.coolingCelsius === undefined) {
+        upper = lower;
+      } else {
+        lower = upper;
+      }
+    }
+    return {
+      type: 'mode',
+      mode,
+      targetTemperatureLowerCelsius: lower,
+      targetTemperatureUpperCelsius: upper,
+    };
+  }
+  return { type: 'mode', mode };
 }
 
 function clustersForSnapshot(

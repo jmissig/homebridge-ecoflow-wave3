@@ -401,6 +401,19 @@ publishing a command.
 
 [Source: household Apple Home/Matter diagnostic log shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533523474449039422)
 
+**Hardware — 2026-08-02 delayed mode write and remembered target**
+
+- Apple Home's Off-to-Heat interaction reached the plugin as separate writes:
+  the appliance first powered on in its prior Cool/22°C state, then a later
+  mode-only Heat command changed `operatingModeId` to `2`.
+- Because that Heat command omitted a target, the WAVE 3 selected its stored
+  Heat profile target of 26°C and Apple Home later reconciled to 26°C.
+- Mode transitions should therefore include the currently presented Matter
+  setpoint for Cool or Heat, or both presented thresholds for Auto, even when
+  the appliance is already on by the time the mode write is processed.
+
+[Source: household Apple Home/Matter diagnostic log and narrated target selection shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533524342313451610)
+
 **Hardware — 2026-08-01 HomeKit command validation**
 
 - HomeKit target-temperature and power writes worked end to end.

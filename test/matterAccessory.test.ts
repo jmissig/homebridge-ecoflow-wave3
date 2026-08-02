@@ -498,9 +498,22 @@ describe('WAVE 3 Matter accessory', () => {
         },
       ]);
       for (const [systemMode, expected] of [
-        [MATTER_SYSTEM_MODE.cool, { type: 'mode', mode: 'cool' }],
-        [MATTER_SYSTEM_MODE.heat, { type: 'mode', mode: 'heat' }],
-        [MATTER_SYSTEM_MODE.auto, { type: 'mode', mode: 'auto' }],
+        [MATTER_SYSTEM_MODE.cool, {
+          type: 'mode',
+          mode: 'cool',
+          targetTemperatureCelsius: 23,
+        }],
+        [MATTER_SYSTEM_MODE.heat, {
+          type: 'mode',
+          mode: 'heat',
+          targetTemperatureCelsius: 18,
+        }],
+        [MATTER_SYSTEM_MODE.auto, {
+          type: 'mode',
+          mode: 'auto',
+          targetTemperatureLowerCelsius: 18,
+          targetTemperatureUpperCelsius: 23,
+        }],
         [MATTER_SYSTEM_MODE.fan, { type: 'mode', mode: 'fan' }],
         [MATTER_SYSTEM_MODE.dry, { type: 'mode', mode: 'dry' }],
         [MATTER_SYSTEM_MODE.sleep, { type: 'submode', submode: 3 }],
@@ -542,7 +555,7 @@ describe('WAVE 3 Matter accessory', () => {
         'legitimate cool write after stale projection',
       );
       assert.deepEqual(controller.commands.slice(commandsBeforeFormerlyStaleMode), [
-        { type: 'mode', mode: 'cool' },
+        { type: 'mode', mode: 'cool', targetTemperatureCelsius: 23 },
       ]);
 
       controller.setSnapshot(onlineSnapshot());

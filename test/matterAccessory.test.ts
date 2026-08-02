@@ -1,17 +1,96 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { Endpoint, Environment, MockStorageService, ServerNode } from '@matter/main';
+import { BridgedDeviceBasicInformationServer } from '@matter/main/behaviors';
+import { AggregatorEndpoint } from '@matter/main/endpoints/aggregator';
 import type { MatterAccessory, MatterAPI } from 'homebridge';
 
 import {
   createWave3MatterAccessory,
   MATTER_SYSTEM_MODE,
+  wave3RoomAirConditionerDeviceType,
   Wave3MatterAccessory,
 } from '../src/matterAccessory.js';
 import type { Wave3AccessoryController } from '../src/platformAccessory.js';
 import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
 
 describe('WAVE 3 Matter accessory', () => {
+  it('constructs a conformant endpoint with the installed Matter runtime', async () => {
+    const harness = matterHarness();
+    const accessory = createWave3MatterAccessory(
+      harness.matter,
+      'matter-runtime-probe',
+      device('ambient'),
+      onlineSnapshot(),
+    );
+    const environment = new Environment('wave3-matter-accessory-test', Environment.default);
+    new MockStorageService(environment);
+    const node = await ServerNode.create({
+      id: 'wave3-test-node',
+      environment,
+      network: { port: 0 },
+      productDescription: { name: 'WAVE test', deviceType: 0x000e },
+      basicInformation: {
+        vendorName: 'Test',
+        vendorId: 0xfff1,
+        productName: 'WAVE test',
+        productId: 0x8000,
+        nodeLabel: 'WAVE test',
+        serialNumber: 'wave3-test',
+        hardwareVersion: 1,
+        hardwareVersionString: '1',
+        softwareVersion: 1,
+        softwareVersionString: '1',
+      },
+    } as never);
+    try {
+      const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-test-aggregator' });
+      await node.add(aggregator);
+      const endpoint = new Endpoint(
+        wave3RoomAirConditionerDeviceType('ambient').with(BridgedDeviceBasicInformationServer),
+        {
+          id: accessory.UUID,
+          ...accessory.clusters,
+          bridgedDeviceBasicInformation: {
+            vendorName: 'EcoFlow',
+            nodeLabel: accessory.displayName,
+            productName: 'WAVE 3',
+            productLabel: 'WAVE 3',
+            serialNumber: 'redacted-test-serial',
+            reachable: true,
+          },
+        } as never,
+      );
+
+      await aggregator.add(endpoint);
+      const supported = endpoint.behaviors.supported as unknown as Record<
+        string,
+        { features: Record<string, boolean> }
+      >;
+      assert.equal(endpoint.lifecycle.isReady, true);
+      assert.equal(supported.onOff?.features.deadFrontBehavior, true);
+      assert.equal(supported.fanControl?.features.multiSpeed, true);
+      await assert.rejects(
+        async () => endpoint.act('reject unbound power command', agent => agent.onOff.on()),
+        /unavailable until command mapping/,
+      );
+      await assert.rejects(
+        endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } }),
+        /unavailable until command mapping/,
+      );
+      await assert.rejects(
+        endpoint.set({ fanControl: { percentSetting: 80 } }),
+        /unavailable until command mapping/,
+      );
+      assert.equal(endpoint.state.onOff.onOff, true);
+      assert.equal(endpoint.state.thermostat.systemMode, MATTER_SYSTEM_MODE.auto);
+      assert.equal(endpoint.state.fanControl.percentSetting, 60);
+    } finally {
+      await node.close();
+    }
+  });
+
   it('builds a customized room air conditioner with auto, fan, humidity, and complete state', () => {
     const harness = matterHarness();
     const accessory = createWave3MatterAccessory(
@@ -42,11 +121,12 @@ describe('WAVE 3 Matter accessory', () => {
       localTemperature: 2_123,
       occupiedCoolingSetpoint: 2_400,
       occupiedHeatingSetpoint: 1_900,
+      controlSequenceOfOperation: 4,
       systemMode: MATTER_SYSTEM_MODE.auto,
       thermostatRunningMode: 0,
     });
     assert.deepEqual(accessory.clusters?.fanControl, {
-      fanMode: 4,
+      fanMode: 2,
       fanModeSequence: 0,
       percentSetting: 60,
       percentCurrent: 60,
@@ -63,8 +143,7 @@ describe('WAVE 3 Matter accessory', () => {
     assert.equal(accessory.manufacturer, 'EcoFlow');
     assert.equal(accessory.model, 'WAVE 3');
     assert.equal(accessory.serialNumber, 'FIRST1234');
-    assert.throws(() => accessory.handlers?.onOff?.on?.(undefined), /unavailable until command mapping/);
-    assert.equal(accessory.handlers?.fanControl, undefined);
+    assert.equal(accessory.handlers, undefined);
   });
 
   it('preserves the outlet and no-temperature endpoint contracts', () => {
@@ -96,6 +175,22 @@ describe('WAVE 3 Matter accessory', () => {
         .localTemperatureNotExposed,
       true,
     );
+
+    const off = createWave3MatterAccessory(
+      harness.matter,
+      'matter-uuid:off',
+      device('ambient'),
+      offlineSnapshot(),
+    );
+    assert.deepEqual(off.clusters?.fanControl, {
+      fanMode: 0,
+      fanModeSequence: 0,
+      percentSetting: 0,
+      percentCurrent: 0,
+      speedMax: 5,
+      speedSetting: 0,
+      speedCurrent: 0,
+    });
   });
 
   it('updates external state and metadata only from controller snapshots', async () => {
@@ -156,6 +251,9 @@ function matterHarness(): {
   } {
   const stateUpdates: Array<{ cluster: string; attributes: Record<string, unknown> }> = [];
   const metadataUpdates: MatterAccessory[] = [];
+  const clusterState = new Map<string, Record<string, unknown>>([
+    ['bridgedDeviceBasicInformation', {}],
+  ]);
   return {
     matter: {
       clusterNames: {
@@ -171,7 +269,9 @@ function matterHarness(): {
         attributes: Record<string, unknown>,
       ) => {
         stateUpdates.push({ cluster, attributes });
+        clusterState.set(cluster, { ...clusterState.get(cluster), ...attributes });
       },
+      getAccessoryState: async (_uuid: string, cluster: string) => clusterState.get(cluster),
       updatePlatformAccessories: async (accessories: MatterAccessory[]) => {
         metadataUpdates.push(...accessories);
       },

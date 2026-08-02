@@ -82,7 +82,15 @@ method.
 Homebridge 2.2.1 also caches `MatterAccessory.firmwareRevision` without mapping
 it onto the live `BridgedDeviceBasicInformation` server. The plugin therefore
 reports WAVE firmware directly through that standard Matter cluster's
-`softwareVersion` and `softwareVersionString` attributes.
+`softwareVersion` and `softwareVersionString` attributes after confirming that
+the asynchronously registered endpoint is available.
+
+Homebridge's generic handler wrappers replace required Room Air Conditioner
+behavior features, including OnOff Dead Front Behavior and Fan Control Multi
+Speed. The plugin therefore composes its own feature-preserving Matter
+behaviors. Before command mapping is installed, those behaviors accept only
+the exact desired values supplied by controller snapshots and transactionally
+reject controller-originated changes.
 
 ## Alternatives rejected
 

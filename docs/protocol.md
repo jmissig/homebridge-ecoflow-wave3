@@ -471,10 +471,12 @@ publishing a command.
   account/session-error evidence bypasses the grace period and becomes
   unreachable immediately.
 - Once current-generation state is established, allow five minutes without
-  recognized authoritative telemetry before marking it stale. The household
-  WAVE normally sends a full display upload about every two minutes; the
-  longer window avoids racing that cadence while still detecting sustained
-  silence. Command confirmation retains its independent ten-second deadline.
+  recognized **operational control evidence** before marking it stale. The
+  household WAVE normally sends a full display upload about every two minutes;
+  the longer window avoids racing that cadence while still detecting sustained
+  silence. Ambient/outlet temperature, humidity, saved-profile-only, and
+  runtime/firmware deltas update their own state but do not renew power/mode
+  authority. Command confirmation retains its independent ten-second deadline.
 
 [Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533514045766897795), superseding the broader 2026-08-01 cached-availability rule.
 [Freshness decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533535457453932654)

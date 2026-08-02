@@ -23,6 +23,22 @@ import type {
   DecodedWave3Message,
   DecodedWave3QuotaReply,
 } from '../wave3/codec.js';
+import {
+  EcoFlowCloudSessionError,
+  type CloudSessionLogger,
+  type CloudSessionState,
+  type Wave3InboundEvent,
+  type Wave3InboundMessageKind,
+} from '../wave3/sessionPort.js';
+
+export {
+  EcoFlowCloudSessionError,
+  type CloudSessionLogger,
+  type CloudSessionState,
+  type Wave3InboundEvent,
+  type Wave3InboundMessage,
+  type Wave3InboundMessageKind,
+} from '../wave3/sessionPort.js';
 
 export interface Wave3Topics {
   property: string;
@@ -32,27 +48,11 @@ export interface Wave3Topics {
   getReply: string;
 }
 
-export type Wave3InboundMessageKind = 'property' | 'setReply' | 'getReply';
-
-export interface Wave3InboundMessage {
-  serialNumber: string;
-  kind: Wave3InboundMessageKind;
-  payload: Uint8Array;
-  generation: number;
-}
-
 interface AuthoritativeRefreshRetry {
   generation: number;
   attempt: number;
   controller: AbortController;
   timer?: ReturnType<typeof setTimeout>;
-}
-
-export interface CloudSessionLogger {
-  debug(message: string): void;
-  info(message: string): void;
-  warn(message: string): void;
-  error(message: string): void;
 }
 
 const NOOP_LOGGER: CloudSessionLogger = {
@@ -62,25 +62,10 @@ const NOOP_LOGGER: CloudSessionLogger = {
   error: () => undefined,
 };
 
-export type CloudSessionState =
-  | 'idle'
-  | 'starting'
-  | 'online'
-  | 'offline'
-  | 'failed'
-  | 'stopped';
-
-export class EcoFlowCloudSessionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'EcoFlowCloudSessionError';
-  }
-}
-
 export class EcoFlowCloudSession {
   private connection?: MqttConnection;
   private authenticated?: EcoFlowAuthenticatedSession;
-  private readonly messageListeners = new Set<(message: Wave3InboundMessage) => void>();
+  private readonly messageListeners = new Set<(event: Wave3InboundEvent) => void>();
   private readonly errorListeners = new Set<(error: EcoFlowCloudSessionError) => void>();
   private readonly stateListeners = new Set<(state: CloudSessionState) => void>();
   private readonly activeOperations = new Set<Promise<unknown>>();
@@ -219,7 +204,7 @@ export class EcoFlowCloudSession {
     }
   }
 
-  onMessage(listener: (message: Wave3InboundMessage) => void): () => void {
+  onMessage(listener: (event: Wave3InboundEvent) => void): () => void {
     this.messageListeners.add(listener);
     return () => this.messageListeners.delete(listener);
   }
@@ -582,6 +567,7 @@ export class EcoFlowCloudSession {
       if (kind !== undefined) {
         const label = this.deviceLabel(device.serialNumber);
         this.logger.debug(`EcoFlow diagnostics: matched inbound message to ${label} as ${kind}`);
+        let inbound: Wave3InboundEvent;
         if (kind === 'property') {
           const decoded = decodeWave3Message(message.payload);
           this.logDecodedMessage(label, decoded);
@@ -592,6 +578,13 @@ export class EcoFlowCloudSession {
               `EcoFlow diagnostics: accepted newer display property for ${label}${hadPendingRefresh ? '; pending initial refresh is now superseded' : ''}`,
             );
           }
+          inbound = {
+            serialNumber: device.serialNumber,
+            kind,
+            decoded,
+            payloadLength: message.payload.length,
+            generation: this.connectionGeneration,
+          };
         } else if (kind === 'getReply') {
           const pending = this.pendingRefreshes.get(device.serialNumber);
           const replyId = parseRefreshReplyId(message.payload);
@@ -612,15 +605,24 @@ export class EcoFlowCloudSession {
           if (isAuthoritativeQuotaReply(decoded)) {
             this.completeAuthoritativeRefresh(device.serialNumber);
           }
+          inbound = {
+            serialNumber: device.serialNumber,
+            kind,
+            decoded,
+            payloadLength: message.payload.length,
+            generation: this.connectionGeneration,
+          };
         } else {
-          this.logDecodedMessage(label, decodeWave3Message(message.payload));
+          const decoded = decodeWave3Message(message.payload);
+          this.logDecodedMessage(label, decoded);
+          inbound = {
+            serialNumber: device.serialNumber,
+            kind,
+            decoded,
+            payloadLength: message.payload.length,
+            generation: this.connectionGeneration,
+          };
         }
-        const inbound = {
-          serialNumber: device.serialNumber,
-          kind,
-          payload: message.payload,
-          generation: this.connectionGeneration,
-        };
         for (const listener of this.messageListeners) {
           listener(inbound);
         }

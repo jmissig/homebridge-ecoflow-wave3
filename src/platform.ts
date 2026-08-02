@@ -16,10 +16,8 @@ import {
 } from './ecoflow/config.js';
 import { NodeHttpsTransport } from './ecoflow/http.js';
 import { MqttJsTransport } from './ecoflow/mqtt.js';
-import {
-  EcoFlowCloudSession,
-  type CloudSessionLogger,
-} from './ecoflow/session.js';
+import { EcoFlowCloudSession } from './ecoflow/session.js';
+import type { Wave3MatterAccessoryContext } from './matter/context.js';
 import {
   createWave3MatterAccessory,
   isRecentCachedState,
@@ -33,15 +31,9 @@ import {
   type Wave3AccessoryController,
   type Wave3ControllerSession,
 } from './wave3/controller.js';
+import type { CloudSessionLogger } from './wave3/sessionPort.js';
 
-export interface Wave3MatterAccessoryContext {
-  schemaVersion: 1;
-  serialNumber: string;
-  currentTemperatureSource: Wave3DeviceConfig['currentTemperatureSource'];
-  lastSystemMode?: number;
-  lastConfirmedAt?: number;
-  firmwareRevision?: string;
-}
+export type { Wave3MatterAccessoryContext } from './matter/context.js';
 
 export interface PlatformCloudSession extends Wave3ControllerSession {
   requestFullDisplayState(serialNumber: string): Promise<void>;

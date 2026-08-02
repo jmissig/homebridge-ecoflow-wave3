@@ -5,7 +5,33 @@ import {
 } from 'homebridge';
 
 import type { CurrentTemperatureSource, Wave3DeviceConfig } from './ecoflow/config.js';
-import type { Wave3MatterAccessoryContext } from './platform.js';
+import {
+  CACHED_STATE_MAX_AGE_MILLISECONDS,
+  isRecentCachedState,
+} from './matter/cachePolicy.js';
+import {
+  MATTER_FAN_MODE,
+  MATTER_SYSTEM_MODE,
+} from './matter/constants.js';
+import type { Wave3MatterAccessoryContext } from './matter/context.js';
+import {
+  forgetAllDesiredAttributes,
+  forgetDesiredCluster,
+  forgetDesiredState,
+  registerMatterControl,
+  releaseMatterControlState,
+  rememberDesiredCluster,
+  rememberDesiredState,
+  type Wave3MatterControl,
+} from './matter/controlRegistry.js';
+import { wave3RoomAirConditionerDeviceType } from './matter/deviceType.js';
+import {
+  centidegrees,
+  clustersForSnapshot,
+  normalizedAirflow,
+  numberOrUndefined,
+  systemModeForState,
+} from './matter/projection.js';
 import type { Wave3AccessoryController } from './wave3/controller.js';
 import type {
   Wave3AirflowSpeed,
@@ -15,45 +41,14 @@ import type {
   Wave3ModeCommand,
   Wave3Mode,
 } from './wave3/domain.js';
+import {
+  planWave3ModeTransition,
+  planWave3TemperatureIntent,
+} from './wave3/intentPlanner.js';
 
-const DEFAULT_TEMPERATURE_CENTIDEGREES = 2_000;
-const DESIRED_MATTER_VALUE_TTL_MS = 30_000;
-export const CACHED_STATE_MAX_AGE_MILLISECONDS = 15 * 60_000;
-
-export function isRecentCachedState(
-  lastConfirmedAt: number | undefined,
-  now: number = Date.now(),
-  maximumAgeMilliseconds: number = CACHED_STATE_MAX_AGE_MILLISECONDS,
-): boolean {
-  return typeof lastConfirmedAt === 'number'
-    && Number.isFinite(lastConfirmedAt)
-    && Math.max(0, now - lastConfirmedAt) <= maximumAgeMilliseconds;
-}
-
-export const MATTER_SYSTEM_MODE = {
-  auto: 0x01,
-  cool: 0x03,
-  heat: 0x04,
-  fan: 0x07,
-  dry: 0x08,
-  sleep: 0x09,
-} as const;
-
-const MATTER_FAN_MODE = {
-  off: 0x00,
-  low: 0x01,
-  medium: 0x02,
-  high: 0x03,
-} as const;
-
-interface DesiredMatterValue {
-  count: number;
-  expiresAt: number;
-  value: unknown;
-}
-
-const desiredMatterState = new Map<string, DesiredMatterValue[]>();
-const matterControls = new Map<string, Wave3MatterControl>();
+export { CACHED_STATE_MAX_AGE_MILLISECONDS, isRecentCachedState } from './matter/cachePolicy.js';
+export { MATTER_SYSTEM_MODE } from './matter/constants.js';
+export { wave3RoomAirConditionerDeviceType } from './matter/deviceType.js';
 
 export interface MatterAccessoryBinding {
   stop(): void | Promise<void>;
@@ -61,21 +56,6 @@ export interface MatterAccessoryBinding {
 
 export interface MatterAccessoryLogger {
   error(message: string): void;
-}
-
-interface Wave3MatterControl {
-  setPower(on: boolean, applyMatter: () => Promise<void>): Promise<void>;
-  setSystemMode(systemMode: number): void;
-  setHeatingSetpoint(centidegrees: number): void;
-  setCoolingSetpoint(centidegrees: number): void;
-  raiseLowerSetpoint(
-    mode: number,
-    amount: number,
-    applyMatter: () => Promise<void>,
-  ): Promise<void>;
-  setFanMode(fanMode: number): void;
-  setFanPercent(percent: number | null): void;
-  setFanSpeed(speed: number | null): void;
 }
 
 interface PendingFanWrite {
@@ -101,267 +81,6 @@ interface StagedOffThermostatIntent {
   systemMode?: number;
   heatingCelsius?: number;
   coolingCelsius?: number;
-}
-
-export function wave3RoomAirConditionerDeviceType(
-  matter: MatterAPI,
-  currentTemperatureSource: CurrentTemperatureSource,
-) {
-  // Device and behavior classes must come from the running Homebridge process.
-  // A development `npm install -g .` symlinks this clone, whose dev dependency
-  // may otherwise load a second Matter.js instance with incompatible class identity.
-  const roomAirConditioner = matter.deviceTypes.RoomAirConditioner;
-  const requirements = roomAirConditioner.requirements;
-  const Wave3OnOffBase = requirements.OnOffServer;
-  const Wave3ThermostatBase = requirements.ThermostatServer.with(
-    'Heating',
-    'Cooling',
-    'AutoMode',
-  );
-  const Wave3NoTemperatureThermostatBase = requirements.ThermostatServer.with(
-    'Heating',
-    'Cooling',
-    'AutoMode',
-    'LocalTemperatureNotExposed',
-  );
-  const MultiSpeedFanControlServer = requirements.FanControlServer.with('MultiSpeed');
-
-  class Wave3OnOffServer extends Wave3OnOffBase {
-    override async on(): Promise<void> {
-      await requireMatterControl(this.endpoint.id).setPower(true, async () => {
-        await super.on();
-      });
-    }
-
-    override async off(): Promise<void> {
-      await requireMatterControl(this.endpoint.id).setPower(false, async () => {
-        await super.off();
-      });
-    }
-
-    override async toggle(): Promise<void> {
-      await requireMatterControl(this.endpoint.id).setPower(
-        !this.state.onOff,
-        async () => {
-          await super.toggle();
-        },
-      );
-    }
-  }
-
-  class Wave3FanControlServer extends MultiSpeedFanControlServer {
-    override initialize(): void {
-      super.initialize();
-      this.reactTo(this.events.fanMode$Changing, this.validateFanMode);
-      this.reactTo(this.events.percentSetting$Changing, this.validatePercentSetting);
-      this.reactTo(this.events.speedSetting$Changing, this.validateSpeedSetting);
-    }
-
-    private validateFanMode(value: number): void {
-      if (!requireDesiredValueOrControl(
-        this.endpoint.id,
-        'fanControl',
-        'fanMode',
-        value,
-        control => control.setFanMode(value),
-      )) {
-        return;
-      }
-      const percent = percentForFanMode(value);
-      if (percent !== undefined) {
-        this.setRelatedSettings({
-          percentSetting: percent,
-          speedSetting: speedIndexForPercent(percent),
-        });
-      }
-    }
-
-    private validatePercentSetting(value: number | null, oldValue: number | null): void {
-      if (value === null) {
-        this.state.percentSetting = oldValue;
-        return;
-      }
-      if (!requireDesiredValueOrControl(
-        this.endpoint.id,
-        'fanControl',
-        'percentSetting',
-        value,
-        control => control.setFanPercent(value),
-      )) {
-        return;
-      }
-      if (value > 0) {
-        this.setRelatedSettings({
-          fanMode: fanModeForPercent(value),
-          speedSetting: speedIndexForPercent(value),
-        });
-      }
-    }
-
-    private validateSpeedSetting(value: number | null, oldValue: number | null): void {
-      if (value === null) {
-        this.state.speedSetting = oldValue;
-        return;
-      }
-      if (!requireDesiredValueOrControl(
-        this.endpoint.id,
-        'fanControl',
-        'speedSetting',
-        value,
-        control => control.setFanSpeed(value),
-      )) {
-        return;
-      }
-      if (value > 0) {
-        const percent = value * 20;
-        this.setRelatedSettings({
-          fanMode: fanModeForPercent(percent),
-          percentSetting: percent,
-        });
-      }
-    }
-
-    private setRelatedSettings(attributes: {
-      fanMode?: number;
-      percentSetting?: number;
-      speedSetting?: number;
-    }): void {
-      rememberDesiredCluster(this.endpoint.id, 'fanControl', attributes);
-      if (attributes.fanMode !== undefined) {
-        this.state.fanMode = attributes.fanMode;
-      }
-      if (attributes.percentSetting !== undefined) {
-        this.state.percentSetting = attributes.percentSetting;
-      }
-      if (attributes.speedSetting !== undefined) {
-        this.state.speedSetting = attributes.speedSetting;
-      }
-      setImmediate(() => {
-        forgetDesiredCluster(this.endpoint.id, 'fanControl', attributes);
-      });
-    }
-  }
-
-  class Wave3ThermostatServer extends Wave3ThermostatBase {
-    override initialize(): void {
-      super.initialize();
-      this.reactTo(
-        this.events.systemMode$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'systemMode',
-            value,
-            control => control.setSystemMode(value),
-          );
-        },
-      );
-      this.reactTo(
-        this.events.occupiedHeatingSetpoint$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'occupiedHeatingSetpoint',
-            value,
-            control => control.setHeatingSetpoint(value),
-          );
-        },
-      );
-      this.reactTo(
-        this.events.occupiedCoolingSetpoint$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'occupiedCoolingSetpoint',
-            value,
-            control => control.setCoolingSetpoint(value),
-          );
-        },
-      );
-    }
-
-    override async setpointRaiseLower(request: { mode: number; amount: number }): Promise<void> {
-      await requireMatterControl(this.endpoint.id).raiseLowerSetpoint(
-        request.mode,
-        request.amount,
-        async () => {
-          await super.setpointRaiseLower(request);
-        },
-      );
-    }
-  }
-
-  class Wave3NoTemperatureThermostatServer extends Wave3NoTemperatureThermostatBase {
-    override initialize(): void {
-      super.initialize();
-      this.reactTo(
-        this.events.systemMode$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'systemMode',
-            value,
-            control => control.setSystemMode(value),
-          );
-        },
-      );
-      this.reactTo(
-        this.events.occupiedHeatingSetpoint$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'occupiedHeatingSetpoint',
-            value,
-            control => control.setHeatingSetpoint(value),
-          );
-        },
-      );
-      this.reactTo(
-        this.events.occupiedCoolingSetpoint$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'occupiedCoolingSetpoint',
-            value,
-            control => control.setCoolingSetpoint(value),
-          );
-        },
-      );
-    }
-
-    override async setpointRaiseLower(request: { mode: number; amount: number }): Promise<void> {
-      await requireMatterControl(this.endpoint.id).raiseLowerSetpoint(
-        request.mode,
-        request.amount,
-        async () => {
-          await super.setpointRaiseLower(request);
-        },
-      );
-    }
-  }
-
-  const thermostat = currentTemperatureSource === 'none'
-    ? Wave3NoTemperatureThermostatServer
-    : Wave3ThermostatServer;
-
-  return currentTemperatureSource === 'ambient'
-    ? roomAirConditioner.with(
-      Wave3OnOffServer,
-      thermostat,
-      Wave3FanControlServer,
-      requirements.RelativeHumidityMeasurementServer,
-    )
-    : roomAirConditioner.with(
-      Wave3OnOffServer,
-      thermostat,
-      Wave3FanControlServer,
-    );
 }
 
 export function createWave3MatterAccessory(
@@ -391,6 +110,7 @@ export function createWave3MatterAccessory(
     ),
     ...(firmwareRevision === undefined ? {} : { firmwareRevision }),
   };
+  updateLastSystemMode(context, snapshot);
   const clusters = clustersForSnapshot(
     snapshot,
     device.currentTemperatureSource,
@@ -412,8 +132,7 @@ export function createWave3MatterAccessory(
 }
 
 export function releaseWave3MatterAccessoryState(uuid: string): void {
-  matterControls.delete(uuid);
-  forgetDesiredState(uuid);
+  releaseMatterControlState(uuid);
 }
 
 export class Wave3MatterAccessory implements MatterAccessoryBinding {
@@ -451,7 +170,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     // values used to admit asynchronous endpoint construction must not remain
     // as permanent exemptions for later controller writes.
     forgetDesiredState(accessory.UUID);
-    matterControls.set(accessory.UUID, this.createMatterControl());
+    registerMatterControl(accessory.UUID, this.createMatterControl());
     this.updateTail = this.pushFirmware(
       controller.snapshot.firmwareVersions?.pd
       ?? controller.snapshot.firmwareVersions?.iot
@@ -504,8 +223,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       this.pendingTemperatureWrite = undefined;
     }
     await Promise.allSettled([...this.activeCommands]);
-    matterControls.delete(this.accessory.UUID);
-    forgetDesiredState(this.accessory.UUID);
+    releaseMatterControlState(this.accessory.UUID);
     await this.updateTail;
     forgetDesiredState(this.accessory.UUID);
   }
@@ -666,47 +384,19 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     coolingCelsius?: number,
   ): Promise<void> {
     this.requireControllable();
-    const state = this.snapshot.state;
-    if (state.mode === 'auto') {
-      let lowerCelsius = heatingCelsius ?? state.targetTemperatureLowerCelsius;
-      let upperCelsius = coolingCelsius ?? state.targetTemperatureUpperCelsius;
-      if (lowerCelsius === undefined || upperCelsius === undefined) {
-        throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
-      }
-      if (lowerCelsius > upperCelsius) {
-        if (heatingCelsius !== undefined && coolingCelsius === undefined) {
-          upperCelsius = lowerCelsius;
-        } else {
-          lowerCelsius = upperCelsius;
-        }
-      }
-      if (state.targetTemperatureLowerCelsius !== lowerCelsius
-        || state.targetTemperatureUpperCelsius !== upperCelsius) {
-        await this.execute({
-          type: 'automaticTemperatureRange',
-          lowerCelsius,
-          upperCelsius,
-        });
-      }
+    const plan = planWave3TemperatureIntent(this.snapshot.state, {
+      heatingCelsius,
+      coolingCelsius,
+    });
+    if (plan.status === 'command') {
+      await this.execute(plan.command);
       return;
     }
-    const activeCelsius = state.mode === 'heat'
-      ? heatingCelsius
-      : state.mode === 'cool'
-        ? coolingCelsius
-        : undefined;
-    if (activeCelsius !== undefined) {
-      if (state.targetTemperatureCelsius !== activeCelsius) {
-        await this.execute({ type: 'targetTemperature', celsius: activeCelsius });
-      }
+    if (plan.status === 'noop') {
       return;
     }
-
-    // Matter may move the inactive companion setpoint to preserve its
-    // thermostat constraints. That value is not a second WAVE target.
-    if ((heatingCelsius !== undefined && state.mode === 'cool')
-      || (coolingCelsius !== undefined && state.mode === 'heat')) {
-      return;
+    if (plan.status === 'missingAutomaticRange') {
+      throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
     }
     throw new MatterStatus.InvalidInState('The requested setpoint is inactive in the current mode');
   }
@@ -1190,11 +880,16 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       ?? numberOrUndefined(presentedThermostat.systemMode)
       ?? this.accessory.context.lastSystemMode;
     const mode = systemMode === undefined ? undefined : waveModeForSystemMode(systemMode);
-    return mode === undefined ? undefined : modeCommandForThermostat(mode, presentedThermostat, intent);
+    return mode === undefined
+      ? undefined
+      : planWave3ModeTransition(mode, modeTargetIntent(presentedThermostat, intent));
   }
 
   private async modeCommand(mode: Exclude<Wave3Mode, 'off'>): Promise<Wave3ModeCommand> {
-    return modeCommandForThermostat(mode, await this.presentedThermostat());
+    return planWave3ModeTransition(
+      mode,
+      modeTargetIntent(await this.presentedThermostat()),
+    );
   }
 
   private async presentedThermostat(): Promise<Record<string, unknown>> {
@@ -1217,6 +912,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private clustersForPresentation(
     snapshot: Wave3ControllerSnapshot,
   ): NonNullable<MatterAccessory['clusters']> {
+    updateLastSystemMode(this.accessory.context, snapshot);
     const clusters = clustersForSnapshot(
       snapshot,
       this.currentTemperatureSource,
@@ -1314,303 +1010,29 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 }
 
-function modeCommandForThermostat(
-  mode: Exclude<Wave3Mode, 'off'>,
+function modeTargetIntent(
   thermostat: Record<string, unknown>,
   intent?: StagedOffThermostatIntent,
-): Wave3ModeCommand {
-  if (mode === 'cool') {
-    return {
-      type: 'mode',
-      mode,
-      targetTemperatureCelsius: intent?.coolingCelsius
-        ?? matterSetpointCelsius(thermostat.occupiedCoolingSetpoint),
-    };
-  }
-  if (mode === 'heat') {
-    return {
-      type: 'mode',
-      mode,
-      targetTemperatureCelsius: intent?.heatingCelsius
-        ?? matterSetpointCelsius(thermostat.occupiedHeatingSetpoint),
-    };
-  }
-  if (mode === 'auto') {
-    let lower = intent?.heatingCelsius
-      ?? matterSetpointCelsius(thermostat.occupiedHeatingSetpoint);
-    let upper = intent?.coolingCelsius
-      ?? matterSetpointCelsius(thermostat.occupiedCoolingSetpoint);
-    if (lower === undefined || upper === undefined) {
-      return { type: 'mode', mode };
-    }
-    if (lower > upper) {
-      if (intent?.heatingCelsius !== undefined && intent.coolingCelsius === undefined) {
-        upper = lower;
-      } else {
-        lower = upper;
-      }
-    }
-    return {
-      type: 'mode',
-      mode,
-      targetTemperatureLowerCelsius: lower,
-      targetTemperatureUpperCelsius: upper,
-    };
-  }
-  return { type: 'mode', mode };
-}
-
-function clustersForSnapshot(
-  snapshot: Wave3ControllerSnapshot,
-  currentTemperatureSource: CurrentTemperatureSource,
-  context: Wave3MatterAccessoryContext,
-  previous: MatterAccessory['clusters'] = {},
-): NonNullable<MatterAccessory['clusters']> {
-  const state = snapshot.state;
-  if (snapshot.availability === 'online') {
-    const systemMode = systemModeForState(state.mode, state.submode);
-    if (systemMode !== undefined) {
-      context.lastSystemMode = systemMode;
-    }
-  }
-
-  const previousThermostat = previous?.thermostat ?? {};
-  const previousFan = previous?.fanControl ?? {};
-  const temperature = currentTemperatureSource === 'ambient'
-    ? state.ambientTemperatureCelsius
-    : currentTemperatureSource === 'outlet'
-      ? state.outletTemperatureCelsius
-      : undefined;
-  const coolingSetpoint = state.mode === 'auto'
-    ? state.targetTemperatureUpperCelsius
-    : state.mode === 'cool'
-      ? state.targetTemperatureCelsius
-      : undefined;
-  const heatingSetpoint = state.mode === 'auto'
-    ? state.targetTemperatureLowerCelsius
-    : state.mode === 'heat'
-      ? state.targetTemperatureCelsius
-      : undefined;
-  let projectedCoolingSetpoint = coolingSetpoint === undefined
-    ? numberOrUndefined(previousThermostat.occupiedCoolingSetpoint)
-      ?? DEFAULT_TEMPERATURE_CENTIDEGREES
-    : centidegrees(coolingSetpoint);
-  let projectedHeatingSetpoint = heatingSetpoint === undefined
-    ? numberOrUndefined(previousThermostat.occupiedHeatingSetpoint)
-      ?? DEFAULT_TEMPERATURE_CENTIDEGREES
-    : centidegrees(heatingSetpoint);
-  if (projectedHeatingSetpoint > projectedCoolingSetpoint) {
-    if (heatingSetpoint !== undefined && coolingSetpoint === undefined) {
-      projectedCoolingSetpoint = projectedHeatingSetpoint;
-    } else {
-      projectedHeatingSetpoint = projectedCoolingSetpoint;
-    }
-  }
-  const airflow = normalizedAirflow(state.airflowSpeed)
-    ?? numberOrUndefined(previousFan.percentSetting)
-    ?? 20;
-  const powered = state.powered
-    ?? booleanOrUndefined(previous?.onOff?.onOff)
-    ?? false;
-
-  const clusters: NonNullable<MatterAccessory['clusters']> = {
-    ...previous,
-    onOff: { onOff: powered },
-    thermostat: {
-      ...previousThermostat,
-      localTemperature: currentTemperatureSource === 'none'
-        ? null
-        : temperature === undefined
-          ? nullableNumber(previousThermostat.localTemperature)
-          : centidegrees(temperature),
-      occupiedCoolingSetpoint: projectedCoolingSetpoint,
-      occupiedHeatingSetpoint: projectedHeatingSetpoint,
-      absMinHeatSetpointLimit: 1_600,
-      minHeatSetpointLimit: 1_600,
-      maxHeatSetpointLimit: 3_000,
-      absMaxHeatSetpointLimit: 3_000,
-      absMinCoolSetpointLimit: 1_600,
-      minCoolSetpointLimit: 1_600,
-      maxCoolSetpointLimit: 3_000,
-      absMaxCoolSetpointLimit: 3_000,
-      minSetpointDeadBand: 0,
-      controlSequenceOfOperation: 4,
-      systemMode: context.lastSystemMode ?? MATTER_SYSTEM_MODE.cool,
-    },
-    fanControl: {
-      ...previousFan,
-      fanMode: powered ? fanModeForAirflow(airflow) : MATTER_FAN_MODE.off,
-      fanModeSequence: 0,
-      percentSetting: powered ? airflow : 0,
-      percentCurrent: powered ? airflow : 0,
-      speedMax: 5,
-      speedSetting: powered ? speedIndex(airflow) : 0,
-      speedCurrent: powered ? speedIndex(airflow) : 0,
-    },
+): Parameters<typeof planWave3ModeTransition>[1] {
+  return {
+    presentedHeatingCelsius: matterSetpointCelsius(thermostat.occupiedHeatingSetpoint),
+    presentedCoolingCelsius: matterSetpointCelsius(thermostat.occupiedCoolingSetpoint),
+    stagedHeatingCelsius: intent?.heatingCelsius,
+    stagedCoolingCelsius: intent?.coolingCelsius,
   };
-
-  // The display packets identify the selected operating mode, not whether the
-  // compressor is currently heating or cooling. ThermostatRunningMode is an
-  // optional attribute, so omit it until the protocol supplies direct
-  // activity evidence. Also remove it from pre-0.2 cached cluster state.
-  delete clusters.thermostat?.thermostatRunningMode;
-
-  if (currentTemperatureSource === 'ambient') {
-    clusters.relativeHumidityMeasurement = {
-      measuredValue: state.ambientHumidityPercent === undefined
-        ? nullableNumber(previous?.relativeHumidityMeasurement?.measuredValue)
-        : centipercent(state.ambientHumidityPercent),
-      minMeasuredValue: 0,
-      maxMeasuredValue: 10_000,
-    };
-  } else {
-    delete clusters.relativeHumidityMeasurement;
-  }
-
-  return clusters;
 }
 
-function rememberDesiredState(
-  uuid: string,
-  clusters: NonNullable<MatterAccessory['clusters']>,
+function updateLastSystemMode(
+  context: Wave3MatterAccessoryContext,
+  snapshot: Wave3ControllerSnapshot,
 ): void {
-  for (const [cluster, attributes] of Object.entries(clusters)) {
-    rememberDesiredCluster(uuid, cluster, attributes);
+  if (snapshot.availability !== 'online') {
+    return;
   }
-}
-
-function forgetDesiredState(uuid: string): void {
-  const prefix = `${uuid}\u0000`;
-  for (const key of desiredMatterState.keys()) {
-    if (key.startsWith(prefix)) {
-      desiredMatterState.delete(key);
-    }
+  const systemMode = systemModeForState(snapshot.state.mode, snapshot.state.submode);
+  if (systemMode !== undefined) {
+    context.lastSystemMode = systemMode;
   }
-}
-
-function rememberDesiredCluster(
-  uuid: string,
-  cluster: string,
-  attributes: Record<string, unknown>,
-): void {
-  for (const [attribute, value] of Object.entries(attributes)) {
-    if (!requiresMatterWriteGuard(cluster, attribute)) {
-      continue;
-    }
-    const key = desiredStateKey(uuid, cluster, attribute);
-    const values = desiredMatterState.get(key) ?? [];
-    pruneExpiredDesiredValues(values);
-    // Snapshot projections are serialized. Once a newer projection wants a
-    // different value, an older unconfirmed value can no longer describe the
-    // authoritative controller state and must not suppress a later user write.
-    for (let index = values.length - 1; index >= 0; index -= 1) {
-      if (!Object.is(values[index]!.value, value)) {
-        values.splice(index, 1);
-      }
-    }
-    const existing = values.find(entry => Object.is(entry.value, value));
-    if (existing === undefined) {
-      values.push({ count: 1, expiresAt: Date.now() + DESIRED_MATTER_VALUE_TTL_MS, value });
-    } else {
-      existing.count += 1;
-      existing.expiresAt = Date.now() + DESIRED_MATTER_VALUE_TTL_MS;
-    }
-    desiredMatterState.set(key, values);
-  }
-}
-
-function forgetDesiredCluster(
-  uuid: string,
-  cluster: string,
-  attributes: Record<string, unknown>,
-): void {
-  for (const [attribute, value] of Object.entries(attributes)) {
-    const key = desiredStateKey(uuid, cluster, attribute);
-    const values = desiredMatterState.get(key);
-    const index = values?.findIndex(entry => Object.is(entry.value, value)) ?? -1;
-    if (values === undefined || index < 0) {
-      continue;
-    }
-    const entry = values[index]!;
-    entry.count -= 1;
-    if (entry.count === 0) {
-      values.splice(index, 1);
-    }
-    if (values.length === 0) {
-      desiredMatterState.delete(key);
-    }
-  }
-}
-
-function requireDesiredValueOrControl(
-  uuid: string,
-  cluster: string,
-  attribute: string,
-  value: unknown,
-  control: (control: Wave3MatterControl) => void,
-): boolean {
-  const desired = { [attribute]: value };
-  const key = desiredStateKey(uuid, cluster, attribute);
-  const values = desiredMatterState.get(key);
-  if (values !== undefined) {
-    pruneExpiredDesiredValues(values);
-    if (values.length === 0) {
-      desiredMatterState.delete(key);
-    }
-  }
-  if (values?.some(entry => Object.is(entry.value, value)) === true) {
-    forgetDesiredCluster(uuid, cluster, desired);
-    return false;
-  }
-  control(requireMatterControl(uuid));
-  return true;
-}
-
-function forgetAllDesiredAttributes(
-  uuid: string,
-  cluster: string,
-  attributes: ReadonlySet<string>,
-): void {
-  for (const attribute of attributes) {
-    desiredMatterState.delete(desiredStateKey(uuid, cluster, attribute));
-  }
-}
-
-function pruneExpiredDesiredValues(values: DesiredMatterValue[]): void {
-  const now = Date.now();
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    if (values[index]!.expiresAt <= now) {
-      values.splice(index, 1);
-    }
-  }
-}
-
-function requiresMatterWriteGuard(cluster: string, attribute: string): boolean {
-  return (cluster === 'thermostat' && (
-    attribute === 'systemMode'
-    || attribute === 'occupiedHeatingSetpoint'
-    || attribute === 'occupiedCoolingSetpoint'
-  )) || (cluster === 'fanControl' && (
-    attribute === 'fanMode'
-    || attribute === 'percentSetting'
-    || attribute === 'speedSetting'
-  ));
-}
-
-function desiredStateKey(uuid: string, cluster: string, attribute: string): string {
-  return `${uuid}\u0000${cluster}\u0000${attribute}`;
-}
-
-function controlsUnavailable(): Error {
-  return new Error('Matter controls are unavailable until command mapping is initialized');
-}
-
-function requireMatterControl(uuid: string): Wave3MatterControl {
-  const control = matterControls.get(uuid);
-  if (control === undefined) {
-    throw controlsUnavailable();
-  }
-  return control;
 }
 
 function waveModeForSystemMode(systemMode: number): Exclude<Wave3Mode, 'off'> | undefined {
@@ -1741,80 +1163,8 @@ function packedFirmwareVersion(version: string): number {
   ) >>> 0;
 }
 
-function systemModeForState(mode: Wave3Mode | undefined, submode: number | undefined): number | undefined {
-  if (submode === 3 && mode !== 'off') {
-    return MATTER_SYSTEM_MODE.sleep;
-  }
-  if (mode === undefined || mode === 'off') {
-    return undefined;
-  }
-  return MATTER_SYSTEM_MODE[mode];
-}
-
-function normalizedAirflow(value: number | undefined): number | undefined {
-  if (value === undefined || !Number.isFinite(value)) {
-    return undefined;
-  }
-  return Math.max(20, Math.min(100, Math.round(value / 20) * 20));
-}
-
-function fanModeForAirflow(airflow: number): number {
-  if (airflow <= 33) {
-    return MATTER_FAN_MODE.low;
-  }
-  if (airflow <= 66) {
-    return MATTER_FAN_MODE.medium;
-  }
-  return MATTER_FAN_MODE.high;
-}
-
-function fanModeForPercent(percent: number): number {
-  return fanModeForAirflow(percent);
-}
-
-function percentForFanMode(fanMode: number): number | undefined {
-  switch (fanMode) {
-  case MATTER_FAN_MODE.low:
-    return 20;
-  case MATTER_FAN_MODE.medium:
-    return 60;
-  case MATTER_FAN_MODE.high:
-    return 100;
-  default:
-    return undefined;
-  }
-}
-
-function speedIndexForPercent(percent: number): number {
-  return Math.max(1, Math.min(5, Math.ceil(percent / 20)));
-}
-
-function speedIndex(percent: number): number {
-  return Math.max(1, Math.min(5, Math.round(percent / 20)));
-}
-
-function centidegrees(value: number): number {
-  return Math.round(value * 100);
-}
-
-function centipercent(value: number): number {
-  return Math.max(0, Math.min(10_000, Math.round(value * 100)));
-}
-
 function validSystemMode(value: unknown): number | undefined {
   return typeof value === 'number' && Object.values(MATTER_SYSTEM_MODE).includes(
     value as (typeof MATTER_SYSTEM_MODE)[keyof typeof MATTER_SYSTEM_MODE],
   ) ? value : undefined;
-}
-
-function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function booleanOrUndefined(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
-}
-
-function nullableNumber(value: unknown): number | null {
-  return value === null || (typeof value === 'number' && Number.isFinite(value)) ? value : null;
 }

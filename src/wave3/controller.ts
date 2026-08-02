@@ -1,18 +1,11 @@
 import { randomInt } from 'node:crypto';
 
-import type {
-  CloudSessionLogger,
-  CloudSessionState,
-  EcoFlowCloudSessionError,
-  Wave3InboundMessage,
-} from '../ecoflow/session.js';
 import {
-  decodeWave3QuotaReply,
-  decodeWave3Message,
   encodeWave3Command,
   hasWave3ControlStateEvidence,
   hasWave3DisplayEvidence,
   mergeWave3DisplayUpdate,
+  type DecodedWave3QuotaReply,
 } from './codec.js';
 import {
   WAVE3_MODE_IDS,
@@ -28,25 +21,20 @@ import {
   type Wave3RuntimeTemperatures,
   type Wave3State,
 } from './domain.js';
+import type {
+  CloudSessionLogger,
+  CloudSessionState,
+  Wave3ControllerSession,
+  Wave3InboundEvent,
+} from './sessionPort.js';
+
+export type { Wave3ControllerSession } from './sessionPort.js';
 
 export interface Wave3AccessoryController {
   readonly snapshot: Wave3ControllerSnapshot;
   onSnapshot(listener: (snapshot: Wave3ControllerSnapshot) => void): () => void;
   execute(command: Wave3Command): Promise<Wave3CommandResult>;
   stop(): void;
-}
-
-export interface Wave3ControllerSession {
-  readonly state: CloudSessionState;
-  onMessage(listener: (message: Wave3InboundMessage) => void): () => void;
-  onError(listener: (error: EcoFlowCloudSessionError) => void): () => void;
-  onStateChange(listener: (state: CloudSessionState) => void): () => void;
-  publishCommand(
-    serialNumber: string,
-    payload: Uint8Array,
-    signal?: AbortSignal,
-  ): Promise<void>;
-  requestState(serialNumber: string): Promise<void>;
 }
 
 export interface Wave3ControllerOptions {
@@ -251,34 +239,34 @@ export class Wave3Controller {
     }
   }
 
-  private handleMessage(message: Wave3InboundMessage): void {
-    if (this.stopped || message.serialNumber !== this.serialNumber) {
+  private handleMessage(event: Wave3InboundEvent): void {
+    if (this.stopped || event.serialNumber !== this.serialNumber) {
       return;
     }
     this.logger.debug(
-      `EcoFlow diagnostics: controller received ${message.kind} `
-      + `(bytes=${message.payload.length}, generation=${message.generation}, `
+      `EcoFlow diagnostics: controller received ${event.kind} `
+      + `(bytes=${event.payloadLength}, generation=${event.generation}, `
       + `activeGeneration=${this.activeGeneration ?? '<none>'})`,
     );
     if (this.activeGeneration !== undefined
-      && message.generation < this.activeGeneration) {
+      && event.generation < this.activeGeneration) {
       this.logger.debug('EcoFlow diagnostics: controller dropped message from an older connection generation');
       return;
     }
     if (this.activeGeneration === undefined
-      || message.generation > this.activeGeneration) {
+      || event.generation > this.activeGeneration) {
       this.logger.debug(
-        `EcoFlow diagnostics: controller adopting connection generation=${message.generation} and clearing prior-generation state`,
+        `EcoFlow diagnostics: controller adopting connection generation=${event.generation} and clearing prior-generation state`,
       );
       this.clearCurrentGenerationState();
-      this.activeGeneration = message.generation;
+      this.activeGeneration = event.generation;
     }
-    if (message.kind === 'getReply') {
-      this.handleQuotaReply(message.payload);
+    if (event.kind === 'getReply') {
+      this.handleQuotaReply(event.decoded);
       return;
     }
-    const decoded = decodeWave3Message(message.payload);
-    if (message.kind === 'property' && decoded.kind === 'display') {
+    const decoded = event.decoded;
+    if (event.kind === 'property' && decoded.kind === 'display') {
       if (!hasWave3DisplayEvidence(decoded.update)) {
         this.logger.debug(
           `EcoFlow diagnostics: controller rejected display property with no recognized state evidence diagnostic=${JSON.stringify(decoded.diagnostic)}`,
@@ -298,19 +286,19 @@ export class Wave3Controller {
       this.logger.debug(
         `EcoFlow diagnostics: controller accepted display property sequence=${decoded.sequence} update=${JSON.stringify(decoded.update)}`,
       );
-      if (this.hasCurrentGenerationState || hasWave3ControlStateEvidence(decoded.update)) {
+      if (hasWave3ControlStateEvidence(decoded.update)) {
         this.markStateFresh();
       } else {
         this.logger.debug(
           'EcoFlow diagnostics: controller retained supplemental display telemetry '
-          + 'while awaiting authoritative operating-mode state',
+          + 'without renewing operational control authority',
         );
         this.updateFreshnessForOnlineSession();
       }
       this.confirmPendingFromObservedState(decoded.update);
       return;
     }
-    if (message.kind === 'property' && decoded.kind === 'runtime') {
+    if (event.kind === 'property' && decoded.kind === 'runtime') {
       if (!isNewerSequence(decoded.sequence, this.lastRuntimeSequence)) {
         this.logger.debug(
           `EcoFlow diagnostics: controller rejected runtime property sequence=${decoded.sequence} `
@@ -335,17 +323,16 @@ export class Wave3Controller {
       this.updateFreshnessForOnlineSession();
       return;
     }
-    if (message.kind === 'setReply' && decoded.kind === 'acknowledgement') {
+    if (event.kind === 'setReply' && decoded.kind === 'acknowledgement') {
       this.handleAcknowledgement(decoded.sequence, decoded.acknowledgement);
       return;
     }
     this.logger.debug(
-      `EcoFlow diagnostics: controller ignored ${message.kind} decoded as ${decoded.kind} diagnostic=${JSON.stringify(decoded.diagnostic)}`,
+      `EcoFlow diagnostics: controller ignored ${event.kind} decoded as ${decoded.kind} diagnostic=${JSON.stringify(decoded.diagnostic)}`,
     );
   }
 
-  private handleQuotaReply(payload: Uint8Array): void {
-    const decoded = decodeWave3QuotaReply(payload);
+  private handleQuotaReply(decoded: DecodedWave3QuotaReply): void {
     if (decoded.kind === 'malformed') {
       this.logger.debug(
         `EcoFlow diagnostics: controller rejected malformed latestQuotas reply reason=${JSON.stringify(decoded.reason)}`,
@@ -374,12 +361,12 @@ export class Wave3Controller {
     this.logger.debug(
       `EcoFlow diagnostics: controller accepted latestQuotas update=${JSON.stringify(decoded.update)}`,
     );
-    if (this.hasCurrentGenerationState || hasWave3ControlStateEvidence(decoded.update)) {
+    if (hasWave3ControlStateEvidence(decoded.update)) {
       this.markStateFresh();
     } else {
       this.logger.debug(
         'EcoFlow diagnostics: controller retained supplemental latestQuotas telemetry '
-        + 'while awaiting authoritative operating-mode state',
+        + 'without renewing operational control authority',
       );
       this.updateFreshnessForOnlineSession();
     }
@@ -551,7 +538,7 @@ export class Wave3Controller {
     this.deviceReportedOnline = true;
     this.updatedAt = this.now();
     this.logger.debug(
-      `EcoFlow diagnostics: controller marked state fresh at epochMs=${this.updatedAt}`,
+      `EcoFlow diagnostics: controller marked operational control authority fresh at epochMs=${this.updatedAt}`,
     );
     this.updateFreshnessForOnlineSession();
   }

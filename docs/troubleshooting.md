@@ -95,6 +95,11 @@ failure; if the evidence deadline expires without rejection, it instead logs
 `confirmation timed out`. Both restore the latest confirmed device state, so
 Apple Home may briefly show the requested value before that reconciliation.
 
+Ordinary temperature, humidity, saved-profile, and runtime packets do not keep
+control authority alive by themselves. The bridge needs a current-generation
+power/mode upload within the five-minute operational freshness window; this is
+independent of the ten-second evidence deadline for an individual command.
+
 ## The WAVE selected its remembered 26°C target
 
 The WAVE stores separate parameters for its operating modes. A mode-only Heat

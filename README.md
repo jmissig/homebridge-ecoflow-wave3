@@ -240,8 +240,8 @@ Protocol details and implementation evidence live in
 [blinded greenfield architecture](docs/architecture-blinded-proposal.md) and
 [comparison with the current implementation](docs/architecture-comparison.md)
 record an independent architecture review. The resulting
-[architecture hardening plan](docs/architecture-refactor-plan.md) orders the
-five pre-release refactors. Third-party attribution is in
+[architecture hardening record](docs/architecture-refactor-plan.md) documents
+the five implemented pre-release refactors. Third-party attribution is in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## License

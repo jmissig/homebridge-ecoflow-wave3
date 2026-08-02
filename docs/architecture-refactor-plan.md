@@ -1,10 +1,15 @@
-# Architecture hardening plan
+# Architecture hardening implementation record
 
-This plan turns the five pre-release follow-ups from the
+This record turns the five pre-release follow-ups from the
 [blinded architecture comparison](architecture-comparison.md) into bounded,
-independently reviewable changes. It is a refactor plan, not a redesign: the
+reviewable changes. It is a refactor, not a redesign: the
 shared cloud session, per-device controller, confirmed-state model, Matter-only
 product surface, Homebridge cache, and WAVE 3-only scope remain unchanged.
+
+The five changes were implemented sequentially in one working tranche with one
+consolidated review and verification sweep at the end. Git history provides the
+recovery boundary; the implementation does not require artificial pause or
+rollback checkpoints between mechanical extractions.
 
 The work was requested after reviewing the current implementation against the
 blinded proposal. [told: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533552019430965520)
@@ -29,11 +34,11 @@ blinded proposal. [told: Julian · 2026-08-02](https://discord.com/channels/1499
 - No new Matter controls or protocol mappings.
 - No change to the documented cached-presentation grace period.
 
-## Delivery strategy
+## Implementation order
 
-Land five ordered changes. Every landing must compile, pass the complete test
-suite, preserve sanitized diagnostics, and be independently revertible. Avoid
-mixing cleanup from a later phase into an earlier one.
+Implement five ordered changes, keeping focused tests green as ownership moves.
+Run the complete suite, package inspection, diff review, and security review
+once after the integrated result is assembled.
 
 ```text
 1. Inward contracts
@@ -84,10 +89,6 @@ Remove the two reverse type dependencies without changing runtime behavior:
 - No import from Matter code to `src/platform.ts`.
 - No emitted JavaScript or behavioral difference beyond module paths.
 - Platform lifecycle, controller, Matter, and cache-restoration tests pass.
-
-### Rollback boundary
-
-One mechanical commit containing type moves and import updates only.
 
 ## Phase 2 — Extract the WAVE semantic intent planner
 
@@ -144,11 +145,6 @@ Command serialization, publication, and evidence-based confirmation remain in
 - The planner imports no Homebridge, Matter, MQTT, protobuf, or persistence
   module.
 
-### Rollback boundary
-
-One behavior-preserving extraction commit with golden before/after command
-expectations.
-
 ## Phase 3 — Decode inbound payloads once
 
 ### Goal
@@ -198,11 +194,7 @@ Raw payload bytes must not cross into `Wave3Controller`.
   acknowledgement/display confirmation outcomes.
 - Diagnostics remain redacted and do not serialize raw decoder objects.
 
-### Rollback boundary
-
-One event-contract commit. Do not combine it with freshness-policy changes.
-
-## Phase 4 — Make freshness field-scoped
+## Phase 4 — Make operational freshness category-scoped
 
 ### Goal
 
@@ -214,20 +206,19 @@ This is the only planned phase that intentionally changes runtime policy.
 
 ### Model
 
-- Record current-generation observation metadata for each control field or
-  saved-profile field explicitly present in a decoded display update.
-- At minimum distinguish:
+- Distinguish:
   - operational authority: power/system-pause and active operating mode;
   - saved profile authority: target/range, airflow, submode, and humidity per
     WAVE mode;
   - presentation sensors: ambient temperature, outlet temperature, and
     humidity;
   - runtime/device information: internal temperatures and firmware.
-- Sensor and runtime observations update presentation but never renew
-  operational authority.
+- Only an update carrying operational control evidence renews the existing
+  five-minute authority deadline. Sensor, saved-profile-only, and runtime
+  observations update presentation but never renew that deadline.
 - Reachability/writability require fresh current-generation operational
-  authority. A command additionally requires the profile fields it consumes
-  to be authoritative enough for that command.
+  authority. Saved-profile values remain merge-preserved within that generation
+  and are validated by the existing command planner and confirmation engine.
 - Acknowledgements remain transaction evidence and must not masquerade as
   general device-state freshness.
 - Explicit cloud/session failure still makes the device unavailable
@@ -237,14 +228,11 @@ This is the only planned phase that intentionally changes runtime policy.
 
 ### Work
 
-- Replace the controller's single `updatedAt` authority timestamp with
-  field/category observation metadata.
-- Make decoded display events expose exactly which normalized fields were
-  present, including per-mode profile fields.
-- Derive snapshot availability and command eligibility from the minimum
-  required authority set rather than “any recognized display evidence.”
-- Keep sensor timestamps available for presentation staleness and future
-  diagnostics without coupling them to command eligibility.
+- Narrow the controller's `updatedAt` meaning to operational-control authority
+  rather than “any recognized display evidence.”
+- Use the decoded update's explicit normalized fields to decide whether the
+  operational deadline renews.
+- Keep sensor/profile/runtime merging independent from command eligibility.
 - Keep the existing five-minute operational limit initially; change only what
   can renew it.
 - Preserve Homebridge's 15-minute cached-presentation grace as an independent
@@ -259,7 +247,8 @@ Use an injected deterministic clock to prove:
 - repeated ambient/outlet/humidity/runtime packets do not postpone that
   transition;
 - a valid current-generation power/mode update renews operational authority;
-- a profile-only update renews only the included profile fields;
+- a profile-only update merges its values but does not renew operational
+  authority;
 - a reconnect invalidates all prior-generation field authority;
 - an explicit offline/failure event overrides every timestamp immediately;
 - cached presentation remains visible according to its existing independent
@@ -272,11 +261,6 @@ Use an injected deterministic clock to prove:
 After deployment, observe at least two normal full-upload intervals plus one
 Home/app control round trip. Confirm there is no two-minute No Response flicker
 and that sensor-only traffic cannot hide a missing full control upload.
-
-### Rollback boundary
-
-One policy commit with old and new behavior demonstrated by exact boundary
-tests.
 
 ## Phase 5 — Decompose the Matter adapter
 
@@ -331,14 +315,9 @@ the contract.
   cross-accessory state behind.
 - The final accessory-binding module reads as composition rather than policy.
 
-### Rollback boundary
+## Consolidated verification gates
 
-Prefer several mechanical commits inside this phase—registry, projection,
-write coordinator, then binding—while keeping every commit green.
-
-## Cross-phase verification gates
-
-Every phase must run:
+After the integrated change, run:
 
 ```bash
 npm run verify
@@ -364,19 +343,14 @@ The architecture-hardening tranche is complete when:
 - a restarted child bridge reacquires authoritative state normally;
 - Home Off -> Cool/22 °C, fan adjustment, official-app inspection/change, and
   Home Off all confirm without false failures;
-- five-minute field-scoped freshness behaves as designed during an unattended
+- five-minute operational-category freshness behaves as designed during an unattended
   observation window;
 - the protocol, architecture comparison, troubleshooting, and TODO documents
   describe the final boundaries accurately.
 
-## Review checkpoints
+## Final review
 
-Pause for architectural review after Phases 2 and 4:
-
-- **After Phase 2:** verify the planner boundary does not absorb Apple Home or
-  Matter transaction semantics.
-- **After Phase 4:** inspect live logs before proceeding with broad Matter-file
-  decomposition, because freshness is the only behavioral policy change.
-
-If either checkpoint reveals an unexpected behavior change, stop and correct
-that phase rather than compensating in the next extraction.
+Review the integrated dependency direction, ownership seams, behavior-preserving
+tests, packaged artifact, diagnostics redaction, and hardware follow-up as one
+coherent result. Correct any issue at its owning seam rather than compensating
+in a later layer.

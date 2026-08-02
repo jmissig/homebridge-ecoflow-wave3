@@ -18,6 +18,10 @@ import {
   Wave3Controller,
   type Wave3ControllerSession,
 } from '../src/wave3/controller.js';
+import {
+  decodeWave3Message,
+  decodeWave3QuotaReply,
+} from '../src/wave3/codec.js';
 import type { Wave3Command } from '../src/wave3/domain.js';
 
 const TEST_SERIAL = 'TESTWAVE30001';
@@ -119,6 +123,47 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.availability, 'online');
     clock.advance(1);
     assert.equal(controller.snapshot.availability, 'stale');
+  });
+
+  it('does not let sensor, profile, or runtime deltas renew control authority', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+      staleAfterMilliseconds: 100,
+    });
+
+    session.emitPacket('property', displayPacket(1, {
+      mode: 1,
+      sleepState: 0,
+      targetTemperature: 22,
+    }));
+    assert.equal(controller.snapshot.availability, 'online');
+
+    clock.advance(90);
+    session.emitPacket('property', displayPacket(2, {
+      modeParametersOnly: true,
+      mode: 1,
+      ambientTemperature: 24,
+      targetTemperature: 23,
+    }));
+    session.emitPacket('property', runtimePacket(1, {
+      indoorReturnAir: 21,
+    }));
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 23);
+    assert.equal(controller.snapshot.runtimeTemperatures.indoorReturnAirCelsius, 21);
+
+    clock.advance(9);
+    assert.equal(controller.snapshot.availability, 'online');
+    clock.advance(1);
+    assert.equal(controller.snapshot.availability, 'stale');
+
+    session.emitPacket('property', displayPacket(3, {
+      mode: 1,
+      sleepState: 0,
+    }));
+    assert.equal(controller.snapshot.availability, 'online');
   });
 
   it('requires current-generation climate evidence and honors quota availability', async () => {
@@ -1174,12 +1219,21 @@ class FakeControllerSession implements Wave3ControllerSession {
 
   emitPacket(kind: Wave3InboundMessage['kind'], payload: Uint8Array): void {
     for (const listener of this.messageListeners) {
-      listener({
-        serialNumber: TEST_SERIAL,
-        kind,
-        payload,
-        generation: this.generation,
-      });
+      listener(kind === 'getReply'
+        ? {
+          serialNumber: TEST_SERIAL,
+          kind,
+          decoded: decodeWave3QuotaReply(payload),
+          payloadLength: payload.length,
+          generation: this.generation,
+        }
+        : {
+          serialNumber: TEST_SERIAL,
+          kind,
+          decoded: decodeWave3Message(payload),
+          payloadLength: payload.length,
+          generation: this.generation,
+        });
     }
   }
 

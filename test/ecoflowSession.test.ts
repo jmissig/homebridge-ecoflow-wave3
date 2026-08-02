@@ -87,12 +87,12 @@ describe('EcoFlow cloud session', () => {
 
     const propertyTopic = buildWave3Topics('TEST_USER', 'TESTWAVE30002').property;
     connection.emitMessage({ topic: propertyTopic, payload: Uint8Array.of(1, 2) });
-    assert.deepEqual(messages, [{
-      serialNumber: 'TESTWAVE30002',
-      kind: 'property',
-      payload: Uint8Array.of(1, 2),
-      generation: 0,
-    }]);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]?.serialNumber, 'TESTWAVE30002');
+    assert.equal(messages[0]?.kind, 'property');
+    assert.equal(messages[0]?.payloadLength, 2);
+    assert.equal(messages[0]?.generation, 0);
+    assert.equal(messages[0]?.decoded.kind, 'malformed');
 
     await session.publishCommand('TESTWAVE30001', Uint8Array.of(3, 4));
     assert.deepEqual(connection.publishCalls.at(-1), {

@@ -2,9 +2,10 @@
 
 This review compares the independently produced
 [blinded greenfield proposal](architecture-blinded-proposal.md) with the actual
-plugin at commit `cdfcde6`. The proposal saw protocol behavior and product
-constraints, but not this repository, its prior decisions, or its source
-layout.
+plugin at the pre-hardening review baseline `cdfcde6`, then records the five
+changes implemented from that review. The proposal saw protocol behavior and
+product constraints, but not this repository, its prior decisions, or its
+source layout.
 
 ## Verdict
 
@@ -43,9 +44,11 @@ Homebridge initializer
             -> Apple Home write staging, coalescing, and Matter reconciliation
 
 Wire path:
-  MQTT bytes -> Wave3 codec -> controller state -> Matter projection
+  MQTT bytes -> Wave3 codec -> typed routed event -> controller state
+             -> Matter projection
 Matter path:
-  Matter write -> semantic Wave3Command -> controller -> codec -> MQTT bytes
+  Matter write -> semantic WAVE intent planner -> Wave3Command
+               -> controller -> codec -> MQTT bytes
 ```
 
 Primary source boundaries:
@@ -56,15 +59,22 @@ Primary source boundaries:
   [`http.ts`](../src/ecoflow/http.ts), and
   [`mqtt.ts`](../src/ecoflow/mqtt.ts) — replaceable infrastructure seams.
 - [`src/ecoflow/session.ts`](../src/ecoflow/session.ts) — shared cloud session,
-  connection generations, routing, refreshes, and lifecycle cancellation.
+  connection generations, decode-once routing, refreshes, and lifecycle
+  cancellation.
+- [`src/wave3/sessionPort.ts`](../src/wave3/sessionPort.ts) — inward-facing
+  controller session and typed inbound-event contract.
 - [`src/wave3/domain.ts`](../src/wave3/domain.ts) — Homebridge-free normalized
   state, commands, results, and availability.
 - [`src/wave3/codec.ts`](../src/wave3/codec.ts) — protobuf/JSON boundary and
   merge-safe display updates.
 - [`src/wave3/controller.ts`](../src/wave3/controller.ts) — per-device state
   owner and command-confirmation engine.
-- [`src/matterAccessory.ts`](../src/matterAccessory.ts) — endpoint construction,
-  projection, write translation, UI-write coordination, and cache continuity.
+- [`src/wave3/intentPlanner.ts`](../src/wave3/intentPlanner.ts) — pure WAVE
+  destination-profile and setpoint planning.
+- [`src/matter/`](../src/matter) — endpoint behavior construction, control
+  registry, snapshot projection, constants, context, and cache policy.
+- [`src/matterAccessory.ts`](../src/matterAccessory.ts) — per-endpoint binding,
+  Apple Home write coordination, and confirmed Matter reconciliation.
 
 ## Where the designs align
 
@@ -142,55 +152,51 @@ would currently add machinery without changing observable ordering. Revisit
 only if inbound processing becomes asynchronous, queues need measurable
 backpressure, or more independent event sources appear.
 
-### 2. Matter-specific intent planning lives partly in the adapter
+### 2. Matter-specific staging and WAVE intent planning are now separated
 
 **Blinded ideal:** the actor/application layer owns semantic intent planning,
 including destination-mode profiles and write coalescing.
 
-**Current:** the controller owns WAVE commands and confirmation, but
-`Wave3MatterAccessory` owns Apple Home's staged-off mode/setpoint intent,
-temperature/fan settling, and compilation of Matter writes into mode commands.
+**Current:** `Wave3MatterAccessory` retains Apple Home's staged-off writes,
+Matter transaction guards, and debounce/settling timing. The pure
+`wave3/intentPlanner.ts` owns destination-profile target/range selection,
+fractional setpoint preservation, and semantic no-op decisions.
 
-**Assessment:** partly justified. Apple Home write ordering, Matter transaction
-guards, and setpoint deadband behavior are adapter concerns. WAVE's requirement
-that a mode transition carry its destination target/range is domain policy,
-however, and is now mixed into the Matter file. A small application-level
-intent planner would make this policy reusable and easier to replay without a
-Matter runtime while leaving UI-specific staging in the adapter.
+**Assessment:** aligned with the blinded ideal at the useful seam. Apple Home
+ordering remains presentation policy; WAVE profile semantics are independently
+testable without Homebridge or Matter.js.
 
-### 3. Some inbound payloads are decoded twice
+### 3. Inbound payloads are decoded once
 
 **Blinded ideal:** validate and decode once, then pass immutable normalized
 events to the actor.
 
-**Current:** the cloud session decodes display/quota messages to log them and
-decide whether a refresh is superseded; it then forwards raw bytes, which the
-controller decodes again for state reduction.
+**Current:** the cloud session strictly routes and decodes each inbound payload
+once, reuses that result for bounded diagnostics and refresh decisions, and
+passes an immutable typed event with generation and payload length to the
+controller. Raw inbound bytes do not cross the controller port.
 
-**Assessment:** the reason is understandable—refresh retry belongs to the
-session, while authority belongs to the controller—but duplicate decode is not
-an ideal long-term boundary. It couples transport lifecycle to WAVE display
-semantics and makes the same bytes traverse the codec twice. Prefer a future
-typed routed event containing the single validated decode plus generation and
-route metadata, or move refresh-supersession decisions behind a controller
-signal.
+**Assessment:** aligned. Refresh lifecycle remains in the session while state
+authority remains in the controller, and both consume the same decode result.
 
-### 4. Authority freshness is category-level, not fully field-scoped
+### 4. Operational authority freshness is separated from telemetry freshness
 
 **Blinded ideal:** every field carries generation, source, receive ordinal,
 monotonic observation time, and authority metadata.
 
-**Current:** display merging is field-preserving and generation-aware, but the
-controller uses a single control-state freshness timestamp once authority has
-been established. A later recognized sensor delta can extend that overall live
-window without repeating power and mode.
+**Current:** display merging remains field-preserving and generation-aware.
+Only updates containing operational control evidence renew the five-minute
+control-authority window. Sensor, saved-profile-only, and runtime/device-info
+deltas update their own presentation state without postponing operational
+staleness.
 
-**Assessment:** the five-minute window is an evidence-based pragmatic policy
-for a device that emits full state roughly every two minutes, and it prevents
-visible two-minute stale flicker. It is nevertheless weaker than the blinded
-model: a long stream of temperature-only deltas could conceal stale control
-fields. This is a genuine follow-up. Track control-authority freshness
-separately from sensor/runtime freshness, ideally using monotonic time.
+**Assessment:** the release-relevant risk from the blinded review is resolved:
+a temperature/runtime stream cannot conceal missing control uploads. The
+controller deliberately uses an operational category timestamp rather than
+attaching a full evidence object to every scalar; that smaller model matches
+the commands and evidence currently supported. Per-field monotonic metadata
+remains an optional refinement if future commands need independently aging
+profile baselines.
 
 ### 5. Persistence uses Homebridge Matter context, not a repository port
 
@@ -226,20 +232,19 @@ still strict because cached state is never a command baseline. The cost is
 that Matter reachability temporarily means “recently observed and presented,”
 not “currently writable.” This trade-off should remain documented and tested.
 
-### 7. Matter callback plumbing uses module-level registries
+### 7. Matter callback plumbing uses an encapsulated registry
 
 **Blinded ideal:** adapter-local intent ports with no shared mutable state.
 
 **Current:** custom Matter behavior classes are instantiated by the running
-Matter.js runtime, so module-level maps connect endpoint IDs to per-accessory
-controls and mark expected internal attribute writes. Stop/release paths clear
-both registries.
+Matter.js runtime, so a focused `matter/controlRegistry.ts` connects endpoint
+IDs to per-accessory controls and consumes expected internal attribute writes.
+It rejects duplicate registration, and release clears both controls and desired
+write guards.
 
-**Assessment:** justified by Homebridge/Matter.js construction and class
-identity constraints, but the implementation mechanism should be encapsulated
-as a small bridge/registry module. It is presentation plumbing, not device
-authority, yet its current placement makes the already large Matter adapter
-harder to review.
+**Assessment:** justified and now isolated as presentation plumbing rather than
+device authority. Focused tests cover expected-write consumption, duplicate
+registration, and release cleanup.
 
 ### 8. Diagnostics are safe strings rather than structured domain events
 
@@ -254,26 +259,24 @@ surface. A logging framework is unnecessary. Typed internal diagnostic events
 would become useful if counters, alternate sinks, or machine-readable support
 bundles are added; redaction should then occur before rendering, not after.
 
-### 9. Module boundaries exist, but several files are too large
+### 9. Matter and cross-layer ownership seams are explicit
 
 **Blinded ideal:** separate modules for endpoint construction, projection,
 intent planning, reducer, authority, command planning, confirmation, topics,
 and individual codecs.
 
-**Current:** the dependency direction is mostly correct, but
-`matterAccessory.ts`, `session.ts`, `codec.ts`, and `controller.ts` each combine
-several cohesive sub-responsibilities. Two type-only imports also point back
-outward: the Matter adapter obtains its cached-context type from the platform,
-and the controller obtains session lifecycle types from the cloud module.
-These do not create harmful runtime cycles, but they make the architectural
-contracts less clean than the blinded dependency rule.
+**Current:** controller-session contracts live in `wave3/sessionPort.ts`, Matter
+context lives beside its cache policy, and neither lower layer imports those
+types from infrastructure or the platform composition root. The former Matter
+monolith is split into device behavior construction, registry, projection,
+cache policy, constants/context, and the remaining binding/write coordinator.
+The session, codec, controller, and binding remain substantial cohesive modules
+rather than being fragmented to mirror every greenfield filename.
 
-**Assessment:** the small number of production files accelerated protocol and
-hardware iteration while the correct policy was still moving daily. That was
-a good pre-release trade-off. The policies now have enough hardware evidence
-that mechanical decomposition would improve reviewability without changing
-behavior. Move shared port/context types inward while splitting along
-already-tested seams rather than introducing new frameworks or abstractions.
+**Assessment:** the hardening work improved dependency direction and reviewable
+ownership without adding a framework or speculative abstraction hierarchy.
+Further splitting should be driven by a concrete changing responsibility, not
+file length alone.
 
 ### 10. Cancellation scopes are distributed rather than one root tree
 
@@ -304,26 +307,16 @@ tie-breaking, while a monotonic clock would make live deadlines immune to wall
 clock adjustments. This is a small robustness improvement, not a reason to
 replace the state model.
 
-## Recommended follow-ups
+## Hardening disposition
 
 The ordered implementation and verification sequence is tracked in the
 [architecture hardening plan](architecture-refactor-plan.md).
 
-### Before first release
-
-1. **Separate control-authority freshness from sensor/runtime freshness.** A
-   temperature-only stream must not keep power/mode authority alive forever.
-2. **Decode inbound payloads once.** Route a typed normalized event or move
-   refresh-supersession policy behind the per-device controller boundary.
-3. **Decompose the Matter adapter without changing behavior.** Extract runtime
-   behavior-class construction, endpoint/control registry, cluster projection,
-   UI intent settling, and cache/reachability policy.
-4. **Extract a WAVE semantic intent planner.** Keep Apple Home staging in the
-   Matter adapter, but move destination profile compilation and no-op planning
-   below it.
-5. **Move cross-layer contracts inward.** Put the controller session port and
-   cached Matter context beside the layer that owns the abstraction, removing
-   the current type-only reverse dependencies.
+The five before-release ownership changes identified by the blinded review are
+implemented. Automated verification covers their dependency and behavioral
+contracts. The remaining acceptance item is deployment of the integrated build
+and repetition of the documented Home/app hardware smoke path, especially the
+unattended five-minute operational-category freshness observation.
 
 ### Useful but not release-blocking
 
@@ -352,8 +345,7 @@ scope, shared account transport, per-device state ownership, generation-aware
 delta reduction, conservative accumulated command evidence, confirmed Matter
 projection, and bounded cached presentation.
 
-The comparison does reveal four concrete cleanup opportunities: decode once,
-separate control freshness from sensor freshness, move WAVE semantic planning
-below the Matter-specific staging layer, and decompose the Matter adapter. The
-other deviations are proportional simplifications or deliberate Homebridge UX
-trade-offs and can be justified without special pleading.
+The comparison revealed five concrete ownership improvements; all five are now
+implemented without changing the product model. The remaining deviations are
+proportional simplifications or deliberate Homebridge UX trade-offs and can be
+justified without special pleading.

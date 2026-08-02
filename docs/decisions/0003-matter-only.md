@@ -6,9 +6,11 @@
 - **Source:** [Discord project thread · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533330071866310766)
 
 Implementation status: completed through the Matter-only source cleanup on
-2026-08-02. Homebridge's required `configureAccessory` callback remains solely
-as a one-way removal hook for pre-0.2 cached HAP records; it does not publish or
-control a HAP accessory.
+2026-08-02. Homebridge's required `configureAccessory` callback remains inert;
+it does not publish or control a HAP accessory. Automatic pre-0.2 HAP cache
+migration was removed because this is a sole-user pre-release installation;
+the operator will use Homebridge's own cached-accessory management instead.
+[Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533498242304704604)
 
 ## Decision
 

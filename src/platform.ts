@@ -100,7 +100,6 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   public readonly matter?: MatterAPI;
 
   private readonly duplicateMatterAccessories: MatterAccessory<Wave3MatterAccessoryContext>[] = [];
-  private readonly legacyHapAccessories: PlatformAccessory[] = [];
   private readonly bindings = new Map<string, MatterAccessoryBinding>();
   private readonly controllers = new Map<string, Wave3AccessoryController>();
   private readonly parsedConfig?: EcoFlowWave3Config;
@@ -142,10 +141,12 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     });
   }
 
-  /** Queue a pre-0.2 HAP cache entry for removal after Homebridge restores it. */
+  /** Required dynamic-platform callback; HAP cache management remains operator-owned. */
   configureAccessory(accessory: PlatformAccessory): void {
-    this.legacyHapAccessories.push(accessory);
-    this.log.debug('Queued a legacy cached HAP WAVE 3 accessory for removal');
+    void accessory;
+    this.log.warn(
+      'Found a legacy cached HAP WAVE 3 accessory; remove it with Homebridge cached-accessory management',
+    );
   }
 
   /** Record Matter cache entries before launch for reconciliation by UUID. */
@@ -196,8 +197,6 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   }
 
   private async launchPlatformUnsafe(): Promise<void> {
-    this.removeLegacyHapAccessories();
-
     if (this.parsedConfig === undefined) {
       return;
     }
@@ -316,20 +315,6 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       if (!this.shutdownStarted) {
         this.log.error('EcoFlow WAVE 3 cloud session failed to start');
       }
-    }
-  }
-
-  private removeLegacyHapAccessories(): void {
-    if (this.legacyHapAccessories.length === 0) {
-      return;
-    }
-
-    const accessories = this.legacyHapAccessories.splice(0);
-    try {
-      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, accessories);
-      this.log.info(`Removed ${accessories.length} legacy cached HAP WAVE 3 accessory record(s)`);
-    } catch {
-      this.log.error('Failed to remove legacy cached HAP WAVE 3 accessory records');
     }
   }
 

@@ -41,10 +41,12 @@ Confirm Homebridge reports plugin version `0.2.0` before commissioning.
 
 ## Replace the old pairing
 
-1. Remove the old EcoFlow HAP child bridge from Apple Home. The 0.2 plugin
-   removes legacy cached HAP accessories from Homebridge but cannot remove the
-   old pairing or its Apple Home automations.
-2. In the EcoFlow child bridge settings, disable HAP and enable Matter. Leave
+1. Remove the old EcoFlow HAP child bridge from Apple Home. This does not
+   remove its Homebridge cache or its Apple Home automations.
+2. Use Homebridge UI's **Remove Single Accessory** cached-accessory tool to
+   remove the legacy EcoFlow WAVE 3 HAP accessory. The plugin deliberately does
+   not mutate HAP cache during restoration.
+3. In the EcoFlow child bridge settings, disable HAP and enable Matter. Leave
    every other bridge unchanged:
 
    ```json
@@ -62,10 +64,10 @@ Confirm Homebridge reports plugin version `0.2.0` before commissioning.
 
    The username and port above are placeholders; retain the values generated
    for the actual child bridge.
-3. Restart only the EcoFlow child bridge.
-4. Confirm the logs show Matter accessory registration, EcoFlow
+4. Restart only the EcoFlow child bridge.
+5. Confirm the logs show Matter accessory registration, EcoFlow
    authentication, and an MQTT-ready session without a HAP registration.
-5. Open the EcoFlow child bridge's Matter pairing screen in Homebridge and add
+6. Open the EcoFlow child bridge's Matter pairing screen in Homebridge and add
    its QR code to Apple Home. Accept the uncertified-accessory warning if Apple
    presents one.
 

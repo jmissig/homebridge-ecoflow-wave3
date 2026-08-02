@@ -292,7 +292,7 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
       throw new TypeError('quota airflow speed is unsupported');
     }
     if (parameters.submode !== undefined
-      && ![0, 2, 3, 4].includes(parameters.submode)) {
+      && ![0, 1, 2, 3, 4].includes(parameters.submode)) {
       throw new TypeError('quota submode is unsupported');
     }
     if (parameters.targetTemperatureLowerCelsius !== undefined
@@ -440,7 +440,8 @@ export function hasWave3DisplayEvidence(update: Wave3DisplayUpdate): boolean {
  * operating mode (including authoritative mode 0/off).
  */
 export function hasWave3ControlStateEvidence(update: Wave3DisplayUpdate): boolean {
-  return update.operatingModeId !== undefined;
+  return update.operatingModeId === WAVE3_MODE_IDS.off
+    || (update.operatingModeId !== undefined && update.sleepState !== undefined);
 }
 
 function normalizeDisplayUpdate(
@@ -500,7 +501,7 @@ function normalizeDisplayUpdate(
     const parameters: Wave3ModeParameters = {};
     if (has(modeParameters, Wave3WaveOperatingModeParamItemSchema, 'submode')) {
       const submode = modeParameters.submode!;
-      if ([0, 2, 3, 4].includes(submode)) {
+      if ([0, 1, 2, 3, 4].includes(submode)) {
         parameters.submode = submode;
       } else {
         addUnsupportedValue(

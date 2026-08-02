@@ -960,6 +960,7 @@ function displayPacket(
     toBinary(Wave3DisplayPropertyUploadSchema, create(
       Wave3DisplayPropertyUploadSchema,
       {
+        devSleepState: 0,
         waveOperatingMode: mode,
         tempAmbient: ambientTemperature,
         waveModeInfo: { listInfo: modeParameters },

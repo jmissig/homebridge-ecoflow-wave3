@@ -35,12 +35,14 @@ describe('WAVE 3 controller', () => {
 
     session.emitPacket('property', displayPacket(20, {
       mode: 1,
+      sleepState: 0,
       ambientTemperature: 24,
       targetTemperature: 21,
       airflowSpeed: 60,
     }));
     const firstSnapshot = controller.snapshot;
     assert.deepEqual(firstSnapshot.state, {
+      sleeping: false,
       powered: true,
       mode: 'cool',
       ambientTemperatureCelsius: 24,
@@ -74,7 +76,7 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.availability, 'reconnecting');
     session.emitState('online');
     assert.equal(controller.snapshot.availability, 'stale');
-    session.emitPacket('property', displayPacket(1, { mode: 2 }));
+    session.emitPacket('property', displayPacket(1, { mode: 2, sleepState: 0 }));
     assert.equal(controller.snapshot.state.mode, 'heat');
 
     session.emitPacket('property', runtimePacket(5, {
@@ -139,6 +141,8 @@ describe('WAVE 3 controller', () => {
     });
 
     session.emitPacket('property', displayPacket(3, { mode: 1 }));
+    assert.equal(controller.snapshot.availability, 'stale');
+    session.emitPacket('property', displayPacket(4, { mode: 1, sleepState: 0 }));
     assert.equal(controller.snapshot.availability, 'online');
     assert.equal(controller.snapshot.state.mode, 'cool');
 
@@ -375,6 +379,7 @@ describe('WAVE 3 controller', () => {
     });
     session.emitPacket('property', displayPacket(120, {
       mode: 1,
+      sleepState: 0,
       targetTemperature: 22,
     }));
 
@@ -558,6 +563,57 @@ describe('WAVE 3 controller', () => {
     }
   });
 
+  it('accumulates split acknowledgements for composite commands', async () => {
+    const modeSession = new FakeControllerSession();
+    const modeController = readyController(modeSession, {
+      initialSequence: 91,
+    });
+    let modeSettled = false;
+    const modeResult = modeController.execute({ type: 'mode', mode: 'heat' })
+      .then(result => {
+        modeSettled = true;
+        return result;
+      });
+    await flushAsyncWork();
+    modeSession.emitPacket('setReply', acknowledgementPacket(91, {
+      configOk: true,
+      mainPower: true,
+    }));
+    await flushAsyncWork();
+    assert.equal(modeSettled, false);
+    modeSession.emitPacket('setReply', acknowledgementPacket(91, {
+      configOk: true,
+      mode: 2,
+    }));
+    modeSession.emitPacket('property', displayPacket(2, { mode: 2 }));
+    assert.deepEqual(await modeResult, { status: 'confirmed', sequence: 91 });
+
+    const rangeSession = new FakeControllerSession();
+    const rangeController = readyController(rangeSession, {
+      initialSequence: 92,
+    });
+    const rangeResult = rangeController.execute({
+      type: 'automaticTemperatureRange',
+      lowerCelsius: 19,
+      upperCelsius: 24,
+    });
+    await flushAsyncWork();
+    rangeSession.emitPacket('setReply', acknowledgementPacket(92, {
+      configOk: true,
+      upperTemperature: 24,
+    }));
+    rangeSession.emitPacket('setReply', acknowledgementPacket(92, {
+      configOk: true,
+      lowerTemperature: 19,
+    }));
+    rangeSession.emitPacket('property', displayPacket(3, {
+      mode: 5,
+      lowerTemperature: 19,
+      upperTemperature: 24,
+    }));
+    assert.deepEqual(await rangeResult, { status: 'confirmed', sequence: 92 });
+  });
+
   it('serializes conflicting commands and times out without optimistic state', async () => {
     const session = new FakeControllerSession();
     const clock = new FakeClock();
@@ -618,7 +674,10 @@ describe('WAVE 3 controller', () => {
     );
     timeoutSession.publishGate = undefined;
     timeoutSession.emitState('online');
-    timeoutSession.emitPacket('property', displayPacket(204, { mode: 1 }));
+    timeoutSession.emitPacket('property', displayPacket(204, {
+      mode: 1,
+      sleepState: 0,
+    }));
     const recovered = timeoutController.execute({ type: 'airflowSpeed', speed: 40 });
     await flushAsyncWork();
     timeoutSession.emitPacket('setReply', acknowledgementPacket(67, {
@@ -687,7 +746,7 @@ describe('WAVE 3 controller', () => {
     const controller = new Wave3Controller(TEST_SERIAL, session, {
       schedule: clock.schedule,
     });
-    session.emitPacket('property', displayPacket(1, { mode: 1 }));
+    session.emitPacket('property', displayPacket(1, { mode: 1, sleepState: 0 }));
     assert.equal(session.totalListenerCount(), 3);
     assert.equal(clock.taskCount, 1);
 
@@ -782,7 +841,7 @@ function readyController(
   options: ConstructorParameters<typeof Wave3Controller>[2] = {},
 ): Wave3Controller {
   const controller = new Wave3Controller(TEST_SERIAL, session, options);
-  session.emitPacket('property', displayPacket(0, { mode: 1 }));
+  session.emitPacket('property', displayPacket(0, { mode: 1, sleepState: 0 }));
   assert.equal(controller.snapshot.availability, 'online');
   return controller;
 }

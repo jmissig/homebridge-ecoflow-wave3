@@ -89,6 +89,43 @@ describe('WAVE 3 codec', () => {
     }
   });
 
+  it('retains household-observed read-only submode 1 from display and quota state', () => {
+    const display = create(Wave3DisplayPropertyUploadSchema, {
+      waveOperatingMode: 1,
+      waveModeInfo: {
+        listInfo: [{}, { submode: 1 }],
+      },
+    });
+    const decodedDisplay = decodeWave3Message(envelope(
+      21,
+      45,
+      toBinary(Wave3DisplayPropertyUploadSchema, display),
+    ));
+    assert.equal(decodedDisplay.kind, 'display');
+    if (decodedDisplay.kind === 'display') {
+      assert.equal(decodedDisplay.update.modeParameters[1]?.submode, 1);
+      assert.equal(
+        mergeWave3DisplayUpdate(undefined, decodedDisplay.update).state.submode,
+        1,
+      );
+    }
+
+    const decodedQuota = decodeWave3QuotaReply(jsonBytes({
+      operateType: 'latestQuotas',
+      data: {
+        online: 1,
+        quotaMap: {
+          wave_operating_mode: 1,
+          current_submode: 1,
+        },
+      },
+    }));
+    assert.equal(decodedQuota.kind, 'quota');
+    if (decodedQuota.kind === 'quota') {
+      assert.equal(decodedQuota.update?.modeParameters[1]?.submode, 1);
+    }
+  });
+
   it('derives OFF from mode zero and preserves mode parameters across incremental packets', () => {
     const off = create(Wave3DisplayPropertyUploadSchema, {
       devSleepState: 0,

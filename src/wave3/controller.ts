@@ -54,7 +54,7 @@ interface PendingCommand {
   publicationCompleted: boolean;
   publicationController: AbortController;
   acknowledgement?: Wave3Acknowledgement;
-  acknowledgementAmbiguous: boolean;
+  acknowledgementRejected: boolean;
   acknowledgementRevision?: number;
   observedStateConfirmed: boolean;
   resolve: (result: Wave3CommandResult) => void;
@@ -176,7 +176,7 @@ export class Wave3Controller {
         sequence,
         publicationCompleted: false,
         publicationController,
-        acknowledgementAmbiguous: false,
+        acknowledgementRejected: false,
         observedStateConfirmed: false,
         resolve,
         cancelTimeout,
@@ -216,6 +216,10 @@ export class Wave3Controller {
       return;
     }
     pending.publicationCompleted = true;
+    if (pending.acknowledgementRejected) {
+      this.settlePending('acknowledgementRejected');
+      return;
+    }
     if (pending.acknowledgement !== undefined) {
       this.applyAcknowledgement(pending);
     }
@@ -358,25 +362,39 @@ export class Wave3Controller {
     if (pending === undefined || pending.sequence !== sequence) {
       return;
     }
-    if (!acknowledgementMatchesCommand(acknowledgement, pending.command)) {
+    const fragment = classifyAcknowledgementFragment(
+      acknowledgement,
+      pending.command,
+    );
+    if (fragment === 'unrelated' || fragment === 'conflicting') {
       this.logger.info(
         `EcoFlow diagnostics: controller ignored same-sequence acknowledgement=${sequence} `
-        + 'because its echoed values do not match the pending command; possible foreign client traffic',
+        + `because it is ${fragment} to the pending command; possible foreign client traffic`,
       );
       return;
     }
-    if (pending.acknowledgement !== undefined) {
-      if (acknowledgementsEqual(pending.acknowledgement, acknowledgement)) {
-        return;
-      }
-      pending.acknowledgementAmbiguous = true;
+    if (acknowledgement.reportedConfigOk !== true) {
+      pending.acknowledgementRejected = true;
       pending.observedStateConfirmed = false;
       if (pending.publicationCompleted) {
         this.settlePending('acknowledgementRejected');
       }
       return;
     }
-    pending.acknowledgement = acknowledgement;
+
+    const aggregate = mergeAcknowledgementFragment(
+      pending.acknowledgement,
+      acknowledgement,
+      pending.command,
+    );
+    pending.acknowledgement = aggregate;
+    if (!acknowledgementMatchesCommand(aggregate, pending.command)) {
+      this.logger.info(
+        `EcoFlow diagnostics: controller accumulated partial acknowledgement=${sequence} `
+        + 'and is waiting for remaining command fields',
+      );
+      return;
+    }
     pending.acknowledgementRevision = this.displayRevision;
     if (pending.publicationCompleted) {
       this.applyAcknowledgement(pending);
@@ -388,10 +406,12 @@ export class Wave3Controller {
     if (acknowledgement === undefined) {
       return;
     }
-    if (pending.acknowledgementAmbiguous
-      || acknowledgement.reportedConfigOk !== true
-      || !acknowledgementMatchesCommand(acknowledgement, pending.command)) {
+    if (pending.acknowledgementRejected
+      || acknowledgement.reportedConfigOk !== true) {
       this.settlePending('acknowledgementRejected');
+      return;
+    }
+    if (!acknowledgementMatchesCommand(acknowledgement, pending.command)) {
       return;
     }
     if (pending.observedStateConfirmed) {
@@ -570,24 +590,77 @@ function acknowledgementMatchesCommand(
   }
 }
 
-function acknowledgementsEqual(
-  left: Wave3Acknowledgement,
-  right: Wave3Acknowledgement,
-): boolean {
-  if (left.actionId !== right.actionId
-    || left.reportedConfigOk !== right.reportedConfigOk) {
-    return false;
+type AcknowledgementFragmentRelation =
+  | 'unrelated'
+  | 'conflicting'
+  | 'partial'
+  | 'complete';
+
+function classifyAcknowledgementFragment(
+  acknowledgement: Wave3Acknowledgement,
+  command: Wave3Command,
+): AcknowledgementFragmentRelation {
+  const expected = expectedAcknowledgementValues(command);
+  let matchingFields = 0;
+  for (const [key, expectedValue] of Object.entries(expected) as Array<
+    [keyof Wave3Acknowledgement['values'], boolean | number | string]
+  >) {
+    const actualValue = acknowledgement.values[key];
+    if (actualValue === undefined) {
+      continue;
+    }
+    if (typeof expectedValue === 'number' && typeof actualValue === 'number'
+      ? !closeEnough(actualValue, expectedValue)
+      : actualValue !== expectedValue) {
+      return 'conflicting';
+    }
+    matchingFields += 1;
   }
-  const keys = new Set([
-    ...Object.keys(left.values),
-    ...Object.keys(right.values),
-  ] as Array<keyof Wave3Acknowledgement['values']>);
-  for (const key of keys) {
-    if (left.values[key] !== right.values[key]) {
-      return false;
+  if (matchingFields === 0) {
+    return 'unrelated';
+  }
+  return matchingFields === Object.keys(expected).length ? 'complete' : 'partial';
+}
+
+function mergeAcknowledgementFragment(
+  previous: Wave3Acknowledgement | undefined,
+  incoming: Wave3Acknowledgement,
+  command: Wave3Command,
+): Wave3Acknowledgement {
+  const expected = expectedAcknowledgementValues(command);
+  const values = { ...previous?.values };
+  for (const key of Object.keys(expected) as Array<keyof typeof values>) {
+    const value = incoming.values[key];
+    if (value !== undefined) {
+      (values as Record<string, boolean | number | string>)[key] = value;
     }
   }
-  return true;
+  return {
+    reportedConfigOk: true,
+    values,
+  };
+}
+
+function expectedAcknowledgementValues(
+  command: Wave3Command,
+): Wave3Acknowledgement['values'] {
+  switch (command.type) {
+  case 'power':
+    return command.on ? { mainPower: true } : { systemPaused: true };
+  case 'mode':
+    return { mainPower: true, mode: command.mode };
+  case 'targetTemperature':
+    return { targetTemperatureCelsius: command.celsius };
+  case 'automaticTemperatureRange':
+    return {
+      targetTemperatureLowerCelsius: command.lowerCelsius,
+      targetTemperatureUpperCelsius: command.upperCelsius,
+    };
+  case 'airflowSpeed':
+    return { airflowSpeed: command.speed };
+  case 'submode':
+    return { submode: command.submode };
+  }
 }
 
 function stateMatchesCommand(state: Wave3State, command: Wave3Command): boolean {

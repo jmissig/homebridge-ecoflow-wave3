@@ -78,8 +78,10 @@ stable account identifiers.
 - A partial display packet proves that the device is publishing, but cannot by
   itself identify the active control state for a new MQTT generation.
 - Sensor-only and saved-mode-parameter packets must not supersede a pending
-  full-state refresh. A display update containing `wave_operating_mode`,
-  including authoritative value `0`/off, establishes active control state.
+  full-state refresh. A nonzero `wave_operating_mode` alone is also
+  insufficient because full packets proved that saved mode `1` can coexist
+  with `dev_sleep_state=1`/off. Initial control state requires both fields;
+  explicit operating mode `0` remains intrinsically off.
 
 ### Full and mode-parameter display packets
 
@@ -169,7 +171,10 @@ stable account identifiers.
 - HomeKit-originated power-on traffic received a positive action-ID `4`
   acknowledgement with `mainPower=true`.
 - Other official-app traffic produced action IDs `6`, `7`, `135`, `136`, and
-  `172`. Their semantics are not established by these captures.
+  `172`. Several positive replies shared the same envelope sequence while
+  acknowledging different action IDs/fields. Their exact semantics are not
+  established, but the traffic proves that one logical compound operation can
+  yield acknowledgement fragments rather than one all-fields reply.
 - A `set_reply` with `cmd_id=20` was observed during official-app activity. It
   is not the `cmd_id=18` configuration acknowledgement implemented by the
   plugin and was safely ignored.
@@ -224,13 +229,15 @@ stable account identifiers.
   outbound requests.
 - Match quota replies to the plugin's current request ID and MQTT generation;
   drop all other replies before quota decoding.
-- Require authoritative active-mode evidence before partial property traffic
-  can establish a new MQTT generation or supersede its initial refresh.
+- Require both sleep state and nonzero active-mode evidence before partial
+  property traffic can establish a new MQTT generation or supersede its
+  initial refresh; explicit mode `0` is sufficient to establish off.
 - Randomize the first command sequence in the evidenced `10–999` range after
   each plugin restart, then advance sequentially.
-- Ignore a same-sequence acknowledgement when its echoed fields do not match
-  the plugin's pending command. Require a matching positive acknowledgement
-  and a later matching display update before confirming success.
+- Ignore a same-sequence acknowledgement when its echoed fields conflict with
+  or are unrelated to the plugin's pending command. Accumulate positive
+  matching fragments for composite commands, then require a later matching
+  display update before confirming success.
 - Serialize HomeKit writes and coalesce slider traffic. A genuine official-app
   change may still race a HomeKit change; the device remains last-writer-wins,
   and the plugin reports only subsequently observed state.

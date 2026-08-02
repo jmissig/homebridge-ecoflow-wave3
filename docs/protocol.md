@@ -247,6 +247,10 @@ The pinned climate entity advertises a 16–30 °C target range with a 1 °C
 target step. Household hardware telemetry later demonstrated fractional target
 temperatures, so the HomeKit surface uses a 0.1 °C step within the same range.
 Submodes used upstream are normal `0`, boost `2`, sleep `3`, and eco `4`.
+Household display packets also repeatedly reported submode `1` for cool and
+heat saved-mode parameters. The plugin preserves that value as read-only state
+without yet offering it as a command because its user-facing meaning is not
+established.
 
 **Inference**
 
@@ -289,7 +293,10 @@ publishing a command.
   designed and fixture-tested before live commands are attempted.
 - A same-sequence acknowledgement whose echoed values do not match the pending
   plugin command is treated as possible foreign-client traffic and ignored.
-  Matching acknowledgement plus later matching display state remains required.
+  EcoFlow may split a composite write into multiple positive same-sequence
+  acknowledgement packets. Matching fragments are accumulated until every
+  field in the pending command is acknowledged. Later matching display state
+  remains required before confirmation.
 
 ## Household hardware observations
 
@@ -345,8 +352,11 @@ publishing a command.
 **Inference**
 
 - Partial display telemetry is mergeable evidence that the device is
-  publishing, but only authoritative active operating-mode state establishes a
-  new MQTT generation as controllable.
+  publishing. A nonzero operating-mode value alone cannot establish a new MQTT
+  generation as controllable because household packets proved that saved mode
+  `1`/cool can coexist with `dev_sleep_state=1`/off. Initial control state
+  therefore requires both sleep state and operating mode; explicit mode `0`
+  remains intrinsically off.
 - HomeKit should retain a complete last-confirmed presentation through
   startup, transient stale, reconnecting, and device-offline states. Writes
   must still require current authoritative online state; an explicit

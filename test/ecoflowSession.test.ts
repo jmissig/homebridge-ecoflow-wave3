@@ -245,6 +245,53 @@ describe('EcoFlow cloud session', () => {
     await session.stop();
   });
 
+  it('retries startup refreshes until authoritative control state arrives', async () => {
+    const connection = new FakeMqttConnection();
+    const logger = new CapturingLogger();
+    const session = new EcoFlowCloudSession(
+      singleDeviceTestConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+      logger,
+      undefined,
+      15_000,
+      sequentialRequestIds(),
+      5,
+      10,
+    );
+    const controller = new Wave3Controller('TESTWAVE30001', session);
+    const getTopic = buildWave3Topics('TEST_USER', 'TESTWAVE30001').get;
+    const refreshCount = () => connection.publishCalls.filter(
+      call => call.topic === getTopic,
+    ).length;
+
+    await session.start();
+    assert.equal(refreshCount(), 1);
+    connection.emitMessage({
+      topic: buildWave3Topics('TEST_USER', 'TESTWAVE30001').property,
+      payload: humidityPacket(9, 73.2),
+    });
+    assert.equal(controller.snapshot.availability, 'stale');
+
+    await waitUntil(() => refreshCount() >= 2, 100);
+    assert.equal(
+      logger.debugs.some(message => message.includes('authoritative state still missing')),
+      true,
+    );
+
+    connection.emitMessage({
+      topic: buildWave3Topics('TEST_USER', 'TESTWAVE30001').property,
+      payload: displayPacket(10, 1, 24, 20),
+    });
+    assert.equal(controller.snapshot.availability, 'online');
+    const completedRefreshCount = refreshCount();
+    await new Promise<void>(resolve => setTimeout(resolve, 30));
+    assert.equal(refreshCount(), completedRefreshCount);
+
+    controller.stop();
+    await session.stop();
+  });
+
   it('re-subscribes and refreshes once for every clean-session connection generation', async () => {
     const connection = new FakeMqttConnection();
     const session = new EcoFlowCloudSession(
@@ -946,6 +993,18 @@ function testConfig() {
   });
 }
 
+function singleDeviceTestConfig() {
+  return parseEcoFlowWave3Config({
+    name: 'EcoFlow WAVE 3',
+    email: 'owner@example.test',
+    password: 'TEST_ACCOUNT_PASSWORD',
+    apiHost: 'api.ecoflow.com',
+    devices: [
+      { name: 'Bedroom', serialNumber: 'TESTWAVE30001' },
+    ],
+  });
+}
+
 function successfulHttp(): FakeHttpTransport {
   return new FakeHttpTransport([
     {
@@ -976,6 +1035,16 @@ function successfulHttp(): FakeHttpTransport {
 async function flushAsyncWork(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
   await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+async function waitUntil(predicate: () => boolean, milliseconds: number): Promise<void> {
+  const deadline = Date.now() + milliseconds;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error('condition was not met before timeout');
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
 }
 
 function jsonBytes(value: unknown): Uint8Array {

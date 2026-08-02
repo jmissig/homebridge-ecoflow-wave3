@@ -40,6 +40,13 @@ export interface Wave3InboundMessage {
   generation: number;
 }
 
+interface AuthoritativeRefreshRetry {
+  generation: number;
+  attempt: number;
+  controller: AbortController;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
 export interface CloudSessionLogger {
   debug(message: string): void;
   info(message: string): void;
@@ -82,6 +89,10 @@ export class EcoFlowCloudSession {
     { requestId: string; generation: number }
   >();
   private readonly lastDisplaySequenceByDevice = new Map<string, number>();
+  private readonly authoritativeRefreshRetries = new Map<
+    string,
+    AuthoritativeRefreshRetry
+  >();
   private detachListeners: Array<() => void> = [];
   private establishPromise?: Promise<void>;
   private lifecycleController?: AbortController;
@@ -103,6 +114,8 @@ export class EcoFlowCloudSession {
     private readonly randomHex?: () => string,
     private readonly operationTimeoutMilliseconds = 15_000,
     private readonly refreshRequestId: () => string = defaultRefreshRequestId,
+    private readonly authoritativeRefreshRetryBaseMilliseconds = 5_000,
+    private readonly authoritativeRefreshRetryMaximumMilliseconds = 30_000,
   ) {}
 
   async start(): Promise<void> {
@@ -292,6 +305,7 @@ export class EcoFlowCloudSession {
     this.connection = undefined;
     this.mqttConnected = false;
     this.authenticated = undefined;
+    this.clearAuthoritativeRefreshRetries();
     this.pendingRefreshes.clear();
     this.lastDisplaySequenceByDevice.clear();
     if (connection !== undefined) {
@@ -327,6 +341,7 @@ export class EcoFlowCloudSession {
         this.abortPublicOperations();
         this.mqttConnected = true;
         this.connectionGeneration += 1;
+        this.clearAuthoritativeRefreshRetries();
         this.pendingRefreshes.clear();
         this.lastDisplaySequenceByDevice.clear();
         this.logger.debug(
@@ -341,6 +356,7 @@ export class EcoFlowCloudSession {
       connection.onDisconnect(() => {
         if (!this.stopped) {
           this.abortPublicOperations();
+          this.clearAuthoritativeRefreshRetries();
           this.pendingRefreshes.clear();
           this.lastDisplaySequenceByDevice.clear();
           this.mqttConnected = false;
@@ -384,6 +400,8 @@ export class EcoFlowCloudSession {
         this.connection = undefined;
         this.mqttConnected = false;
         this.authenticated = undefined;
+        this.clearAuthoritativeRefreshRetries();
+        this.pendingRefreshes.clear();
         if (connection !== undefined) {
           await this.closeWithTimeout(connection);
         }
@@ -481,6 +499,11 @@ export class EcoFlowCloudSession {
           requestId: refresh.requestId,
           generation,
         });
+        this.startAuthoritativeRefreshRetry(
+          serialNumber,
+          generation,
+          refresh.requestId,
+        );
         this.logger.debug(
           `EcoFlow diagnostics: publishing initial latestQuotas refresh for ${this.deviceLabel(serialNumber)} `
           + `(requestId=${refresh.requestId}, generation=${generation})`,
@@ -495,7 +518,7 @@ export class EcoFlowCloudSession {
             this.operationTimeoutMilliseconds,
           );
         } catch (error) {
-          this.clearPendingRefresh(serialNumber, refresh.requestId);
+          this.completeAuthoritativeRefresh(serialNumber);
           throw error;
         }
         this.assertSetupActive(connection, generation);
@@ -533,7 +556,8 @@ export class EcoFlowCloudSession {
           const decoded = decodeWave3Message(message.payload);
           this.logDecodedMessage(label, decoded);
           if (this.propertySupersedesRefresh(device.serialNumber, decoded)) {
-            const hadPendingRefresh = this.pendingRefreshes.delete(device.serialNumber);
+            const hadPendingRefresh = this.pendingRefreshes.has(device.serialNumber);
+            this.completeAuthoritativeRefresh(device.serialNumber);
             this.logger.debug(
               `EcoFlow diagnostics: accepted newer display property for ${label}${hadPendingRefresh ? '; pending initial refresh is now superseded' : ''}`,
             );
@@ -553,7 +577,11 @@ export class EcoFlowCloudSession {
             return;
           }
           this.logger.debug(`EcoFlow diagnostics: getReply request ID matched pending refresh for ${label}`);
-          this.logQuotaReply(label, decodeWave3QuotaReply(message.payload));
+          const decoded = decodeWave3QuotaReply(message.payload);
+          this.logQuotaReply(label, decoded);
+          if (isAuthoritativeQuotaReply(decoded)) {
+            this.completeAuthoritativeRefresh(device.serialNumber);
+          }
         } else {
           this.logDecodedMessage(label, decodeWave3Message(message.payload));
         }
@@ -610,6 +638,7 @@ export class EcoFlowCloudSession {
     this.connection = undefined;
     this.mqttConnected = false;
     this.authenticated = undefined;
+    this.clearAuthoritativeRefreshRetries();
     this.pendingRefreshes.clear();
     this.lastDisplaySequenceByDevice.clear();
     if (connection !== undefined) {
@@ -701,6 +730,8 @@ export class EcoFlowCloudSession {
     this.connection = undefined;
     this.mqttConnected = false;
     this.authenticated = undefined;
+    this.clearAuthoritativeRefreshRetries();
+    this.pendingRefreshes.clear();
     this.setupGenerationController?.abort();
     await this.closeWithTimeout(expectedConnection);
     await this.drainOperationsSafely([...this.activeOperations]);
@@ -812,6 +843,124 @@ export class EcoFlowCloudSession {
     }
   }
 
+  private startAuthoritativeRefreshRetry(
+    serialNumber: string,
+    generation: number,
+    requestId: string,
+  ): void {
+    const pending = this.pendingRefreshes.get(serialNumber);
+    if (pending?.generation !== generation || pending.requestId !== requestId) {
+      return;
+    }
+    this.cancelAuthoritativeRefreshRetry(serialNumber);
+    const retry = {
+      generation,
+      attempt: 0,
+      controller: new AbortController(),
+    };
+    this.authoritativeRefreshRetries.set(serialNumber, retry);
+    this.scheduleAuthoritativeRefreshRetry(serialNumber, retry);
+  }
+
+  private scheduleAuthoritativeRefreshRetry(
+    serialNumber: string,
+    retry: AuthoritativeRefreshRetry,
+  ): void {
+    if (this.authoritativeRefreshRetries.get(serialNumber) !== retry
+      || retry.controller.signal.aborted) {
+      return;
+    }
+    const delay = Math.min(
+      this.authoritativeRefreshRetryBaseMilliseconds * (2 ** retry.attempt),
+      this.authoritativeRefreshRetryMaximumMilliseconds,
+    );
+    retry.attempt += 1;
+    retry.timer = setTimeout(() => {
+      retry.timer = undefined;
+      const operation = this.trackOperation(
+        this.retryAuthoritativeRefresh(serialNumber, retry),
+      );
+      void operation.then(
+        () => this.scheduleAuthoritativeRefreshRetry(serialNumber, retry),
+        () => this.scheduleAuthoritativeRefreshRetry(serialNumber, retry),
+      );
+    }, delay);
+    retry.timer.unref();
+  }
+
+  private async retryAuthoritativeRefresh(
+    serialNumber: string,
+    retry: AuthoritativeRefreshRetry,
+  ): Promise<void> {
+    const connection = this.connection;
+    const lifecycleSignal = this.lifecycleController?.signal;
+    if (this.authoritativeRefreshRetries.get(serialNumber) !== retry
+      || retry.generation !== this.connectionGeneration
+      || retry.controller.signal.aborted
+      || lifecycleSignal === undefined
+      || connection === undefined
+      || !this.mqttConnected
+      || this.state !== 'online') {
+      return;
+    }
+    const topics = this.topicsForConfiguredDevice(serialNumber);
+    const refresh = this.buildRefreshRequest();
+    this.pendingRefreshes.set(serialNumber, {
+      requestId: refresh.requestId,
+      generation: retry.generation,
+    });
+    this.logger.debug(
+      `EcoFlow diagnostics: authoritative state still missing for ${this.deviceLabel(serialNumber)}; `
+      + `retrying latestQuotas (attempt=${retry.attempt}, requestId=${refresh.requestId}, generation=${retry.generation})`,
+    );
+    const signal = AbortSignal.any([
+      lifecycleSignal,
+      retry.controller.signal,
+    ]);
+    try {
+      await withSignalAndTimeout(
+        connection.publish(topics.get, refresh.payload, signal),
+        signal,
+        this.operationTimeoutMilliseconds,
+      );
+      if (this.authoritativeRefreshRetries.get(serialNumber) === retry) {
+        this.logger.debug(
+          `EcoFlow diagnostics: MQTT broker accepted authoritative-state retry for ${this.deviceLabel(serialNumber)}`,
+        );
+      }
+    } catch {
+      this.clearPendingRefresh(serialNumber, refresh.requestId);
+      if (this.authoritativeRefreshRetries.get(serialNumber) === retry
+        && !retry.controller.signal.aborted) {
+        this.logger.warn(
+          `EcoFlow authoritative-state retry failed for ${this.deviceLabel(serialNumber)}; another retry will follow`,
+        );
+      }
+    }
+  }
+
+  private completeAuthoritativeRefresh(serialNumber: string): void {
+    this.cancelAuthoritativeRefreshRetry(serialNumber);
+    this.pendingRefreshes.delete(serialNumber);
+  }
+
+  private cancelAuthoritativeRefreshRetry(serialNumber: string): void {
+    const retry = this.authoritativeRefreshRetries.get(serialNumber);
+    if (retry !== undefined) {
+      if (retry.timer !== undefined) {
+        clearTimeout(retry.timer);
+      }
+      retry.controller.abort();
+      this.authoritativeRefreshRetries.delete(serialNumber);
+    }
+  }
+
+  private clearAuthoritativeRefreshRetries(): void {
+    for (const serialNumber of this.authoritativeRefreshRetries.keys()) {
+      this.completeAuthoritativeRefresh(serialNumber);
+    }
+  }
+
   private buildRefreshRequest(): { requestId: string; payload: string } {
     const requestId = this.refreshRequestId();
     return {
@@ -874,6 +1023,13 @@ function describeQuotaReply(decoded: DecodedWave3QuotaReply): string {
   return `kind=quota deviceOnline=${decoded.deviceOnline} `
     + `evidence=${decoded.update === undefined ? false : hasWave3DisplayEvidence(decoded.update)} `
     + `update=${JSON.stringify(decoded.update ?? {})}`;
+}
+
+function isAuthoritativeQuotaReply(decoded: DecodedWave3QuotaReply): boolean {
+  return decoded.kind === 'quota'
+    && (!decoded.deviceOnline
+      || (decoded.update !== undefined
+        && hasWave3ControlStateEvidence(decoded.update)));
 }
 
 export function buildWave3Topics(userId: string, serialNumber: string): Wave3Topics {

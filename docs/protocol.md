@@ -137,7 +137,11 @@ A matching get reply contains `data.online` and `data.quotaMap`.
 - Household hardware confirmed that the `set` and `get` subscriptions only
   expose echoed plugin/app publications. The plugin therefore subscribes only
   to the three inbound topics: `property`, `set_reply`, and `get_reply`.
-- Every reconnect should re-subscribe and refresh exactly once.
+- Every reconnect should re-subscribe exactly once and publish an immediate
+  refresh. If EcoFlow supplies only supplemental telemetry or drops that
+  request, repeat `latestQuotas` after 5, 10, and 20 seconds, then every 30
+  seconds until authoritative active-mode state or an explicit offline reply
+  arrives. Reconnect, shutdown, and authoritative state cancel the retry loop.
 - MQTT setup completing means only that the cloud transport is ready. The
   controller remains stale and rejects writes until current-generation WAVE 3
   climate evidence arrives. A valid `latestQuotas` get reply supplies that

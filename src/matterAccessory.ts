@@ -407,6 +407,7 @@ function clustersForSnapshot(
         ? numberOrUndefined(previousThermostat.occupiedHeatingSetpoint)
           ?? DEFAULT_TEMPERATURE_CENTIDEGREES
         : centidegrees(heatingSetpoint),
+      minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
       systemMode: context.lastSystemMode ?? MATTER_SYSTEM_MODE.cool,
       thermostatRunningMode: runningModeForState(powered, state.mode),

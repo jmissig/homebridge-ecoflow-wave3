@@ -89,7 +89,9 @@ additional bindings and drains this confirmed-update chain before returning.
 Same-UUID shape changes also wait for confirmed endpoint disappearance before
 dispatching their replacement registration. Registration readiness has no
 success timeout: the cloud session remains stopped until the endpoint exists,
-while shutdown performs bounded cleanup for a registration already dispatched.
+while shutdown joins endpoint appearance and confirmed removal for a
+registration already dispatched. Homebridge retains ultimate process-level
+shutdown authority if its internal registration operation never settles.
 
 Homebridge 2.2.1 also caches `MatterAccessory.firmwareRevision` without mapping
 it onto the live `BridgedDeviceBasicInformation` server. The plugin therefore

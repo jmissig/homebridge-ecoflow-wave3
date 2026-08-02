@@ -84,6 +84,9 @@ and no implicit HAP fallback.
   event dispatch only: confirm endpoint readiness and every attribute mutation
   through `getAccessoryState`, confirm disappearance before same-UUID shape
   replacement, and drain or clean dispatched work during shutdown.
+- [x] Set the standard Matter thermostat minimum setpoint deadband to zero so
+  snapshot updates do not invent or transactionally reject a companion
+  heat/cool setpoint that the WAVE is not currently controlling.
 
 **Phase M2 exit:** fake controller snapshots produce a complete Matter
 accessory with stable identity, cache behavior, metadata, climate state, fan

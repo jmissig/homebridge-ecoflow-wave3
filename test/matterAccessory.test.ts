@@ -91,6 +91,116 @@ describe('WAVE 3 Matter accessory', () => {
     }
   });
 
+  it('applies a first cool snapshot through the installed Matter thermostat transaction', async () => {
+    const baseMatter = matterHarness().matter;
+    const controller = fakeController(offlineSnapshot());
+    const accessory = createWave3MatterAccessory(
+      baseMatter,
+      'matter-runtime-transition',
+      device('ambient'),
+      controller.snapshot,
+    );
+    const environment = new Environment('wave3-matter-transition-test', Environment.default);
+    new MockStorageService(environment);
+    const node = await ServerNode.create({
+      id: 'wave3-transition-node',
+      environment,
+      network: { port: 0 },
+      productDescription: { name: 'WAVE transition test', deviceType: 0x000e },
+      basicInformation: {
+        vendorName: 'Test',
+        vendorId: 0xfff1,
+        productName: 'WAVE transition test',
+        productId: 0x8000,
+        nodeLabel: 'WAVE transition test',
+        serialNumber: 'wave3-transition-test',
+        hardwareVersion: 1,
+        hardwareVersionString: '1',
+        softwareVersion: 1,
+        softwareVersionString: '1',
+      },
+    } as never);
+    try {
+      const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-transition-aggregator' });
+      await node.add(aggregator);
+      const endpoint = new Endpoint(
+        wave3RoomAirConditionerDeviceType('ambient').with(BridgedDeviceBasicInformationServer),
+        {
+          id: accessory.UUID,
+          ...accessory.clusters,
+          bridgedDeviceBasicInformation: {
+            vendorName: 'EcoFlow',
+            nodeLabel: accessory.displayName,
+            productName: 'WAVE 3',
+            productLabel: 'WAVE 3',
+            serialNumber: 'redacted-transition-serial',
+            reachable: true,
+          },
+        } as never,
+      );
+      await aggregator.add(endpoint);
+      const endpointState = () => endpoint.state as unknown as {
+        onOff: { onOff: boolean };
+        thermostat: {
+          systemMode: number;
+          occupiedCoolingSetpoint: number;
+          occupiedHeatingSetpoint: number;
+          minSetpointDeadBand: number;
+        };
+        fanControl: { percentSetting: number | null };
+        relativeHumidityMeasurement: { measuredValue: number | null };
+      };
+
+      const runtimeMatter = {
+        ...baseMatter,
+        updateAccessoryState: async (
+          _uuid: string,
+          cluster: string,
+          attributes: Record<string, unknown>,
+        ) => {
+          void endpoint.set({ [cluster]: attributes } as never);
+        },
+        getAccessoryState: async (_uuid: string, cluster: string) => {
+          const state = endpoint.state as unknown as Record<string, Record<string, unknown>>;
+          return state[cluster];
+        },
+      } as MatterAPI;
+      const binding = new Wave3MatterAccessory(
+        runtimeMatter,
+        accessory,
+        controller,
+        'ambient',
+      );
+      controller.emit({
+        availability: 'online',
+        state: {
+          powered: true,
+          mode: 'cool',
+          ambientTemperatureCelsius: 22,
+          ambientHumidityPercent: 55,
+          targetTemperatureCelsius: 21,
+          airflowSpeed: 40,
+        },
+        runtimeTemperatures: {},
+        updatedAt: 1,
+      });
+      await waitUntil(
+        () => endpointState().relativeHumidityMeasurement.measuredValue === 5_500,
+      );
+      await binding.stop();
+
+      assert.equal(endpointState().onOff.onOff, true);
+      assert.equal(endpointState().thermostat.systemMode, MATTER_SYSTEM_MODE.cool);
+      assert.equal(endpointState().thermostat.occupiedCoolingSetpoint, 2_100);
+      assert.equal(endpointState().thermostat.occupiedHeatingSetpoint, 2_000);
+      assert.equal(endpointState().thermostat.minSetpointDeadBand, 0);
+      assert.equal(endpointState().fanControl.percentSetting, 40);
+      assert.equal(endpointState().relativeHumidityMeasurement.measuredValue, 5_500);
+    } finally {
+      await node.close();
+    }
+  });
+
   it('builds a customized room air conditioner with auto, fan, humidity, and complete state', () => {
     const harness = matterHarness();
     const accessory = createWave3MatterAccessory(
@@ -121,6 +231,7 @@ describe('WAVE 3 Matter accessory', () => {
       localTemperature: 2_123,
       occupiedCoolingSetpoint: 2_400,
       occupiedHeatingSetpoint: 1_900,
+      minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
       systemMode: MATTER_SYSTEM_MODE.auto,
       thermostatRunningMode: 0,
@@ -369,6 +480,16 @@ function onlineSnapshot(): Wave3ControllerSnapshot {
 
 async function drainMicrotasks(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for Matter runtime state');
 }
 
 function deferred(): {

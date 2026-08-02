@@ -112,6 +112,21 @@ drains the confirmed controller operation, and logs plus restores the last
 confirmed snapshot if EcoFlow later rejects or times out. It does not claim
 that such attribute failures can be returned transactionally by this runtime.
 
+The Thermostat cluster advertises the WAVE's actual 16–30°C range for both
+heating and cooling. With the standard minimum deadband set to zero, crossing
+one setpoint moves its inactive companion so the Matter transaction remains
+valid; the same rule applies to `SetpointRaiseLower`. Confirmed command
+snapshots are reconciled only after Matter.js releases the interactive command
+transaction, avoiding collisions with Homebridge 2.2.1's deferred state
+updates.
+
+The five WAVE fan levels map to 20/40/60/80/100 percent and discrete speeds
+1–5. Standard Low/Medium/High fan modes use the Matter sequence's percentage
+buckets, while every accepted setting write updates `FanMode`,
+`PercentSetting`, and `SpeedSetting` coherently. Null setting writes mean no
+change. Power-off cancels a pending airflow write, and coalescing back to the
+confirmed speed emits no cloud command.
+
 Sleep is represented by the standard Matter Sleep system mode. Eco and Boost
 remain unexposed: Homebridge 2.2.1's Room Air Conditioner endpoint does not
 offer a stable standard preset/economy surface that preserves the required

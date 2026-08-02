@@ -135,6 +135,11 @@ state, and temperature-source variants.
   - acknowledgement accumulation
   - observed-state confirmation
   - unrelated EcoFlow-app traffic filtering
+- [x] Advertise the WAVE's real 16–30°C thermostat limits and preserve Matter's
+  zero-deadband companion-setpoint behavior for direct and raise/lower writes.
+- [x] Keep `FanMode`, `PercentSetting`, and five-level `SpeedSetting` coherent;
+  accept Matter's nullable no-change writes, cancel queued airflow when power
+  turns off, and suppress a coalesced write that returns to confirmed speed.
 - [x] Translate controller outcomes into standard Matter interaction errors
   for awaited Matter commands (`OnOff` and `SetpointRaiseLower`). Reject
   invalid or unavailable thermostat/fan attribute writes synchronously. The

@@ -297,6 +297,34 @@ describe('WAVE 3 Matter accessory', () => {
       }
 
       controller.setSnapshot(onlineSnapshot());
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'baseline automatic range',
+      );
+      await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_500 } });
+      await waitUntil(
+        () => controller.snapshot.state.targetTemperatureLowerCelsius === 25
+          && controller.snapshot.state.targetTemperatureUpperCelsius === 25
+          && endpoint.state.thermostat.occupiedHeatingSetpoint === 2_500
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_500,
+        'crossing heating setpoint and companion cooling setpoint',
+      );
+      await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 1_800 } });
+      await waitUntil(
+        () => controller.snapshot.state.targetTemperatureLowerCelsius === 18
+          && controller.snapshot.state.targetTemperatureUpperCelsius === 18
+          && endpoint.state.thermostat.occupiedHeatingSetpoint === 1_800
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 1_800,
+        'crossing cooling setpoint and companion heating setpoint',
+      );
+
+      controller.setSnapshot(onlineSnapshot());
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'restored automatic range',
+      );
       await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_000 } });
       await waitUntil(() => controller.commands.at(-1)?.type === 'automaticTemperatureRange'
         && controller.snapshot.state.targetTemperatureLowerCelsius === 20);
@@ -323,10 +351,12 @@ describe('WAVE 3 Matter accessory', () => {
       await endpoint.set({ fanControl: { percentSetting: 78 } });
       await waitUntil(
         () => controller.commands.some(command => command.type === 'airflowSpeed'),
+        'settled fan command',
       );
       await waitUntil(
         () => endpoint.state.fanControl.percentSetting === 80
           && endpoint.state.fanControl.speedSetting === 4,
+        'confirmed fan state',
       );
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       assert.equal(
@@ -334,6 +364,27 @@ describe('WAVE 3 Matter accessory', () => {
         airflowBeforeSlider + 1,
       );
       assert.deepEqual(controller.commands.at(-1), { type: 'airflowSpeed', speed: 80 });
+      await endpoint.set({ fanControl: { percentSetting: null } });
+      await endpoint.set({ fanControl: { speedSetting: null } });
+      assert.equal(endpoint.state.fanControl.percentSetting, 80);
+      assert.equal(endpoint.state.fanControl.speedSetting, 4);
+
+      const airflowBeforeReturnToConfirmed = controller.commands.filter(
+        command => command.type === 'airflowSpeed',
+      ).length;
+      await endpoint.set({ fanControl: { percentSetting: 40 } });
+      assert.equal(endpoint.state.fanControl.fanMode, 2);
+      assert.equal(endpoint.state.fanControl.percentSetting, 40);
+      assert.equal(endpoint.state.fanControl.speedSetting, 2);
+      await endpoint.set({ fanControl: { percentSetting: 80 } });
+      assert.equal(endpoint.state.fanControl.fanMode, 3);
+      assert.equal(endpoint.state.fanControl.percentSetting, 80);
+      assert.equal(endpoint.state.fanControl.speedSetting, 4);
+      await new Promise<void>(resolve => setTimeout(resolve, 800));
+      assert.equal(
+        controller.commands.filter(command => command.type === 'airflowSpeed').length,
+        airflowBeforeReturnToConfirmed,
+      );
       assert.deepEqual(controller.commands.slice(0, 2), [
         { type: 'power', on: false },
         { type: 'power', on: true },
@@ -352,6 +403,61 @@ describe('WAVE 3 Matter accessory', () => {
           targetTemperatureUpperCelsius: 24,
         },
       });
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'raise/lower baseline range',
+      );
+      await endpoint.act('raise heat across cool', agent => agent.thermostat.setpointRaiseLower({
+        mode: 0,
+        amount: 60,
+      }));
+      assert.deepEqual(controller.commands.at(-1), {
+        type: 'automaticTemperatureRange',
+        lowerCelsius: 25,
+        upperCelsius: 25,
+      });
+      assert.equal(endpoint.state.thermostat.occupiedHeatingSetpoint, 2_500);
+      assert.equal(endpoint.state.thermostat.occupiedCoolingSetpoint, 2_500);
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: {
+          ...onlineSnapshot().state,
+          targetTemperatureLowerCelsius: 19,
+          targetTemperatureUpperCelsius: 24,
+        },
+      });
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'lower cool baseline range',
+      );
+      await endpoint.act('lower cool across heat', agent => agent.thermostat.setpointRaiseLower({
+        mode: 1,
+        amount: -60,
+      }));
+      assert.deepEqual(controller.commands.at(-1), {
+        type: 'automaticTemperatureRange',
+        lowerCelsius: 18,
+        upperCelsius: 18,
+      });
+      assert.equal(endpoint.state.thermostat.occupiedHeatingSetpoint, 1_800);
+      assert.equal(endpoint.state.thermostat.occupiedCoolingSetpoint, 1_800);
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: {
+          ...onlineSnapshot().state,
+          targetTemperatureLowerCelsius: 19,
+          targetTemperatureUpperCelsius: 24,
+        },
+      });
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'both-setpoint baseline range',
+      );
       await endpoint.act('raise both to upper limit', agent => agent.thermostat.setpointRaiseLower({
         mode: 2,
         amount: 100,
@@ -378,14 +484,26 @@ describe('WAVE 3 Matter accessory', () => {
       );
       assert.equal(endpoint.state.onOff.onOff, true);
 
+      const airflowBeforePowerOff = controller.commands.filter(
+        command => command.type === 'airflowSpeed',
+      ).length;
+      await endpoint.set({ fanControl: { percentSetting: 40 } });
+      await endpoint.act('turn off while fan is pending', agent => agent.onOff.off());
+      await new Promise<void>(resolve => setTimeout(resolve, 800));
+      assert.equal(
+        controller.commands.filter(command => command.type === 'airflowSpeed').length,
+        airflowBeforePowerOff,
+      );
+      await endpoint.act('turn back on after fan cancellation', agent => agent.onOff.on());
+
       controller.failNext('timeout');
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
-      await waitUntil(() => errors.length === 1, 'failed attribute command reconciliation');
+      await waitUntil(() => errors.length === 2, 'failed attribute command reconciliation');
       await waitUntil(
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
         'confirmed thermostat restoration',
       );
-      assert.match(errors[0]!, /did not confirm the command/);
+      assert.match(errors[1]!, /did not confirm the command/);
 
       const airflowCommands = controller.commands.filter(command => command.type === 'airflowSpeed').length;
       await endpoint.set({ fanControl: { percentSetting: 40 } });
@@ -401,6 +519,8 @@ describe('WAVE 3 Matter accessory', () => {
       await node.close();
     }
     assert.deepEqual(errors, [
+      'EcoFlow WAVE 3 Matter power command failed: '
+        + 'EcoFlow WAVE 3 is not currently controllable',
       'EcoFlow WAVE 3 Matter system mode command failed: '
         + 'EcoFlow WAVE 3 did not confirm the command',
     ]);
@@ -436,6 +556,14 @@ describe('WAVE 3 Matter accessory', () => {
       localTemperature: 2_123,
       occupiedCoolingSetpoint: 2_400,
       occupiedHeatingSetpoint: 1_900,
+      absMinHeatSetpointLimit: 1_600,
+      minHeatSetpointLimit: 1_600,
+      maxHeatSetpointLimit: 3_000,
+      absMaxHeatSetpointLimit: 3_000,
+      absMinCoolSetpointLimit: 1_600,
+      minCoolSetpointLimit: 1_600,
+      maxCoolSetpointLimit: 3_000,
+      absMaxCoolSetpointLimit: 3_000,
       minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
       systemMode: MATTER_SYSTEM_MODE.auto,

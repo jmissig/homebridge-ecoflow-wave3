@@ -214,11 +214,17 @@ repeatable real-device evidence.
 
 Evaluate these only after the primary climate accessory is reliable:
 
-- [ ] Decide whether fan-only belongs solely in `HeaterCooler` behavior or
-  needs one carefully synchronized `Fanv2` companion service.
+- [ ] Confirm how Homebridge, HomeKit, and the Home app represent fan-only
+  operation; add it if it can be expressed honestly, either within
+  `HeaterCooler` or as one carefully synchronized `Fanv2` companion service.
+  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
 - [ ] Decide whether dry mode can be represented honestly with standard
   HomeKit services and characteristics.
 - [ ] Evaluate ambient humidity as a read-only `HumiditySensor`.
+- [ ] Determine whether the WAVE 3 firmware version is available through
+  current device telemetry or the private cloud API, and expose it through
+  Homebridge's standard accessory information when reliable.
+  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
 - [ ] Evaluate battery level and charging state when an add-on battery is
   actually present.
 - [ ] Evaluate condensate-full warning and drainage state.
@@ -241,6 +247,10 @@ HomeKit semantics, hardware evidence, and no conflicting controls.
   restarts, EcoFlow app use, and WAVE 3 power cycles.
 - [ ] Confirm logs remain useful at normal and debug levels without leaking
   secrets.
+- [ ] Investigate whether the current private app API or MQTT data can reliably
+  discover WAVE 3 devices for the authenticated account; if so, replace or
+  supplement required manual serial-number entry with auto-discovery.
+  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
 - [ ] Update `README.md` so configuration and supported controls match only
   what was hardware-validated.
 - [ ] Add installation, troubleshooting, region selection, child-bridge, and

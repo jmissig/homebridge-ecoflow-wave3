@@ -223,6 +223,7 @@ implementation.
 | Operating mode | `wave_operating_mode` (field 486) |
 | Ambient temperature | `temp_ambient` (field 484) |
 | Ambient humidity | `humi_ambient` (field 485) |
+| Indoor supply-air / outlet temperature | `temp_indoor_supply_air` (field 494) |
 | Mode-specific state | `wave_mode_info.list_info[wave_operating_mode]` |
 | Submode | active mode item's `submode` |
 | Airflow speed | active mode item's `airflow_speed` |
@@ -254,6 +255,11 @@ established.
 
 **Inference**
 
+- Household incremental packets reported field 494 falling from about
+  `20.13 °C` to `16.60 °C` as cooling ramped. The pinned upstream schema names
+  the same field `temp_indoor_supply_air`, so the plugin provisionally exposes
+  it as the outlet current-temperature source pending a Home app check.
+  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
 - `dev_sleep_state`, not only `wave_operating_mode`, should govern whether the
   normalized device is powered.
 - Display uploads can be incremental. Preserve the reported sleep state,

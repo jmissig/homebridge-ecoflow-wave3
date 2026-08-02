@@ -26,6 +26,7 @@ message Wave3DisplayPropertyUpload {
   optional float temp_ambient = 484;
   optional float humi_ambient = 485;
   optional uint32 wave_operating_mode = 486;
+  optional float temp_indoor_supply_air = 494;
   optional Wave3WaveOperatingModeParamList wave_mode_info = 514;
 }
 

@@ -89,6 +89,26 @@ describe('WAVE 3 codec', () => {
     }
   });
 
+  it('decodes field 494 as the provisionally identified indoor supply-air temperature', () => {
+    const display = create(Wave3DisplayPropertyUploadSchema, {
+      tempIndoorSupplyAir: 16.6,
+    });
+    const decoded = decodeWave3Message(envelope(
+      21,
+      45,
+      toBinary(Wave3DisplayPropertyUploadSchema, display),
+    ));
+
+    assert.equal(decoded.kind, 'display');
+    if (decoded.kind === 'display') {
+      assert.ok(Math.abs((decoded.update.outletTemperatureCelsius ?? 0) - 16.6) < 0.0001);
+      assert.ok(Math.abs((mergeWave3DisplayUpdate(
+        undefined,
+        decoded.update,
+      ).state.outletTemperatureCelsius ?? 0) - 16.6) < 0.0001);
+    }
+  });
+
   it('retains household-observed read-only submode 1 from display and quota state', () => {
     const display = create(Wave3DisplayPropertyUploadSchema, {
       waveOperatingMode: 1,
@@ -202,6 +222,7 @@ describe('WAVE 3 codec', () => {
           wave_operating_mode: 5,
           temp_ambient: 23,
           humi_ambient: 48,
+          temp_indoor_supply_air: 18,
           current_temp_lower: 19,
           current_temp_upper: 25,
           current_airflow_speed: 60,
@@ -217,6 +238,7 @@ describe('WAVE 3 codec', () => {
         operatingModeId: 5,
         ambientTemperatureCelsius: 23,
         ambientHumidityPercent: 48,
+        outletTemperatureCelsius: 18,
         modeParameters: {
           5: {
             targetTemperatureLowerCelsius: 19,
@@ -234,6 +256,7 @@ describe('WAVE 3 codec', () => {
         mode: 'auto',
         ambientTemperatureCelsius: 23,
         ambientHumidityPercent: 48,
+        outletTemperatureCelsius: 18,
         targetTemperatureLowerCelsius: 19,
         targetTemperatureUpperCelsius: 25,
         airflowSpeed: 60,

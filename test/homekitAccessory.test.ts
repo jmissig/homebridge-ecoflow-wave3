@@ -152,6 +152,56 @@ describe('WAVE 3 HomeKit accessory', () => {
     assert.equal(error, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
   });
 
+  it('uses outlet temperature without ambient humidity when configured', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      ambientTemperatureCelsius: 26,
+      ambientHumidityPercent: 60,
+      outletTemperatureCelsius: 16.6,
+      targetTemperatureCelsius: 21,
+    }));
+    const accessory = new FakeAccessory('Patio WAVE 3', 'uuid-outlet', 'SERIALOUTLET');
+    accessory.addService(Service.HumiditySensor, 'Old Ambient Humidity');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+      'outlet',
+    );
+
+    assert.ok(Math.abs(Number(await getCharacteristic(
+      accessory.heaterCooler!,
+      Characteristic.CurrentTemperature,
+    )) - 16.6) < 0.0001);
+    assert.equal(accessory.humiditySensor, undefined);
+  });
+
+  it('experimentally omits current temperature and humidity when configured', () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      ambientTemperatureCelsius: 26,
+      ambientHumidityPercent: 60,
+      targetTemperatureCelsius: 21,
+    }));
+    const accessory = new FakeAccessory('Hidden Temp WAVE 3', 'uuid-none', 'SERIALNONE');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+      'none',
+    );
+
+    assert.equal(
+      accessory.heaterCooler!.characteristics.some(
+        characteristic => characteristic.UUID === Characteristic.CurrentTemperature.UUID,
+      ),
+      false,
+    );
+    assert.equal(accessory.humiditySensor, undefined);
+  });
+
   it('maps writes to controller commands and waits for confirmed results', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
@@ -867,6 +917,12 @@ class FakeAccessory {
       this.heaterCooler = instance;
     }
     return instance;
+  }
+
+  removeService(service: Service): void {
+    if (service === this.humiditySensor) {
+      this.humiditySensor = undefined;
+    }
   }
 }
 

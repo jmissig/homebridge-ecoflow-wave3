@@ -242,6 +242,19 @@ stable account identifiers.
   change may still race a HomeKit change; the device remains last-writer-wins,
   and the plugin reports only subsequently observed state.
 
+## Temperature-source decision
+
+- Display field `494` appeared at `20.13`, `19.12`, `17.69`, and `16.60 °C`
+  while cooling ramped. The pinned upstream schema identifies field 494 as
+  `temp_indoor_supply_air`; the plugin now provisionally labels it outlet /
+  supply-air temperature.
+- Per-device HomeKit configuration offers `ambient`, `outlet`, and `none`.
+  Ambient alone adds the ambient-humidity companion. `none` removes the
+  normally required `HeaterCooler.CurrentTemperature` characteristic and is
+  explicitly experimental until tested in Apple Home.
+
+[Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
+
 ## Evidence still missing
 
 - Exact semantics of acknowledgement action IDs beyond the mapped climate
@@ -249,6 +262,6 @@ stable account identifiers.
 - Exact meaning of `cmd_id=20`
 - Long-session command reliability and safe recovery
 - Firmware-version field and command path
-- Authoritative mapping for outlet/supply-air temperature
+- Apple Home behavior for the experimental no-temperature HeaterCooler shape
 - Whether account device discovery can be implemented through a stable private
   endpoint

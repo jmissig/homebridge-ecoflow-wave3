@@ -236,6 +236,12 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
       update,
       'ambientHumidityPercent',
     );
+    assignQuotaNumber(
+      quotaMap,
+      'temp_indoor_supply_air',
+      update,
+      'outletTemperatureCelsius',
+    );
     if (update.ambientTemperatureCelsius !== undefined
       && !isSupportedAmbientTemperature(update.ambientTemperatureCelsius)) {
       throw new TypeError('quota ambient temperature is unsupported');
@@ -243,6 +249,10 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
     if (update.ambientHumidityPercent !== undefined
       && (update.ambientHumidityPercent < 0 || update.ambientHumidityPercent > 100)) {
       throw new TypeError('quota ambient humidity is unsupported');
+    }
+    if (update.outletTemperatureCelsius !== undefined
+      && !isSupportedAmbientTemperature(update.outletTemperatureCelsius)) {
+      throw new TypeError('quota outlet temperature is unsupported');
     }
     if (update.sleepState !== undefined && update.sleepState !== 0 && update.sleepState !== 1) {
       throw new TypeError('quota sleep state is unsupported');
@@ -388,11 +398,16 @@ export function mergeWave3DisplayUpdate(
     ?? previous?.state.ambientTemperatureCelsius;
   const ambientHumidity = update.ambientHumidityPercent
     ?? previous?.state.ambientHumidityPercent;
+  const outletTemperature = update.outletTemperatureCelsius
+    ?? previous?.state.outletTemperatureCelsius;
   if (ambientTemperature !== undefined) {
     state.ambientTemperatureCelsius = ambientTemperature;
   }
   if (ambientHumidity !== undefined) {
     state.ambientHumidityPercent = ambientHumidity;
+  }
+  if (outletTemperature !== undefined) {
+    state.outletTemperatureCelsius = outletTemperature;
   }
 
   if (sleepState === 0 || sleepState === 1) {
@@ -430,6 +445,7 @@ export function hasWave3DisplayEvidence(update: Wave3DisplayUpdate): boolean {
     || update.operatingModeId !== undefined
     || update.ambientTemperatureCelsius !== undefined
     || update.ambientHumidityPercent !== undefined
+    || update.outletTemperatureCelsius !== undefined
     || Object.keys(update.modeParameters).length > 0;
 }
 
@@ -475,6 +491,14 @@ function normalizeDisplayUpdate(
       update.ambientHumidityPercent = humidity;
     } else {
       addUnsupportedValue(unsupportedValues, 'humi_ambient', humidity);
+    }
+  }
+  if (has(display, Wave3DisplayPropertyUploadSchema, 'tempIndoorSupplyAir')) {
+    const temperature = display.tempIndoorSupplyAir!;
+    if (isSupportedAmbientTemperature(temperature)) {
+      update.outletTemperatureCelsius = temperature;
+    } else {
+      addUnsupportedValue(unsupportedValues, 'temp_indoor_supply_air', temperature);
     }
   }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'waveOperatingMode')) {

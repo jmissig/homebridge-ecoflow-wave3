@@ -72,11 +72,21 @@ If you edit `config.json` directly, the equivalent configuration is:
   "devices": [
     {
       "name": "Bedroom WAVE 3",
-      "serialNumber": "YOUR_WAVE_3_SERIAL"
+      "serialNumber": "YOUR_WAVE_3_SERIAL",
+      "currentTemperatureSource": "ambient"
     }
   ]
 }
 ```
+
+`currentTemperatureSource` is optional per device and defaults to `ambient`:
+
+- `ambient` — use the WAVE 3 ambient sensor and add its humidity sensor.
+- `outlet` — use field 494, identified upstream as indoor supply-air
+  temperature. This mapping is experimental pending one more Home app check.
+- `none` — experimentally remove current temperature and humidity. HomeKit
+  normally requires `CurrentTemperature` on a heater/cooler, so Apple Home may
+  reject or degrade this presentation.
 
 Available API regions are:
 

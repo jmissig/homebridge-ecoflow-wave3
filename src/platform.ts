@@ -12,6 +12,7 @@ import {
   ConfigurationError,
   parseEcoFlowWave3Config,
   type EcoFlowWave3Config,
+  type Wave3DeviceConfig,
 } from './ecoflow/config.js';
 import { NodeHttpsTransport } from './ecoflow/http.js';
 import { MqttJsTransport } from './ecoflow/mqtt.js';
@@ -54,6 +55,7 @@ export interface EcoFlowWave3PlatformDependencies {
     platform: EcoFlowWave3Platform,
     accessory: PlatformAccessory<Wave3AccessoryContext>,
     controller: Wave3AccessoryController,
+    device: Wave3DeviceConfig,
   ): Wave3PlatformAccessory;
 }
 
@@ -69,10 +71,11 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
     session,
     { logger },
   ),
-  bindAccessory: (platform, accessory, controller) => new Wave3PlatformAccessory(
+  bindAccessory: (platform, accessory, controller, device) => new Wave3PlatformAccessory(
     platform,
     accessory,
     controller,
+    device.currentTemperatureSource,
   ),
 };
 
@@ -215,7 +218,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       this.api.updatePlatformAccessories([accessory]);
 
       const controller = this.dependencies.createController(device.serialNumber, session, logger);
-      const binding = this.dependencies.bindAccessory(this, accessory, controller);
+      const binding = this.dependencies.bindAccessory(this, accessory, controller, device);
       this.controllers.set(uuid, controller);
       this.bindings.set(uuid, binding);
     }

@@ -58,6 +58,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     });
     assert.equal(harness.updated.length, 2);
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
+    assert.deepEqual(harness.boundTemperatureSources, ['ambient', 'none']);
     assert.equal(harness.platform.accessories.size, 2);
 
     await harness.signalDidFinishLaunching();
@@ -131,6 +132,7 @@ function platformHarness(
   updated: FakeCachedAccessory[];
   unregistered: FakeCachedAccessory[];
   boundSerials: string[];
+  boundTemperatureSources: string[];
   events: string[];
   logs: Record<'debug' | 'info' | 'warn' | 'error', string[]>;
   signalDidFinishLaunching(): Promise<void>;
@@ -143,6 +145,7 @@ function platformHarness(
   const updated: FakeCachedAccessory[] = [];
   const unregistered: FakeCachedAccessory[] = [];
   const boundSerials: string[] = [];
+  const boundTemperatureSources: string[] = [];
   const events: string[] = [];
   const logs = {
     debug: [] as string[],
@@ -236,11 +239,14 @@ function platformHarness(
         },
       } satisfies Wave3AccessoryController;
     },
-    bindAccessory: () => ({
-      stop: () => {
-        bindingStopCount += 1;
-      },
-    }) as Wave3PlatformAccessory,
+    bindAccessory: (_platform, _accessory, _controller, device) => {
+      boundTemperatureSources.push(device.currentTemperatureSource);
+      return {
+        stop: () => {
+          bindingStopCount += 1;
+        },
+      } as Wave3PlatformAccessory;
+    },
   };
   const platform = new EcoFlowWave3Platform(
     logger as unknown as Logging,
@@ -255,6 +261,7 @@ function platformHarness(
     updated,
     unregistered,
     boundSerials,
+    boundTemperatureSources,
     events,
     logs,
     async signalDidFinishLaunching() {
@@ -285,7 +292,11 @@ function validConfig(): PlatformConfig {
     apiHost: 'api-a.ecoflow.com',
     devices: [
       { name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234' },
-      { name: 'Office WAVE 3', serialNumber: 'SECOND5678' },
+      {
+        name: 'Office WAVE 3',
+        serialNumber: 'SECOND5678',
+        currentTemperatureSource: 'none',
+      },
     ],
   };
 }

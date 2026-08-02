@@ -228,16 +228,6 @@ Evaluate these only after the primary climate accessory is reliable:
   [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
 - [ ] Decide whether dry mode can be represented honestly with standard
   HomeKit services and characteristics.
-- [ ] Add a per-device choice for which WAVE 3 sensor supplies HomeKit's
-  current temperature: ambient temperature, outlet/supply-air temperature, or
-  no displayed temperature. First verify whether a standard `HeaterCooler`
-  can omit `CurrentTemperature` honestly, and hardware-validate the outlet
-  sensor mapping. Outdoor WAVE 3 placement may make its ambient reading
-  unhelpful as the room temperature. Ambient humidity is exposed only while
-  ambient temperature remains the selected source; remove the companion
-  humidity service for outlet/supply-air or no-temperature configurations.
-  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272228437692630)
-  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304485248761926)
 - [ ] Determine whether the WAVE 3 firmware version is available through
   current device telemetry or the private cloud API, and expose it through
   Homebridge's standard accessory information when reliable.
@@ -257,6 +247,13 @@ HomeKit semantics, hardware evidence, and no conflicting controls.
 
 ## Phase 9: Child-bridge acceptance and release preparation
 
+- [ ] Hardware-check all three per-device current-temperature sources:
+  `ambient`, provisionally mapped field-494 `outlet`, and experimental `none`.
+  Confirm whether Apple Home accepts a `HeaterCooler` with its normally
+  required `CurrentTemperature` characteristic removed. Ambient alone should
+  retain the humidity companion.
+  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272228437692630)
+  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
 - [ ] Verify Home app presentation, naming, room assignment, status updates,
   and “No Response” behavior.
 - [ ] Verify useful Siri phrases for power, mode, temperature, and fan speed.

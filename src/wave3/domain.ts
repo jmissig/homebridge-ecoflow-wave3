@@ -18,6 +18,7 @@ export interface Wave3State {
   mode?: Wave3Mode;
   ambientTemperatureCelsius?: number;
   ambientHumidityPercent?: number;
+  outletTemperatureCelsius?: number;
   targetTemperatureCelsius?: number;
   targetTemperatureLowerCelsius?: number;
   targetTemperatureUpperCelsius?: number;
@@ -38,6 +39,7 @@ export interface Wave3DisplayUpdate {
   operatingModeId?: number;
   ambientTemperatureCelsius?: number;
   ambientHumidityPercent?: number;
+  outletTemperatureCelsius?: number;
   modeParameters: Readonly<Record<number, Wave3ModeParameters>>;
 }
 

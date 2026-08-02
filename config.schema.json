@@ -72,6 +72,17 @@
               "title": "WAVE 3 Serial Number",
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{4,64}$"
+            },
+            "currentTemperatureSource": {
+              "title": "Current Temperature Source",
+              "description": "Ambient also reports ambient humidity. Outlet uses the provisional indoor supply-air field. None experimentally removes HomeKit's normally required current-temperature characteristic.",
+              "type": "string",
+              "default": "ambient",
+              "oneOf": [
+                { "title": "Ambient Temperature", "enum": ["ambient"] },
+                { "title": "Outlet / Supply-Air Temperature (Experimental)", "enum": ["outlet"] },
+                { "title": "No Current Temperature (Experimental)", "enum": ["none"] }
+              ]
             }
           }
         }

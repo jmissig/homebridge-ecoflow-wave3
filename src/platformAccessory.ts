@@ -10,6 +10,7 @@ import type {
   Wave3ControllerSnapshot,
   Wave3State,
 } from './wave3/domain.js';
+import type { CurrentTemperatureSource } from './ecoflow/config.js';
 import type {
   EcoFlowWave3Platform,
   Wave3AccessoryContext,
@@ -68,7 +69,7 @@ interface PendingTemperatureWrite {
  */
 export class Wave3PlatformAccessory {
   public readonly heaterCoolerService: Service;
-  public readonly humiditySensorService: Service;
+  public readonly humiditySensorService?: Service;
 
   private snapshot: Wave3ControllerSnapshot;
   private readonly lastPresentedValues: HomeKitClimateValues = {
@@ -91,6 +92,7 @@ export class Wave3PlatformAccessory {
     private readonly platform: EcoFlowWave3Platform,
     private readonly accessory: PlatformAccessory<Wave3AccessoryContext>,
     private readonly controller: Wave3AccessoryController,
+    private readonly currentTemperatureSource: CurrentTemperatureSource = 'ambient',
   ) {
     this.snapshot = controller.snapshot;
     this.lastTargetState = targetStateForMode(
@@ -119,20 +121,28 @@ export class Wave3PlatformAccessory {
       this.accessory.displayName,
     );
 
-    // Ambient temperature is currently the only supported HomeKit current-
-    // temperature source. Keep its humidity reading on the same accessory so
-    // a future non-ambient temperature source can remove both together.
-    const humidityName = `${this.accessory.displayName} Humidity`;
-    this.humiditySensorService = this.accessory.getService(
-      this.platform.Service.HumiditySensor,
-    ) ?? this.accessory.addService(
-      this.platform.Service.HumiditySensor,
-      humidityName,
-    );
-    this.humiditySensorService.setCharacteristic(
-      this.platform.Characteristic.Name,
-      humidityName,
-    );
+    const existingHumidity = this.accessory.getService(this.platform.Service.HumiditySensor);
+    if (this.currentTemperatureSource === 'ambient') {
+      const humidityName = `${this.accessory.displayName} Humidity`;
+      this.humiditySensorService = existingHumidity ?? this.accessory.addService(
+        this.platform.Service.HumiditySensor,
+        humidityName,
+      );
+      this.humiditySensorService.setCharacteristic(
+        this.platform.Characteristic.Name,
+        humidityName,
+      );
+    } else if (existingHumidity !== undefined) {
+      this.accessory.removeService(existingHumidity);
+    }
+
+    if (this.currentTemperatureSource === 'none') {
+      this.heaterCoolerService.removeCharacteristic(
+        this.heaterCoolerService.getCharacteristic(
+          this.platform.Characteristic.CurrentTemperature,
+        ),
+      );
+    }
 
     this.configureWritableRanges();
     this.bindCharacteristics();
@@ -208,9 +218,11 @@ export class Wave3PlatformAccessory {
     );
     this.bindAirflowSpeed(characteristic.RotationSpeed);
     this.bindReadOnly(characteristic.CurrentHeaterCoolerState, 'currentState');
-    this.bindReadOnly(characteristic.CurrentTemperature, 'currentTemperature');
+    if (this.currentTemperatureSource !== 'none') {
+      this.bindReadOnly(characteristic.CurrentTemperature, 'currentTemperature');
+    }
     this.humiditySensorService
-      .getCharacteristic(characteristic.CurrentRelativeHumidity)
+      ?.getCharacteristic(characteristic.CurrentRelativeHumidity)
       .onGet(() => this.readAmbientHumidity());
   }
 
@@ -471,7 +483,7 @@ export class Wave3PlatformAccessory {
       for (const characteristicType of this.climateCharacteristics()) {
         this.heaterCoolerService.updateCharacteristic(characteristicType, error);
       }
-      this.humiditySensorService.updateCharacteristic(
+      this.humiditySensorService?.updateCharacteristic(
         this.platform.Characteristic.CurrentRelativeHumidity,
         error,
       );
@@ -491,11 +503,15 @@ export class Wave3PlatformAccessory {
           this.lastPresentedValues[key] = value;
         }
       }
-      if (hasUsableHomeKitPresentation(snapshot, liveValues)) {
+      if (hasUsableHomeKitPresentation(
+        snapshot,
+        liveValues,
+        this.currentTemperatureSource,
+      )) {
         this.hasConfirmedPresentation = true;
       }
       if (snapshot.state.ambientHumidityPercent !== undefined) {
-        this.humiditySensorService.updateCharacteristic(
+        this.humiditySensorService?.updateCharacteristic(
           this.platform.Characteristic.CurrentRelativeHumidity,
           homeKitHumidity(snapshot.state.ambientHumidityPercent),
         );
@@ -520,7 +536,9 @@ export class Wave3PlatformAccessory {
       [characteristic.Active, values.active],
       [characteristic.CurrentHeaterCoolerState, values.currentState],
       [characteristic.TargetHeaterCoolerState, values.targetState],
-      [characteristic.CurrentTemperature, values.currentTemperature],
+      ...(this.currentTemperatureSource === 'none'
+        ? []
+        : [[characteristic.CurrentTemperature, values.currentTemperature]] as const),
       [characteristic.CoolingThresholdTemperature, values.coolingThreshold],
       [characteristic.HeatingThresholdTemperature, values.heatingThreshold],
       [characteristic.RotationSpeed, values.rotationSpeed],
@@ -538,7 +556,9 @@ export class Wave3PlatformAccessory {
       characteristic.Active,
       characteristic.CurrentHeaterCoolerState,
       characteristic.TargetHeaterCoolerState,
-      characteristic.CurrentTemperature,
+      ...(this.currentTemperatureSource === 'none'
+        ? []
+        : [characteristic.CurrentTemperature]),
       characteristic.CoolingThresholdTemperature,
       characteristic.HeatingThresholdTemperature,
       characteristic.RotationSpeed,
@@ -561,7 +581,7 @@ export class Wave3PlatformAccessory {
     if (liveHumidity !== undefined) {
       return homeKitHumidity(liveHumidity);
     }
-    const cached = this.humiditySensorService
+    const cached = this.humiditySensorService!
       .getCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity)
       .value;
     return typeof cached === 'number' ? cached : 0;
@@ -618,6 +638,7 @@ export class Wave3PlatformAccessory {
       snapshot,
       this.platform.Characteristic,
       this.lastTargetState,
+      this.currentTemperatureSource,
     );
     if (values.targetState !== undefined
       && (snapshot.state.mode === 'auto'
@@ -668,6 +689,7 @@ export function mapSnapshotToHomeKit(
   snapshot: Wave3ControllerSnapshot,
   characteristic: EcoFlowWave3Platform['Characteristic'],
   lastTargetState?: number,
+  currentTemperatureSource: CurrentTemperatureSource = 'ambient',
 ): HomeKitClimateValues {
   const state = snapshot.state;
   const active = state.powered === undefined
@@ -684,7 +706,11 @@ export function mapSnapshotToHomeKit(
     active,
     currentState: currentHomeKitState(state, characteristic.CurrentHeaterCoolerState),
     targetState,
-    currentTemperature: state.ambientTemperatureCelsius,
+    currentTemperature: currentTemperatureSource === 'ambient'
+      ? state.ambientTemperatureCelsius
+      : currentTemperatureSource === 'outlet'
+        ? state.outletTemperatureCelsius
+        : undefined,
     coolingThreshold: state.mode === 'auto'
       ? state.targetTemperatureUpperCelsius
       : state.mode === 'cool'
@@ -704,10 +730,12 @@ export function mapSnapshotToHomeKit(
 function hasUsableHomeKitPresentation(
   snapshot: Wave3ControllerSnapshot,
   values: HomeKitClimateValues,
+  currentTemperatureSource: CurrentTemperatureSource = 'ambient',
 ): boolean {
   if (values.active === undefined
     || values.currentState === undefined
-    || values.currentTemperature === undefined) {
+    || (currentTemperatureSource !== 'none'
+      && values.currentTemperature === undefined)) {
     return false;
   }
   if (snapshot.state.powered === false) {

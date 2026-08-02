@@ -37,6 +37,9 @@ The initial WAVE 3 contribution and discussion are preserved in
 Hardware confidence is recorded only for the bounded observations below; it
 does not yet establish supported HomeKit controls.
 
+The detailed redacted packet ledger from the first household validation lives
+in [Household WAVE 3 packet evidence — 2026-08-01](hardware-packet-evidence-2026-08-01.md).
+
 ## Private authentication
 
 **Upstream**
@@ -141,8 +144,9 @@ A matching get reply contains `data.online` and `data.quotaMap`.
   replies do not revive cached pre-reconnect state.
 - Each refresh keeps its generated request ID until one matching get reply is
   consumed. A newer refresh, reconnect, or intervening validated display update
-  with a newer device sequence supersedes the pending reply so delayed quota
-  snapshots cannot regress the current connection generation. Runtime,
+  with authoritative active-mode state and a newer device sequence supersedes
+  the pending reply so delayed quota snapshots cannot regress the current
+  connection generation. Runtime, sensor-only, saved-mode-parameter-only,
   malformed, unsupported-only, duplicate, and out-of-order property packets do
   not consume the pending refresh.
 - Inbound packets are ignored while MQTT is disconnected. Each clean-session
@@ -334,15 +338,13 @@ publishing a command.
 
 **Inference**
 
-- Unknown field numbers and wire types are needed before deciding whether the
-  packets contain missing climate state or unrelated incremental telemetry.
-- Ambient temperature alone is insufficient for a usable `HeaterCooler`
-  snapshot even though it proves current-generation device communication.
+- Partial display telemetry is mergeable evidence that the device is
+  publishing, but only authoritative active operating-mode state establishes a
+  new MQTT generation as controllable.
 - HomeKit should retain a complete last-confirmed presentation through
-  transient stale, reconnecting, and device-offline states. Writes must still
-  require current online state; a startup that never obtains trustworthy
-  device state or an explicit account/session failure should continue to
-  report communication failure.
+  startup, transient stale, reconnecting, and device-offline states. Writes
+  must still require current authoritative online state; an explicit
+  account/session failure should report communication failure.
 
 [Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533277123425472562)
 

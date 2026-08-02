@@ -318,6 +318,20 @@ publishing a command.
 
 [Source: household Homebridge diagnostic log and narrated app actions shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
 
+**Hardware — 2026-08-01 HomeKit command validation**
+
+- HomeKit target-temperature and power writes worked end to end.
+- Rapid HomeKit fan-slider interaction queued confirmed airflow commands for
+  `80`, `100`, and a redundant `100`, with an explicit state refresh after
+  each command.
+- During the fan-write burst, reported power fell to about `1.8 W` and then
+  ramped upward again. This is consistent with a control-cycle restart but
+  does not by itself prove that the device firmware crashed.
+- Fan-slider writes therefore require latest-value coalescing and duplicate
+  suppression before further hardware testing.
+
+[Source: household Homebridge diagnostic log and physical observation shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533275994385813545)
+
 **Inference**
 
 - Unknown field numbers and wire types are needed before deciding whether the

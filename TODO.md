@@ -201,6 +201,9 @@ Validate each command in a separate bounded pass. For every item:
 - [ ] Automatic lower and upper temperature thresholds.
 - [ ] Fan-only mode.
 - [ ] Five fan-speed levels.
+- [ ] Re-test HomeKit fan-speed slider writes after latest-value coalescing;
+  verify rapid slider movement emits one settled command and does not restart
+  the appliance control cycle.
 - [ ] Reconnect after the device has accepted commands for an extended session.
 - [ ] Confirm whether command acceptance degrades over time and, if so,
   identify the smallest evidenced refresh or reconnect behavior.

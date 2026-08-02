@@ -237,6 +237,35 @@ describe('WAVE 3 HomeKit accessory', () => {
     ]);
   });
 
+  it('coalesces rapid airflow slider writes and suppresses confirmed duplicates', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      airflowSpeed: 20,
+    }));
+    const accessory = new FakeAccessory('Office WAVE 3', 'uuid-airflow', 'SERIALAIR');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+    const service = accessory.heaterCooler!;
+
+    const writes = [40, 80, 100].map(speed => setCharacteristic(
+      service,
+      Characteristic.RotationSpeed,
+      speed,
+      true,
+    ));
+    await Promise.all(writes);
+    assert.deepEqual(controller.commands, [
+      { type: 'airflowSpeed', speed: 100 },
+    ]);
+
+    await setCharacteristic(service, Characteristic.RotationSpeed, 100, true);
+    assert.equal(controller.commands.length, 1);
+  });
+
   it('advertises upstream-backed WAVE temperature and airflow constraints', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
@@ -679,6 +708,9 @@ function platformForAccessoryTests(): EcoFlowWave3Platform {
   return {
     Service,
     Characteristic,
+    log: {
+      info: () => undefined,
+    },
     api: {
       hap: {
         HAPStatus: {

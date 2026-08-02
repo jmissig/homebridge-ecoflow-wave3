@@ -43,6 +43,17 @@ interface HomeKitClimateValues {
   rotationSpeed?: number;
 }
 
+interface PendingAirflowWrite {
+  speed: 20 | 40 | 60 | 80 | 100;
+  timer?: ReturnType<typeof setTimeout>;
+  waiters: Array<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }>;
+}
+
+const AIRFLOW_SETTLE_MILLISECONDS = 750;
+
 /**
  * HomeKit presentation boundary for one EcoFlow WAVE 3.
  */
@@ -52,6 +63,7 @@ export class Wave3PlatformAccessory {
   private snapshot: Wave3ControllerSnapshot;
   private readonly detachSnapshot: () => void;
   private writeTail: Promise<void> = Promise.resolve();
+  private pendingAirflowWrite?: PendingAirflowWrite;
   private lastTargetState?: number;
   private stopped = false;
 
@@ -105,6 +117,16 @@ export class Wave3PlatformAccessory {
       return;
     }
     this.stopped = true;
+    if (this.pendingAirflowWrite !== undefined) {
+      if (this.pendingAirflowWrite.timer !== undefined) {
+        clearTimeout(this.pendingAirflowWrite.timer);
+      }
+      const error = this.communicationError();
+      for (const waiter of this.pendingAirflowWrite.waiters) {
+        waiter.reject(error);
+      }
+      this.pendingAirflowWrite = undefined;
+    }
     this.detachSnapshot();
   }
 
@@ -139,11 +161,7 @@ export class Wave3PlatformAccessory {
       'heatingThreshold',
       value => thresholdCommand('heating', Number(value), this.snapshot.state),
     );
-    this.bind(
-      characteristic.RotationSpeed,
-      'rotationSpeed',
-      value => ({ type: 'airflowSpeed', speed: airflowSpeed(Number(value)) }),
-    );
+    this.bindAirflowSpeed(characteristic.RotationSpeed);
     this.bindReadOnly(characteristic.CurrentHeaterCoolerState, 'currentState');
     this.bindReadOnly(characteristic.CurrentTemperature, 'currentTemperature');
   }
@@ -189,6 +207,81 @@ export class Wave3PlatformAccessory {
     this.heaterCoolerService
       .getCharacteristic(characteristicType)
       .onGet(() => this.readCharacteristic(key));
+  }
+
+  private bindAirflowSpeed(characteristicType: CharacteristicType): void {
+    this.heaterCoolerService
+      .getCharacteristic(characteristicType)
+      .onGet(() => this.readCharacteristic('rotationSpeed'))
+      .onSet(value => this.scheduleAirflowWrite(value));
+  }
+
+  private scheduleAirflowWrite(value: CharacteristicValue): Promise<void> {
+    this.requireOnline();
+    let speed: PendingAirflowWrite['speed'];
+    try {
+      speed = airflowSpeed(Number(value));
+    } catch {
+      return Promise.reject(this.invalidValueError());
+    }
+
+    if (this.pendingAirflowWrite !== undefined) {
+      if (this.pendingAirflowWrite.timer !== undefined) {
+        clearTimeout(this.pendingAirflowWrite.timer);
+      }
+      this.platform.log.info(
+        `EcoFlow diagnostics: coalescing pending HomeKit airflow write to ${speed}%`,
+      );
+      this.pendingAirflowWrite.speed = speed;
+    } else {
+      this.platform.log.info(
+        `EcoFlow diagnostics: scheduling HomeKit airflow write at ${speed}% `
+        + `after ${AIRFLOW_SETTLE_MILLISECONDS}ms settle window`,
+      );
+      this.pendingAirflowWrite = {
+        speed,
+        waiters: [],
+      };
+    }
+
+    const pending = this.pendingAirflowWrite;
+    pending.timer = setTimeout(() => {
+      this.flushAirflowWrite(pending);
+    }, AIRFLOW_SETTLE_MILLISECONDS);
+
+    return new Promise<void>((resolve, reject) => {
+      pending.waiters.push({ resolve, reject });
+    });
+  }
+
+  private flushAirflowWrite(pending: PendingAirflowWrite): void {
+    if (this.pendingAirflowWrite !== pending) {
+      return;
+    }
+    this.pendingAirflowWrite = undefined;
+
+    const alreadyConfirmed = this.snapshot.availability === 'online'
+      && this.snapshot.state.airflowSpeed === pending.speed;
+    this.platform.log.info(
+      alreadyConfirmed
+        ? `EcoFlow diagnostics: suppressing HomeKit airflow write because ${pending.speed}% is already confirmed`
+        : `EcoFlow diagnostics: dispatching settled HomeKit airflow write at ${pending.speed}%`,
+    );
+    const execution = alreadyConfirmed
+      ? Promise.resolve()
+      : this.enqueueWrite(() => ({ type: 'airflowSpeed', speed: pending.speed }));
+    void execution.then(
+      () => {
+        for (const waiter of pending.waiters) {
+          waiter.resolve();
+        }
+      },
+      error => {
+        for (const waiter of pending.waiters) {
+          waiter.reject(error);
+        }
+      },
+    );
   }
 
   private readCharacteristic(key: HomeKitClimateKey): CharacteristicValue {

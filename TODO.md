@@ -261,6 +261,15 @@ evidence and stable Apple Home behavior.
   troubleshooting, region, private-API risk, and uncertified-bridge guidance.
 - [ ] Investigate authenticated-account WAVE 3 autodiscovery; retain manual
   serial configuration until it is proven safe and WAVE-3-specific.
+- [ ] Add and validate Matter thermostat UI configuration through
+  `ThermostatUserInterfaceConfiguration.temperatureDisplayMode`:
+  - determine whether the WAVE/app setting, a per-device plugin setting, or
+    the Matter controller should be authoritative;
+  - verify Homebridge 2.2.1 endpoint composition and Apple Home behavior for
+    both Celsius and Fahrenheit display modes;
+  - keep normalized state and WAVE commands in Celsius regardless of the UI
+    preference, and reject feedback loops or unit-conversion drift.
+  [told: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533386597049958611)
 - [ ] Run `npm run verify` and inspect `npm pack --dry-run`.
 - [ ] Keep the package private until Julian explicitly approves publication.
 - [ ] Prepare versioning, release notes, and npm metadata only after acceptance.

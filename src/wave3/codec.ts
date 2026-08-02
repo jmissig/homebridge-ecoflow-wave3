@@ -364,6 +364,50 @@ export function encodeWave3Command(
   };
 }
 
+/**
+ * Ask the WAVE 3 to emit one complete display-property snapshot immediately.
+ * This uses the firmware's action 71 trigger; it does not change the periodic
+ * upload interval.
+ */
+export function encodeWave3FullDisplayRequest(
+  deviceSerial: string,
+  sequence: number,
+): EncodedWave3Command {
+  validateDeviceSerial(deviceSerial);
+  validateSequence(sequence);
+
+  const config = create(Wave3ConfigWriteSchema, {
+    activeDisplayPropertyFullUpload: true,
+  });
+  const payload = toBinary(Wave3ConfigWriteSchema, config);
+  const message = create(Wave3SetMessageSchema, {
+    header: {
+      pdata: payload,
+      src: 32,
+      dest: 66,
+      dSrc: 1,
+      dDest: 1,
+      encType: 1,
+      checkType: 3,
+      cmdFunc: WAVE3_COMMAND_FUNCTION,
+      cmdId: 17,
+      dataLen: payload.length,
+      needAck: 1,
+      seq: sequence,
+      version: 3,
+      payloadVer: 1,
+      isRwCmd: 1,
+      from: 'Android',
+      deviceSn: deviceSerial,
+    },
+  });
+
+  return {
+    sequence,
+    bytes: toBinary(Wave3SetMessageSchema, message),
+  };
+}
+
 export function transformWave3Payload(
   payload: Uint8Array,
   encryptionType: number,

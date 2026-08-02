@@ -15,6 +15,7 @@ import {
   decodeWave3Message,
   decodeWave3QuotaReply,
   encodeWave3Command,
+  encodeWave3FullDisplayRequest,
   mergeWave3DisplayUpdate,
   packedFirmwareVersion,
   transformWave3Payload,
@@ -425,6 +426,22 @@ describe('WAVE 3 codec', () => {
       ).bytes),
       GOLDEN_COOL_COMMAND_HEX,
     );
+  });
+
+  it('encodes a one-off full display-property upload trigger', () => {
+    const encoded = encodeWave3FullDisplayRequest('TEST-WAVE3-SERIAL', 321);
+    const message = fromBinary(Wave3SetMessageSchema, encoded.bytes);
+    const config = fromBinary(
+      Wave3ConfigWriteSchema,
+      message.header?.pdata ?? new Uint8Array(),
+    );
+
+    assert.equal(encoded.sequence, 321);
+    assert.equal(message.header?.cmdFunc, 254);
+    assert.equal(message.header?.cmdId, 17);
+    assert.equal(message.header?.needAck, 1);
+    assert.equal(message.header?.deviceSn, 'TEST-WAVE3-SERIAL');
+    assert.equal(config.activeDisplayPropertyFullUpload, true);
   });
 
   it('validates caller-supplied command boundaries', () => {

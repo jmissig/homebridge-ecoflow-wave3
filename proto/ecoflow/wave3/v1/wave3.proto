@@ -45,6 +45,7 @@ message Wave3RuntimePropertyUpload {
 
 message Wave3ConfigWrite {
   optional bool cfg_main_power = 4;
+  optional bool active_display_property_full_upload = 71;
   optional uint32 cfg_wave_operating_mode = 153;
   optional uint32 cfg_wave_operating_submode = 154;
   optional uint32 cfg_airflow_speed = 155;
@@ -58,6 +59,7 @@ message Wave3ConfigWriteAck {
   optional int32 action_id = 1;
   optional bool config_ok = 2;
   optional bool cfg_main_power = 4;
+  optional bool active_display_property_full_upload = 71;
   optional uint32 cfg_wave_operating_mode = 153;
   optional uint32 cfg_wave_operating_submode = 154;
   optional uint32 cfg_airflow_speed = 155;

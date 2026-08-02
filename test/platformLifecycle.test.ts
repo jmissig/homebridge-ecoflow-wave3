@@ -79,6 +79,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
     assert.deepEqual(harness.boundTemperatureSources, ['ambient', 'none']);
     assert.equal(harness.platform.matterAccessories.size, 2);
+    assert.deepEqual(harness.fullDisplayStateRequests, ['FIRST1234', 'SECOND5678']);
 
     await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 1);
@@ -91,6 +92,22 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(harness.sessionStopCount, 1);
     assert.equal(harness.bindingStopCount, 2);
     assert.equal(harness.controllerStopCount, 2);
+  });
+
+  it('requests one full display snapshot only when cached state is absent or expired', async () => {
+    const harness = platformHarness(validConfig());
+    const recent = cachedMatterAccessory(
+      'Bedroom WAVE 3',
+      uuidFor('FIRST1234'),
+      'FIRST1234',
+      'ambient',
+    );
+    recent.context.lastConfirmedAt = Date.now() - 60_000;
+    harness.platform.configureMatterAccessory(recent);
+
+    await harness.signalDidFinishLaunching();
+
+    assert.deepEqual(harness.fullDisplayStateRequests, ['SECOND5678']);
   });
 
   it('uses stable serial-derived UUIDs without writing identifiers to logs', async () => {
@@ -383,6 +400,7 @@ function platformHarness(
   unregistered: MatterAccessory[];
   boundSerials: string[];
   boundTemperatureSources: string[];
+  fullDisplayStateRequests: string[];
   stateReadClusters: string[];
   events: string[];
   logs: Record<'debug' | 'info' | 'warn' | 'error', string[]>;
@@ -397,6 +415,7 @@ function platformHarness(
   const unregistered: MatterAccessory[] = [];
   const boundSerials: string[] = [];
   const boundTemperatureSources: string[] = [];
+  const fullDisplayStateRequests: string[] = [];
   const stateReadClusters: string[] = [];
   const events: string[] = [];
   const logs = {
@@ -501,6 +520,9 @@ function platformHarness(
         onStateChange: () => () => undefined,
         publishCommand: async () => undefined,
         requestState: async () => undefined,
+        requestFullDisplayState: async serialNumber => {
+          fullDisplayStateRequests.push(serialNumber);
+        },
         start: async () => {
           events.push('session:start');
           await startGate?.promise;
@@ -567,6 +589,7 @@ function platformHarness(
     unregistered,
     boundSerials,
     boundTemperatureSources,
+    fullDisplayStateRequests,
     stateReadClusters,
     events,
     logs,

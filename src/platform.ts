@@ -22,6 +22,7 @@ import {
 } from './ecoflow/session.js';
 import {
   createWave3MatterAccessory,
+  isRecentCachedState,
   releaseWave3MatterAccessoryState,
   Wave3MatterAccessory,
   type MatterAccessoryBinding,
@@ -43,6 +44,7 @@ export interface Wave3MatterAccessoryContext {
 }
 
 export interface PlatformCloudSession extends Wave3ControllerSession {
+  requestFullDisplayState(serialNumber: string): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -234,6 +236,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     const logger = cloudLogger(this.log);
     const session = this.dependencies.createSession(this.parsedConfig, logger);
     this.session = session;
+    const devicesNeedingFullDisplayState: string[] = [];
 
     for (const device of this.parsedConfig.devices) {
       if (this.shutdownStarted) {
@@ -243,6 +246,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       const cachedAccessory = this.matterAccessories.get(uuid);
       const sourceChanged = cachedAccessory !== undefined
         && cachedAccessory.context.currentTemperatureSource !== device.currentTemperatureSource;
+      if (sourceChanged
+        || !isRecentCachedState(cachedAccessory?.context.lastConfirmedAt)) {
+        devicesNeedingFullDisplayState.push(device.serialNumber);
+      }
       if (sourceChanged) {
         await this.matter!.unregisterPlatformAccessories(
           PLUGIN_NAME,
@@ -310,6 +317,17 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     } catch {
       if (!this.shutdownStarted) {
         this.log.error('EcoFlow WAVE 3 cloud session failed to start');
+      }
+      return;
+    }
+    for (const serialNumber of devicesNeedingFullDisplayState) {
+      try {
+        await session.requestFullDisplayState(serialNumber);
+      } catch {
+        if (!this.shutdownStarted) {
+          this.log.error('EcoFlow WAVE 3 one-off full display-state request failed');
+        }
+        break;
       }
     }
   }

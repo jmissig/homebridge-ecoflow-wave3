@@ -15,6 +15,7 @@ import type {
 import {
   decodeWave3QuotaReply,
   decodeWave3Message,
+  encodeWave3FullDisplayRequest,
   hasWave3ControlStateEvidence,
   hasWave3DisplayEvidence,
 } from '../wave3/codec.js';
@@ -283,6 +284,35 @@ export class EcoFlowCloudSession {
     } catch {
       this.clearPendingRefresh(serialNumber, refresh.requestId);
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
+    }
+  }
+
+  async requestFullDisplayState(
+    serialNumber: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const connection = this.requireOnlineConnection();
+    const topics = this.topicsForConfiguredDevice(serialNumber);
+    const request = encodeWave3FullDisplayRequest(
+      serialNumber,
+      randomInt(10, 1_000),
+    );
+    this.logger.debug(
+      `EcoFlow diagnostics: publishing one-off full display-state request for ${this.deviceLabel(serialNumber)} `
+      + `(sequence=${request.sequence}, generation=${this.connectionGeneration})`,
+    );
+    try {
+      await this.runPublicPublish(
+        connection,
+        topics.set,
+        request.bytes,
+        signal,
+      );
+      this.logger.debug(
+        `EcoFlow diagnostics: MQTT broker accepted one-off full display-state request for ${this.deviceLabel(serialNumber)}`,
+      );
+    } catch {
+      throw new EcoFlowCloudSessionError('EcoFlow full display-state request failed');
     }
   }
 

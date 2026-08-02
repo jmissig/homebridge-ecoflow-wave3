@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { create, toBinary } from '@bufbuild/protobuf';
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 
 import type { EcoFlowMqttCredentials } from '../src/ecoflow/auth.js';
 import { parseEcoFlowWave3Config } from '../src/ecoflow/config.js';
@@ -25,6 +25,7 @@ import {
 } from '../src/ecoflow/session.js';
 import {
   Wave3DisplayPropertyUploadSchema,
+  Wave3ConfigWriteSchema,
   Wave3RuntimePropertyUploadSchema,
   Wave3SetMessageSchema,
 } from '../src/proto/gen/ecoflow/wave3/v1/wave3_pb.js';
@@ -107,6 +108,24 @@ describe('EcoFlow cloud session', () => {
       connection.publishCalls.at(-1)?.payload,
       EXPECTED_REFRESH_PAYLOAD.replace('999910001', '999910003'),
     );
+
+    await session.requestFullDisplayState('TESTWAVE30001');
+    const fullDisplayPublication = connection.publishCalls.at(-1)!;
+    assert.equal(
+      fullDisplayPublication.topic,
+      buildWave3Topics('TEST_USER', 'TESTWAVE30001').set,
+    );
+    assert.ok(fullDisplayPublication.payload instanceof Uint8Array);
+    const fullDisplayEnvelope = fromBinary(
+      Wave3SetMessageSchema,
+      fullDisplayPublication.payload as Uint8Array,
+    );
+    assert.equal(fullDisplayEnvelope.header?.cmdId, 17);
+    const fullDisplayConfig = fromBinary(
+      Wave3ConfigWriteSchema,
+      fullDisplayEnvelope.header?.pdata ?? new Uint8Array(),
+    );
+    assert.equal(fullDisplayConfig.activeDisplayPropertyFullUpload, true);
 
     await session.stop();
     await session.stop();

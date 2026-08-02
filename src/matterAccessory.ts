@@ -18,7 +18,17 @@ import type {
 
 const DEFAULT_TEMPERATURE_CENTIDEGREES = 2_000;
 const DESIRED_MATTER_VALUE_TTL_MS = 30_000;
-const CACHED_STATE_MAX_AGE_MILLISECONDS = 15 * 60_000;
+export const CACHED_STATE_MAX_AGE_MILLISECONDS = 15 * 60_000;
+
+export function isRecentCachedState(
+  lastConfirmedAt: number | undefined,
+  now: number = Date.now(),
+  maximumAgeMilliseconds: number = CACHED_STATE_MAX_AGE_MILLISECONDS,
+): boolean {
+  return typeof lastConfirmedAt === 'number'
+    && Number.isFinite(lastConfirmedAt)
+    && Math.max(0, now - lastConfirmedAt) <= maximumAgeMilliseconds;
+}
 
 export const MATTER_SYSTEM_MODE = {
   auto: 0x01,
@@ -1118,10 +1128,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private hasRecentCachedState(): boolean {
-    const lastConfirmedAt = this.accessory.context.lastConfirmedAt;
-    return typeof lastConfirmedAt === 'number'
-      && Number.isFinite(lastConfirmedAt)
-      && Math.max(0, this.now() - lastConfirmedAt) <= this.cachedStateMaxAgeMilliseconds;
+    return isRecentCachedState(
+      this.accessory.context.lastConfirmedAt,
+      this.now(),
+      this.cachedStateMaxAgeMilliseconds,
+    );
   }
 
   private scheduleCacheExpiry(): void {

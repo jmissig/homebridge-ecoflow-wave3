@@ -257,6 +257,9 @@ and confirm Matter state does not rubber-band.
 - [ ] EcoFlow app and Matter control at the same time.
 - [ ] MQTT reconnect, Homebridge child-bridge restart, WAVE power cycle, and an
   extended unattended session.
+- [ ] Verify startup uses recent cached state without action `71`, while a
+  missing/expired cache sends exactly one action `71` request and receives an
+  immediate authoritative display snapshot.
 - [ ] Normal and per-child-bridge debug logging with all identifiers and
   credentials redacted.
 

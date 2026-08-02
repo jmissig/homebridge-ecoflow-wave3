@@ -142,6 +142,18 @@ A matching get reply contains `data.online` and `data.quotaMap`.
   request, repeat `latestQuotas` after 5, 10, and 20 seconds, then every 30
   seconds until authoritative active-mode state or an explicit offline reply
   arrives. Reconnect, shutdown, and authoritative state cancel the retry loop.
+- At child-bridge startup, a device with no cached authoritative state or a
+  `lastConfirmedAt` older than the same 15-minute Matter cache window also gets
+  exactly one WAVE-specific configuration-write trigger:
+  `active_display_property_full_upload = true` (action `71`). A recent cache
+  suppresses this trigger. The request does not modify periodic upload
+  intervals and is not part of the `latestQuotas` retry loop.
+  [Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533518835838222407)
+- Action `71` is defined by the
+  [pinned upstream WAVE 3 schema](https://github.com/tolwi/hassio-ecoflow-cloud/blob/95dc51eb12562c49be9067052814d5960cc0829f/custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto#L288-L293).
+  Its ability to provoke the expected immediate full `cmd_id = 21` property
+  upload remains an implementation inference until the household device
+  confirms it.
 - MQTT setup completing means only that the cloud transport is ready. The
   controller remains stale and rejects writes until current-generation WAVE 3
   climate evidence arrives. A valid `latestQuotas` get reply supplies that

@@ -209,12 +209,7 @@ protobuf, normalized state, command confirmation, app coexistence, and core
 power/temperature/fan control paths have a household WAVE 3 hardware baseline.
 
 The checked-in 0.2 presentation is Matter-only. The former HAP `HeaterCooler`
-adapter and its tests were removed in Phase M5. The dynamic-platform
-`configureAccessory` callback remains inert because Homebridge requires it for
-the dynamic platform shape; it must never attach handlers, mutate the HAP
-cache, or re-publish a HAP accessory. The sole pre-release operator removes any
-old HAP cache entry with Homebridge's own cached-accessory management before
-Matter commissioning. [Decision 0003](docs/decisions/0003-matter-only.md)
+adapter and its tests were removed in Phase M5. [Decision 0003](docs/decisions/0003-matter-only.md)
 governs this boundary.
 
 Do not describe a command or service as supported merely because it compiles, has a plausible protobuf field, or matches a Home Assistant implementation.

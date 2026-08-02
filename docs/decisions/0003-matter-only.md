@@ -6,11 +6,7 @@
 - **Source:** [Discord project thread · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533330071866310766)
 
 Implementation status: completed through the Matter-only source cleanup on
-2026-08-02. Homebridge's required `configureAccessory` callback remains inert;
-it does not publish or control a HAP accessory. Automatic pre-0.2 HAP cache
-migration was removed because this is a sole-user pre-release installation;
-the operator will use Homebridge's own cached-accessory management instead.
-[Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533498242304704604)
+2026-08-02.
 
 ## Decision
 
@@ -67,7 +63,7 @@ different normalization.
 
 - The existing EcoFlow authentication, MQTT, protobuf, normalized state,
   controller confirmation, rate limiting, and app-coexistence code remains.
-- The HAP presentation class, cached HAP accessories, HAP tests, HAP package
+- The HAP presentation class, HAP tests, HAP package
   metadata, and HAP-specific error mapping will be deleted during migration.
 - Existing Apple Home pairing, room assignment, scenes, and automations will
   not migrate. The old HAP child bridge must be unpaired and the Matter child

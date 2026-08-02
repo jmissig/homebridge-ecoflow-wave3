@@ -5,7 +5,6 @@ import type {
   API,
   Logging,
   MatterAccessory,
-  PlatformAccessory,
   PlatformConfig,
 } from 'homebridge';
 
@@ -22,16 +21,6 @@ import { wave3RoomAirConditionerDeviceType } from '../src/matterAccessory.js';
 import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
 
 describe('EcoFlow WAVE 3 platform lifecycle', () => {
-  it('does not mutate legacy HAP cache during Homebridge restoration', () => {
-    const harness = platformHarness(validConfig());
-    const legacy = new FakeCachedAccessory('Legacy WAVE 3', 'legacy-hap-uuid');
-
-    harness.platform.configureAccessory(legacy as unknown as PlatformAccessory);
-
-    assert.deepEqual(harness.legacyHapUnregistered, []);
-    assert.match(harness.logs.warn.join('\n'), /remove it with Homebridge cached-accessory management/);
-  });
-
   it('validates configuration before creating a session', async () => {
     const harness = platformHarness({
       name: 'Invalid',
@@ -339,19 +328,6 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
   });
 });
 
-class FakeCachedAccessory {
-  context: Record<string, unknown> = {};
-
-  constructor(
-    public displayName: string,
-    public readonly UUID: string,
-  ) {}
-
-  updateDisplayName(name: string): void {
-    this.displayName = name;
-  }
-}
-
 function cachedMatterAccessory(
   displayName: string,
   UUID: string,
@@ -395,7 +371,6 @@ function platformHarness(
   registered: MatterAccessory[];
   updated: MatterAccessory[];
   unregistered: MatterAccessory[];
-  legacyHapUnregistered: FakeCachedAccessory[];
   boundSerials: string[];
   boundTemperatureSources: string[];
   events: string[];
@@ -409,7 +384,6 @@ function platformHarness(
   const registered: MatterAccessory[] = [];
   const updated: MatterAccessory[] = [];
   const unregistered: MatterAccessory[] = [];
-  const legacyHapUnregistered: FakeCachedAccessory[] = [];
   const boundSerials: string[] = [];
   const boundTemperatureSources: string[] = [];
   const events: string[] = [];
@@ -486,13 +460,6 @@ function platformHarness(
       }
       : undefined,
     isMatterEnabled: () => matterEnabled,
-    unregisterPlatformAccessories: (
-      _plugin: string,
-      _platform: string,
-      accessories: FakeCachedAccessory[],
-    ) => {
-      legacyHapUnregistered.push(...accessories);
-    },
     on: (event: string, listener: () => void) => {
       eventListeners.set(event, listener);
       return api;
@@ -582,7 +549,6 @@ function platformHarness(
     registered,
     updated,
     unregistered,
-    legacyHapUnregistered,
     boundSerials,
     boundTemperatureSources,
     events,

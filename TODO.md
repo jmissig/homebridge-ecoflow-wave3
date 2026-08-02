@@ -192,9 +192,7 @@ properties.
 - [x] Delete `src/platformAccessory.ts` and replace its imports/usages with the
   Matter adapter.
 - [x] Delete HAP `Service.HeaterCooler`, `HumiditySensor`, characteristics,
-  `HapStatusError`, and presentation/cache state. Retain only Homebridge's
-  required inert `configureAccessory` callback; legacy cache removal is an
-  explicit operator action through Homebridge.
+  `HapStatusError`, and presentation/cache state.
 - [x] Delete HAP-specific tests and test doubles after equivalent Matter tests
   pass.
 - [x] Remove the direct `@homebridge/hap-nodejs` development dependency; the
@@ -217,8 +215,6 @@ compatibility path.
   conditions.
 - [x] Confirm the 0.2 package/build contains the Matter adapter and no compiled
   HAP presentation; run `npm run verify` and inspect `npm pack --dry-run`.
-- [x] Document removal of the pre-0.2 HAP cache entry through Homebridge's own
-  cached-accessory management before Matter commissioning.
 - [ ] Pull/build/install the Matter-only plugin under the Saga account that
   runs this Homebridge child bridge.
 - [ ] Stop using the existing HAP pairing and unpair the old EcoFlow WAVE 3

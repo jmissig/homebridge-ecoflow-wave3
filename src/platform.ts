@@ -141,12 +141,8 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     });
   }
 
-  /** Required dynamic-platform callback; HAP cache management remains operator-owned. */
   configureAccessory(accessory: PlatformAccessory): void {
     void accessory;
-    this.log.warn(
-      'Found a legacy cached HAP WAVE 3 accessory; remove it with Homebridge cached-accessory management',
-    );
   }
 
   /** Record Matter cache entries before launch for reconciliation by UUID. */

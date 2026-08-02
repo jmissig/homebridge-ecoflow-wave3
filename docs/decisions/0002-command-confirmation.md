@@ -21,8 +21,8 @@ The controller serializes commands and considers one successful only after:
 2. A configuration-write acknowledgement arrives with the same envelope
    sequence as the command.
 3. `configOk` is explicitly `true`.
-4. The acknowledgement echoes values consistent with the command.
-5. A newer display upload, received after that acknowledgement, contains the
+4. The acknowledgement echoes at least one value consistent with the command.
+5. A newer display upload, received after that acknowledgement, contains every
    command-specific field and confirms the requested normalized state.
 
 A state upload received before acknowledgement, or an unrelated partial
@@ -34,9 +34,12 @@ Broker publication completion and the device acknowledgement can arrive in
 either order. The controller retains an early matching acknowledgement and
 qualifying later display evidence, but does not report success unless MQTT
 publication subsequently succeeds. Publication failure still wins.
+The WAVE 3 may omit one or more successfully applied fields from positive
+acknowledgements for a composite write. Matching acknowledgement fragments are
+accumulated, but authoritative later display state may confirm omitted fields.
 Semantically identical duplicate acknowledgements are ignored; contradictory
-acknowledgements with the same sequence make acceptance ambiguous and reject
-the command.
+acknowledgements with the same sequence are treated as foreign traffic and do
+not contribute evidence.
 
 Publication failure, explicit/ambiguous acknowledgement, timeout, disconnect,
 or shutdown returns a typed failure. Commands are serialized so climate mode,
@@ -47,8 +50,8 @@ an in-flight publication so it cannot hold the command queue indefinitely.
 
 ## Consequences
 
-- This policy is deliberately conservative and may reject commands that the
-  device actually applied.
+- This policy remains fail-closed while accommodating the household device's
+  observed partial acknowledgements for composite writes.
 - `configOk` absence is treated as rejection until hardware proves another
   interpretation.
 - Exact sequence correlation and 32-bit telemetry ordering remain protocol

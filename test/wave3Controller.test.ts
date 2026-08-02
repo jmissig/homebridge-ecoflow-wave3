@@ -659,6 +659,37 @@ describe('WAVE 3 controller', () => {
     assert.deepEqual(await rangeResult, { status: 'confirmed', sequence: 92 });
   });
 
+  it('accepts authoritative state for composite fields omitted from positive acknowledgements', async () => {
+    const session = new FakeControllerSession();
+    const controller = readyController(session, {
+      initialSequence: 93,
+    });
+    const result = controller.execute({
+      type: 'mode',
+      mode: 'cool',
+      targetTemperatureCelsius: 22,
+    });
+    await flushAsyncWork();
+
+    session.emitPacket('setReply', acknowledgementPacket(93, {
+      configOk: true,
+      mainPower: true,
+    }));
+    session.emitPacket('setReply', acknowledgementPacket(93, {
+      configOk: true,
+      targetTemperature: 22,
+    }));
+    await flushAsyncWork();
+    assert.equal(session.requestStateCalls, 1);
+    session.emitPacket('property', displayPacket(4, {
+      mode: 1,
+      targetTemperature: 22,
+    }));
+
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 93 });
+    controller.stop();
+  });
+
   it('serializes conflicting commands and times out without optimistic state', async () => {
     const session = new FakeControllerSession();
     const clock = new FakeClock();

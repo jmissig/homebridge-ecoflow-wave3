@@ -340,14 +340,14 @@ publishing a command.
 - A same-sequence acknowledgement whose echoed values do not match the pending
   plugin command is treated as possible foreign-client traffic and ignored.
   EcoFlow may split a composite write into multiple positive same-sequence
-  acknowledgement packets. Matching fragments are accumulated until every
-  field in the pending command is acknowledged. Later matching display state
-  remains required before confirmation.
+  acknowledgement packets. Matching fragments are accumulated; at least one
+  positive, command-related fragment is required, but a later authoritative
+  display upload may confirm composite fields omitted from acknowledgements.
 - When Apple Home stages thermostat values while the appliance is off, the
   subsequent power-on write may combine `cfg_main_power`, mode, and either the
   single-mode target or both automatic thresholds. The controller must confirm
-  every included field; household acceptance of this composite startup shape
-  remains pending.
+  every included field from the combined acknowledgement and later observed
+  state evidence.
 
 ## Household hardware observations
 
@@ -385,6 +385,21 @@ publishing a command.
   target. Neither is required for the first Matter climate slice.
 
 [Source: household Homebridge diagnostic log and narrated app actions shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
+
+**Hardware — 2026-08-02 composite startup confirmation**
+
+- An Apple Home Off-to-Cool-at-22°C write produced positive same-sequence
+  acknowledgements for power and target temperature but no mode
+  acknowledgement.
+- One second later, display state authoritatively reported power on, Cool mode,
+  and a 22°C target. A full display upload repeated the same state three
+  seconds later.
+- The appliance obeyed the command, but the original all-fields-must-be-echoed
+  acknowledgement policy timed out. This confirms that later authoritative
+  display state must be allowed to satisfy composite fields omitted from
+  positive acknowledgements.
+
+[Source: household Apple Home/Matter diagnostic log shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533523474449039422)
 
 **Hardware — 2026-08-01 HomeKit command validation**
 

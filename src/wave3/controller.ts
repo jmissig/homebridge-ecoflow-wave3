@@ -65,6 +65,7 @@ interface PendingCommand {
   acknowledgementRejected: boolean;
   acknowledgementRevision?: number;
   observedStateConfirmed: boolean;
+  stateRefreshRequested: boolean;
   resolve: (result: Wave3CommandResult) => void;
   cancelTimeout: () => void;
 }
@@ -188,6 +189,7 @@ export class Wave3Controller {
         publicationController,
         acknowledgementRejected: false,
         observedStateConfirmed: false,
+        stateRefreshRequested: false,
         resolve,
         cancelTimeout,
       };
@@ -404,14 +406,13 @@ export class Wave3Controller {
       pending.command,
     );
     pending.acknowledgement = aggregate;
+    pending.acknowledgementRevision ??= this.displayRevision;
     if (!acknowledgementMatchesCommand(aggregate, pending.command)) {
       this.logger.debug(
         `EcoFlow diagnostics: controller accumulated partial acknowledgement=${sequence} `
-        + 'and is waiting for remaining command fields',
+        + 'and is waiting for remaining acknowledgement or observed-state evidence',
       );
-      return;
     }
-    pending.acknowledgementRevision = this.displayRevision;
     if (pending.publicationCompleted) {
       this.applyAcknowledgement(pending);
     }
@@ -427,13 +428,14 @@ export class Wave3Controller {
       this.settlePending('acknowledgementRejected');
       return;
     }
-    if (!acknowledgementMatchesCommand(acknowledgement, pending.command)) {
-      return;
-    }
     if (pending.observedStateConfirmed) {
       this.settlePending(undefined);
       return;
     }
+    if (pending.stateRefreshRequested) {
+      return;
+    }
+    pending.stateRefreshRequested = true;
     void this.session.requestState(this.serialNumber).catch(() => {
       this.settlePending('disconnected');
     });

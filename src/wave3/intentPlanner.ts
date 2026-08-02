@@ -1,20 +1,9 @@
 import type {
   Wave3Command,
-  Wave3ControllableMode,
-  Wave3ModeCommand,
-  Wave3ModeParameters,
   Wave3State,
 } from './domain.js';
 
 export const WAVE3_AUTO_MIN_DEADBAND_CELSIUS = 4;
-
-export interface Wave3ModeTargetIntent {
-  profile?: Readonly<Wave3ModeParameters>;
-  presentedHeatingCelsius?: number;
-  presentedCoolingCelsius?: number;
-  stagedHeatingCelsius?: number;
-  stagedCoolingCelsius?: number;
-}
 
 export interface Wave3TemperatureIntent {
   heatingCelsius?: number;
@@ -26,62 +15,6 @@ export type Wave3TemperaturePlan =
   | { status: 'noop' }
   | { status: 'inactive' }
   | { status: 'missingAutomaticRange' };
-
-/**
- * Compile a WAVE mode transition with the destination profile values that the
- * controller currently presents. WAVE profiles are independent: sending only
- * a mode can restore the appliance's older saved target instead.
- */
-export function planWave3ModeTransition(
-  mode: Wave3ControllableMode,
-  intent: Wave3ModeTargetIntent,
-): Wave3ModeCommand {
-  if (mode === 'cool') {
-    return {
-      type: 'mode',
-      mode,
-      targetTemperatureCelsius: intent.stagedCoolingCelsius
-        ?? intent.profile?.targetTemperatureCelsius
-        ?? intent.presentedCoolingCelsius,
-    };
-  }
-  if (mode === 'heat') {
-    return {
-      type: 'mode',
-      mode,
-      targetTemperatureCelsius: intent.stagedHeatingCelsius
-        ?? intent.profile?.targetTemperatureCelsius
-        ?? intent.presentedHeatingCelsius,
-    };
-  }
-  if (mode === 'auto') {
-    let lower = intent.stagedHeatingCelsius
-      ?? intent.profile?.targetTemperatureLowerCelsius
-      ?? intent.presentedHeatingCelsius;
-    let upper = intent.stagedCoolingCelsius
-      ?? intent.profile?.targetTemperatureUpperCelsius
-      ?? intent.presentedCoolingCelsius;
-    if (lower === undefined || upper === undefined) {
-      return { type: 'mode', mode };
-    }
-    [lower, upper] = constrainWave3AutomaticRange(
-      lower,
-      upper,
-      intent.stagedHeatingCelsius !== undefined && intent.stagedCoolingCelsius === undefined
-        ? 'lower'
-        : intent.stagedCoolingCelsius !== undefined && intent.stagedHeatingCelsius === undefined
-          ? 'upper'
-          : 'both',
-    );
-    return {
-      type: 'mode',
-      mode,
-      targetTemperatureLowerCelsius: lower,
-      targetTemperatureUpperCelsius: upper,
-    };
-  }
-  return { type: 'mode', mode };
-}
 
 /** Plan an active setpoint update without importing Matter error semantics. */
 export function planWave3TemperatureIntent(

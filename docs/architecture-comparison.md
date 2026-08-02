@@ -128,12 +128,13 @@ platform cleanup without live hardware.
 
 ### WAVE-aware Matter behavior
 
-The Matter adapter preserves staged off-state thermostat intent, carries
-the authoritative destination profile with mode transitions, wakes an off
-appliance before applying that profile, coalesces slider writes, suppresses
-duplicates, preserves fractional Celsius, enforces the observed four-degree
-Auto range, and distinguishes Sleep/Night from a timer. These are the same
-semantic behaviors the blinded design requires.
+The Matter adapter preserves revisioned thermostat intent, wakes an off
+appliance, then confirms power, mode, and active target/range as separate
+steps. It re-plans from the latest authoritative snapshot between steps,
+coalesces slider writes, suppresses duplicates, preserves fractional Celsius,
+enforces the observed four-degree Auto range internally, and distinguishes
+Sleep/Night from a timer. Newer controller intent supersedes unfinished steps;
+power-off cancels queued thermostat and fan work.
 
 ## Differences and their disposition
 
@@ -159,10 +160,13 @@ backpressure, or more independent event sources appear.
 **Blinded ideal:** the actor/application layer owns semantic intent planning,
 including destination-mode profiles and write coalescing.
 
-**Current:** `Wave3MatterAccessory` retains Apple Home's staged-off writes,
-Matter transaction guards, and debounce/settling timing. The pure
-`wave3/intentPlanner.ts` owns destination-profile target/range selection,
-fractional setpoint preservation, and semantic no-op decisions.
+**Current:** `Wave3MatterAccessory` retains Apple Home's revisioned staged
+writes, Matter transaction guards, confirmed-step coordination, and
+debounce/settling timing. The pure `wave3/intentPlanner.ts` owns active
+target/range planning, fractional setpoint preservation, Auto range
+normalization, and semantic no-op decisions. Confirmed WAVE mode profiles stay
+in controller snapshots and are never inferred from inactive Matter companion
+setpoints.
 
 **Assessment:** aligned with the blinded ideal at the useful seam. Apple Home
 ordering remains presentation policy; WAVE profile semantics are independently

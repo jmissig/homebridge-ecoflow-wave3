@@ -24,29 +24,30 @@ per-mode profiles.
 
 ### 1. Make every mode transition explicitly sequential
 
-- [ ] Represent the user's desired destination as durable staged intent,
+- [x] Represent the user's desired destination as durable staged intent,
   separate from any command derived before wake-up.
-- [ ] When the WAVE is off:
+- [x] When the WAVE is off:
   1. send power-on only and confirm the resulting operational state;
   2. re-plan from the latest authoritative snapshot;
   3. send the destination mode and confirm it;
   4. send the destination target and confirm it.
-- [ ] When the WAVE is already on, confirm the mode change before applying its
+- [x] When the WAVE is already on, confirm the mode change before applying its
   target/range rather than assuming the hardware accepts both atomically.
-- [ ] Re-plan queued work after every confirmed step so a wake-up into a saved
+- [x] Re-plan queued work after every confirmed step so a wake-up into a saved
   profile cannot turn the remaining operation into a stale or false no-op.
-- [ ] Let a newer Matter intent supersede the remaining steps of an older one;
+- [x] Let a newer Matter intent supersede the remaining steps of an older one;
   power-off cancels all queued mode, setpoint, and fan work immediately.
-- [ ] Add transcript-shaped regressions for Off→Heat, Off→Cool, and
+- [x] Add transcript-shaped regressions for Off→Heat, Off→Cool, and
   on-device mode changes where the WAVE first restores a saved profile.
 
 ### 2. Keep WAVE profiles authoritative and Matter values presentational
 
-- [ ] Retain independent confirmed profiles for Cool, Heat, Auto, Fan Only,
-  Dry, and Sleep without copying values between modes.
-- [ ] Never infer a destination target from Matter's inactive companion
+- [x] Retain independent confirmed profiles for Cool, Heat, Auto, Fan Only,
+  and Dry, plus confirmed Sleep submode state, without copying values between
+  modes.
+- [x] Never infer a destination target from Matter's inactive companion
   heating/cooling setpoint.
-- [ ] Track which target/range values came from an explicit controller write
+- [x] Track which target/range values came from an explicit controller write
   versus projection needed only to keep Matter attributes transactionally
   valid.
 - [ ] Investigate why Apple Home can visually present one Heat/Cool target
@@ -60,9 +61,9 @@ per-mode profiles.
   writable `SystemMode`, but Apple Home twice displayed Auto without writing
   that value and ignored a correctly reported Auto state. [decision: Julian ·
   2026-08-02](docs/decisions/0004-defer-matter-auto.md)
-- [ ] Preserve the verified WAVE protocol semantics: wire mode `5`, lower/upper
+- [x] Preserve the verified WAVE protocol semantics: wire mode `5`, lower/upper
   thresholds, midpoint scalar target, 16–30°C limits, and a minimum 4°C range.
-- [ ] When the EcoFlow app selects Auto, retain its authoritative profile
+- [x] When the EcoFlow app selects Auto, retain its authoritative profile
   internally and present Cooling at the Auto upper threshold to Matter.
 - [ ] Decode or safely diagnose the official app's Auto range-write
   acknowledgement fields. Accepted app writes did not change the subsequent

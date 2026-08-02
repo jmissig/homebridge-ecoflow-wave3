@@ -40,12 +40,10 @@ import type {
   Wave3Command,
   Wave3CommandFailure,
   Wave3ControllerSnapshot,
-  Wave3ModeCommand,
   Wave3Mode,
 } from './wave3/domain.js';
 import {
   constrainWave3AutomaticRange,
-  planWave3ModeTransition,
   planWave3TemperatureIntent,
 } from './wave3/intentPlanner.js';
 
@@ -82,7 +80,8 @@ interface PendingTemperatureWrite {
   }>;
 }
 
-interface StagedOffThermostatIntent {
+interface StagedThermostatIntent {
+  revision: number;
   systemMode?: number;
   heatingCelsius?: number;
   coolingCelsius?: number;
@@ -153,7 +152,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private snapshot: Wave3ControllerSnapshot;
   private pendingFanWrite?: PendingFanWrite;
   private pendingTemperatureWrite?: PendingTemperatureWrite;
-  private stagedOffThermostatIntent?: StagedOffThermostatIntent;
+  private stagedThermostatIntent?: StagedThermostatIntent;
+  private thermostatIntentRevision = 0;
+  private thermostatCoordinator?: Promise<void>;
   private cacheExpiryTimer?: ReturnType<typeof setTimeout>;
   private presentedReachable = true;
   private stopped = false;
@@ -230,6 +231,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       }
       this.pendingTemperatureWrite = undefined;
     }
+    this.cancelThermostatIntent();
     await Promise.allSettled([...this.activeCommands]);
     releaseMatterControlState(this.accessory.UUID);
     await this.updateTail;
@@ -241,6 +243,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       setPower: (on, applyMatter) => {
         if (!on) {
           this.cancelPendingFan();
+          this.cancelPendingTemperature();
+          this.cancelThermostatIntent();
         }
         return this.runInteractiveCommand(
           'power',
@@ -293,20 +297,17 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     this.logger.debug?.(
       `EcoFlow diagnostics: Matter write power=${on} currentPower=${String(this.snapshot.state.powered)}`,
     );
-    if (this.snapshot.state.powered !== on) {
-      const stagedStartup = on ? await this.startupCommand() : undefined;
-      await this.execute({ type: 'power', on });
-      if (on && stagedStartup !== undefined) {
-        // A sleeping/off WAVE may acknowledge a composite startup command but
-        // restore its saved profile instead of applying the supplied target.
-        // Wake it first, then apply the complete destination profile while it
-        // is demonstrably awake.
+    if (on) {
+      if (!this.snapshot.state.powered) {
+        await this.stageStartupMode();
+        await this.execute({ type: 'power', on: true });
         this.logger.debug?.(
-          `EcoFlow diagnostics: Matter power-on wake confirmed; applying ${describeModeCommand(stagedStartup)}`,
+          'EcoFlow diagnostics: Matter power-on wake confirmed; re-planning staged thermostat intent',
         );
-        await this.execute(stagedStartup);
-        this.stagedOffThermostatIntent = undefined;
       }
+      await this.coordinateThermostatIntent();
+    } else if (this.snapshot.state.powered !== false) {
+      await this.execute({ type: 'power', on: false });
     }
     await applyMatter();
   }
@@ -316,53 +317,21 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     this.logger.debug?.(
       `EcoFlow diagnostics: Matter write systemMode=${systemMode} powered=${String(this.snapshot.state.powered)}`,
     );
-    if (systemMode === MATTER_SYSTEM_MODE.sleep) {
-      this.trackAttributeCommand(
-        this.enqueueControllerOperation(async () => {
-          this.requireControllable();
-          const state = this.snapshot.state;
-          if (!state.powered || state.mode === 'off') {
-            throw new MatterStatus.InvalidInState('Sleep mode requires the WAVE 3 to be on');
-          }
-          if (state.submode !== 3) {
-            await this.execute({ type: 'submode', submode: 3 });
-          }
-        }),
-        'system mode',
-      );
-      return;
-    }
-
-    const mode = waveModeForSystemMode(systemMode);
-    if (mode === undefined) {
+    if (systemMode !== MATTER_SYSTEM_MODE.sleep
+      && waveModeForSystemMode(systemMode) === undefined) {
       throw new MatterStatus.ConstraintError(`Unsupported Matter system mode ${systemMode}`);
     }
+    if (systemMode === MATTER_SYSTEM_MODE.sleep && this.confirmedStateIsOff()) {
+      throw new MatterStatus.InvalidInState('Sleep mode requires the WAVE 3 to be on');
+    }
+    this.stageThermostatIntent({ systemMode });
     if (this.confirmedStateIsOff()) {
-      this.stagedOffThermostatIntent = {
-        ...this.stagedOffThermostatIntent,
-        systemMode,
-      };
       return;
     }
     this.trackAttributeCommand(
-      this.enqueueControllerOperation(() => this.applySystemMode(mode)),
+      this.scheduleThermostatCoordinator(),
       'system mode',
     );
-  }
-
-  private async applySystemMode(mode: Exclude<Wave3Mode, 'off'>): Promise<void> {
-    const state = this.snapshot.state;
-    if (!state.powered || state.mode === 'off') {
-      throw new MatterStatus.InvalidInState(
-        'Use the Room Air Conditioner power control before selecting a system mode',
-      );
-    }
-    if (state.submode === 3 || state.submode === 2 || state.submode === 4) {
-      await this.execute({ type: 'submode', submode: 0 });
-    }
-    if (this.snapshot.state.mode !== mode || !this.snapshot.state.powered) {
-      await this.execute(await this.modeCommand(mode));
-    }
   }
 
   private setTemperatureSetpoint(
@@ -377,12 +346,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       + ` powered=${String(this.snapshot.state.powered)}`,
     );
     if (this.confirmedStateIsOff()) {
-      this.stagedOffThermostatIntent = {
-        ...this.stagedOffThermostatIntent,
+      this.stageThermostatIntent({
         ...(kind === 'heating'
           ? { heatingCelsius: celsius }
           : { coolingCelsius: celsius }),
-      };
+      });
       return;
     }
     this.trackAttributeCommand(
@@ -396,21 +364,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     coolingCelsius?: number,
   ): Promise<void> {
     this.requireControllable();
-    const plan = planWave3TemperatureIntent(this.snapshot.state, {
-      heatingCelsius,
-      coolingCelsius,
-    });
-    if (plan.status === 'command') {
-      await this.execute(plan.command);
-      return;
-    }
-    if (plan.status === 'noop') {
-      return;
-    }
-    if (plan.status === 'missingAutomaticRange') {
-      throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
-    }
-    throw new MatterStatus.InvalidInState('The requested setpoint is inactive in the current mode');
+    this.stageThermostatIntent({ heatingCelsius, coolingCelsius });
+    await this.scheduleThermostatCoordinator();
   }
 
   private scheduleTemperatureSetpoint(
@@ -452,10 +407,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       const coolingCelsius = mode === 'cool' && pending.firstKind === 'heating'
         ? undefined
         : pending.coolingCelsius;
-      await this.enqueueControllerOperation(() => this.applyTemperatureSetpoints(
+      await this.applyTemperatureSetpoints(
         heatingCelsius,
         coolingCelsius,
-      ));
+      );
       for (const waiter of pending.waiters) {
         waiter.resolve();
       }
@@ -783,6 +738,17 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     }
   }
 
+  private cancelPendingTemperature(): void {
+    const pending = this.pendingTemperatureWrite;
+    if (pending === undefined) {
+      return;
+    }
+    this.pendingTemperatureWrite = undefined;
+    for (const waiter of pending.waiters) {
+      waiter.resolve();
+    }
+  }
+
   private requireControllable(): void {
     if (this.stopped) {
       throw new MatterStatus.InvalidInState('Matter accessory stopped');
@@ -965,26 +931,179 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     return this.snapshot.state.powered === false || this.snapshot.state.mode === 'off';
   }
 
-  private async startupCommand(): Promise<Wave3ModeCommand | undefined> {
-    const intent = this.stagedOffThermostatIntent;
-    const presentedThermostat = await this.presentedThermostat();
-    const systemMode = intent?.systemMode
-      ?? numberOrUndefined(presentedThermostat.systemMode)
-      ?? this.accessory.context.lastSystemMode;
-    const mode = systemMode === undefined ? undefined : waveModeForSystemMode(systemMode);
-    return mode === undefined
-      ? undefined
-      : planWave3ModeTransition(
-        mode,
-        modeTargetIntent(presentedThermostat, intent, this.snapshot.modeProfiles[mode]),
-      );
+  private stageThermostatIntent(
+    patch: Omit<Partial<StagedThermostatIntent>, 'revision'>,
+  ): StagedThermostatIntent {
+    const revision = ++this.thermostatIntentRevision;
+    const intent: StagedThermostatIntent = {
+      ...this.stagedThermostatIntent,
+      revision,
+    };
+    if (patch.systemMode !== undefined) {
+      intent.systemMode = patch.systemMode;
+    }
+    if (patch.heatingCelsius !== undefined) {
+      intent.heatingCelsius = patch.heatingCelsius;
+    }
+    if (patch.coolingCelsius !== undefined) {
+      intent.coolingCelsius = patch.coolingCelsius;
+    }
+    this.stagedThermostatIntent = intent;
+    this.logger.debug?.(
+      `EcoFlow diagnostics: staged Matter thermostat intent revision=${revision}`
+      + ` systemMode=${String(intent.systemMode)}`
+      + ` heatingCelsius=${String(intent.heatingCelsius)}`
+      + ` coolingCelsius=${String(intent.coolingCelsius)}`,
+    );
+    return intent;
   }
 
-  private async modeCommand(mode: Exclude<Wave3Mode, 'off'>): Promise<Wave3ModeCommand> {
-    return planWave3ModeTransition(
-      mode,
-      modeTargetIntent(await this.presentedThermostat(), undefined, this.snapshot.modeProfiles[mode]),
+  private cancelThermostatIntent(): void {
+    if (this.stagedThermostatIntent !== undefined) {
+      this.logger.debug?.(
+        'EcoFlow diagnostics: cancelled staged Matter thermostat intent revision='
+        + this.stagedThermostatIntent.revision,
+      );
+    }
+    this.thermostatIntentRevision += 1;
+    this.stagedThermostatIntent = undefined;
+  }
+
+  private async stageStartupMode(): Promise<void> {
+    if (this.stagedThermostatIntent?.systemMode !== undefined) {
+      return;
+    }
+    const presentedThermostat = await this.presentedThermostat();
+    if (this.stagedThermostatIntent?.systemMode !== undefined) {
+      return;
+    }
+    const systemMode = numberOrUndefined(presentedThermostat.systemMode)
+      ?? this.accessory.context.lastSystemMode;
+    if (systemMode !== undefined && waveModeForSystemMode(systemMode) !== undefined) {
+      this.stageThermostatIntent({ systemMode });
+    }
+  }
+
+  private scheduleThermostatCoordinator(): Promise<void> {
+    const existing = this.thermostatCoordinator;
+    if (existing !== undefined) {
+      const continueWithLatestIntent = () => {
+        if (this.stagedThermostatIntent !== undefined && !this.confirmedStateIsOff()) {
+          return this.scheduleThermostatCoordinator();
+        }
+      };
+      // A newer intent must not inherit the outcome of work it superseded.
+      // The original caller still observes the old failure; this caller waits
+      // for the latest revision to be planned after that operation settles.
+      return existing.then(continueWithLatestIntent, continueWithLatestIntent);
+    }
+    const coordinator = this.enqueueControllerOperation(() => this.coordinateThermostatIntent());
+    this.thermostatCoordinator = coordinator;
+    void coordinator.then(
+      () => {
+        if (this.thermostatCoordinator === coordinator) {
+          this.thermostatCoordinator = undefined;
+        }
+      },
+      () => {
+        if (this.thermostatCoordinator === coordinator) {
+          this.thermostatCoordinator = undefined;
+        }
+      },
     );
+    return coordinator;
+  }
+
+  private async coordinateThermostatIntent(): Promise<void> {
+    while (this.stagedThermostatIntent !== undefined) {
+      this.requireControllable();
+      if (this.confirmedStateIsOff()) {
+        return;
+      }
+      const intent = this.stagedThermostatIntent;
+      const revision = intent.revision;
+      try {
+        if (intent.systemMode === MATTER_SYSTEM_MODE.sleep) {
+          if (this.snapshot.state.submode !== 3) {
+            await this.execute({ type: 'submode', submode: 3 });
+          }
+        } else {
+          const requestedMode = intent.systemMode === undefined
+            ? undefined
+            : waveModeForSystemMode(intent.systemMode);
+          if (intent.systemMode !== undefined && requestedMode === undefined) {
+            throw new MatterStatus.ConstraintError(
+              `Unsupported Matter system mode ${intent.systemMode}`,
+            );
+          }
+          if (requestedMode !== undefined
+            && (this.snapshot.state.submode === 2
+              || this.snapshot.state.submode === 3
+              || this.snapshot.state.submode === 4)) {
+            await this.execute({ type: 'submode', submode: 0 });
+          }
+          if (this.thermostatIntentRevision !== revision) {
+            this.logger.debug?.(
+              `EcoFlow diagnostics: thermostat coordinator revision=${revision}`
+              + ' superseded before mode application',
+            );
+            continue;
+          }
+          if (requestedMode !== undefined && this.snapshot.state.mode !== requestedMode) {
+            this.logger.debug?.(
+              `EcoFlow diagnostics: thermostat coordinator revision=${revision}`
+              + ` applying mode=${requestedMode}`,
+            );
+            await this.execute({ type: 'mode', mode: requestedMode });
+          }
+          if (this.thermostatIntentRevision !== revision) {
+            this.logger.debug?.(
+              `EcoFlow diagnostics: thermostat coordinator revision=${revision}`
+              + ' superseded after mode confirmation',
+            );
+            continue;
+          }
+          const activeMode = this.snapshot.state.mode;
+          const hasActiveSetpoint = activeMode === 'heat'
+            ? intent.heatingCelsius !== undefined
+            : activeMode === 'cool'
+              ? intent.coolingCelsius !== undefined
+              : activeMode === 'auto'
+                ? intent.heatingCelsius !== undefined || intent.coolingCelsius !== undefined
+                : false;
+          if (hasActiveSetpoint) {
+            const plan = planWave3TemperatureIntent(this.snapshot.state, {
+              heatingCelsius: intent.heatingCelsius,
+              coolingCelsius: intent.coolingCelsius,
+            });
+            if (plan.status === 'command') {
+              this.logger.debug?.(
+                `EcoFlow diagnostics: thermostat coordinator revision=${revision}`
+                + ` applying target after confirmed mode=${String(activeMode)}`,
+              );
+              await this.execute(plan.command);
+            } else if (plan.status === 'missingAutomaticRange') {
+              throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
+            } else if (plan.status === 'inactive') {
+              throw new MatterStatus.InvalidInState(
+                'The requested setpoint is inactive in the current mode',
+              );
+            }
+          }
+        }
+      } catch (error) {
+        if (this.thermostatIntentRevision !== revision
+          && this.stagedThermostatIntent !== undefined
+          && this.snapshot.availability === 'online') {
+          continue;
+        }
+        throw error;
+      }
+      if (this.thermostatIntentRevision === revision) {
+        this.stagedThermostatIntent = undefined;
+        return;
+      }
+    }
   }
 
   private async presentedThermostat(): Promise<Record<string, unknown>> {
@@ -1014,7 +1133,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       this.accessory.context,
       this.accessory.clusters,
     );
-    const intent = this.stagedOffThermostatIntent;
+    const intent = this.stagedThermostatIntent;
     if (intent === undefined
       || (snapshot.state.powered !== false && snapshot.state.mode !== 'off')) {
       return clusters;
@@ -1111,20 +1230,6 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 }
 
-function modeTargetIntent(
-  thermostat: Record<string, unknown>,
-  intent?: StagedOffThermostatIntent,
-  profile?: Parameters<typeof planWave3ModeTransition>[1]['profile'],
-): Parameters<typeof planWave3ModeTransition>[1] {
-  return {
-    profile,
-    presentedHeatingCelsius: matterSetpointCelsius(thermostat.occupiedHeatingSetpoint),
-    presentedCoolingCelsius: matterSetpointCelsius(thermostat.occupiedCoolingSetpoint),
-    stagedHeatingCelsius: intent?.heatingCelsius,
-    stagedCoolingCelsius: intent?.coolingCelsius,
-  };
-}
-
 function attributesMatch(
   current: Record<string, unknown>,
   expected: Record<string, unknown>,
@@ -1139,19 +1244,6 @@ function changedAttributes(
   return Object.fromEntries(
     Object.entries(expected).filter(([key, value]) => !Object.is(current[key], value)),
   );
-}
-
-function describeModeCommand(command: Wave3ModeCommand): string {
-  return `mode profile mode=${command.mode}`
-    + (command.targetTemperatureCelsius === undefined
-      ? ''
-      : ` targetCelsius=${command.targetTemperatureCelsius}`)
-    + (command.targetTemperatureLowerCelsius === undefined
-      ? ''
-      : ` lowerCelsius=${command.targetTemperatureLowerCelsius}`)
-    + (command.targetTemperatureUpperCelsius === undefined
-      ? ''
-      : ` upperCelsius=${command.targetTemperatureUpperCelsius}`);
 }
 
 function updateLastSystemMode(
@@ -1191,12 +1283,6 @@ function matterTemperature(value: number): number {
     throw new MatterStatus.ConstraintError('Temperature must be 16–30°C in 0.1°C steps');
   }
   return roundedTenth(celsius);
-}
-
-function matterSetpointCelsius(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value)
-    ? matterTemperature(value)
-    : undefined;
 }
 
 function roundedTenth(value: number): number {

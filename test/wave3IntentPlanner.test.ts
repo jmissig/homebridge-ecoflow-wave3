@@ -3,73 +3,10 @@ import { describe, it } from 'node:test';
 
 import {
   constrainWave3AutomaticRange,
-  planWave3ModeTransition,
   planWave3TemperatureIntent,
 } from '../src/wave3/intentPlanner.js';
 
 describe('WAVE 3 semantic intent planner', () => {
-  it('carries the destination profile target on cool and heat transitions', () => {
-    assert.deepEqual(planWave3ModeTransition('cool', {
-      presentedCoolingCelsius: 22,
-    }), {
-      type: 'mode',
-      mode: 'cool',
-      targetTemperatureCelsius: 22,
-    });
-    assert.deepEqual(planWave3ModeTransition('heat', {
-      profile: { targetTemperatureCelsius: 26 },
-      presentedHeatingCelsius: 20,
-    }), {
-      type: 'mode',
-      mode: 'heat',
-      targetTemperatureCelsius: 26,
-    });
-    assert.deepEqual(planWave3ModeTransition('heat', {
-      profile: { targetTemperatureCelsius: 26 },
-      presentedHeatingCelsius: 20,
-      stagedHeatingCelsius: 20.5,
-    }), {
-      type: 'mode',
-      mode: 'heat',
-      targetTemperatureCelsius: 20.5,
-    });
-  });
-
-  it('preserves and reconciles automatic profile ranges', () => {
-    assert.deepEqual(planWave3ModeTransition('auto', {
-      profile: {
-        targetTemperatureLowerCelsius: 19,
-        targetTemperatureUpperCelsius: 24,
-      },
-      presentedHeatingCelsius: 21,
-      presentedCoolingCelsius: 21,
-    }), {
-      type: 'mode',
-      mode: 'auto',
-      targetTemperatureLowerCelsius: 19,
-      targetTemperatureUpperCelsius: 24,
-    });
-    assert.deepEqual(planWave3ModeTransition('auto', {
-      presentedHeatingCelsius: 19,
-      presentedCoolingCelsius: 24,
-    }), {
-      type: 'mode',
-      mode: 'auto',
-      targetTemperatureLowerCelsius: 19,
-      targetTemperatureUpperCelsius: 24,
-    });
-    assert.deepEqual(planWave3ModeTransition('auto', {
-      presentedHeatingCelsius: 19,
-      presentedCoolingCelsius: 24,
-      stagedHeatingCelsius: 25,
-    }), {
-      type: 'mode',
-      mode: 'auto',
-      targetTemperatureLowerCelsius: 25,
-      targetTemperatureUpperCelsius: 29,
-    });
-  });
-
   it('enforces the observed four-degree automatic range at the device bounds', () => {
     assert.deepEqual(constrainWave3AutomaticRange(21, 21), [19, 23]);
     assert.deepEqual(constrainWave3AutomaticRange(29, 30, 'lower'), [26, 30]);

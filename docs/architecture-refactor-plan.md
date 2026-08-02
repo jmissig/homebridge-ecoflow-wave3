@@ -109,9 +109,9 @@ The Matter adapter continues to own:
 
 The WAVE planner owns:
 
-- compiling a requested power/mode/setpoint/range/fan intent against the latest
-  confirmed WAVE state and saved per-mode profiles;
-- carrying the destination mode's target or auto range on mode transitions;
+- compiling an active setpoint/range intent against the latest confirmed WAVE
+  state;
+- normalizing the WAVE-specific Auto range while preserving fractional values;
 - preserving separate Cool, Heat, Auto, Fan, Dry, and submode profiles;
 - suppressing semantic no-ops;
 - rejecting an intent when its required confirmed baseline is absent.
@@ -122,10 +122,11 @@ Command serialization, publication, and evidence-based confirmation remain in
 ### Work
 
 - Introduce pure semantic-intent and planning-result types in `src/wave3/`.
-- Extract the existing mode/target/range compilation from
-  `matterAccessory.ts` without changing its decisions.
-- Have the Matter write coordinator produce semantic intents and invoke the
-  planner with an immutable controller snapshot.
+- Keep WAVE active-target/range planning independent of Matter while the
+  Matter boundary owns revisioned controller-write ordering.
+- Have the Matter write coordinator produce revisioned semantic intents,
+  confirm power and mode separately, and invoke the target/range planner with
+  a fresh immutable controller snapshot.
 - Keep protocol encoding unaware of Matter and keep the planner unaware of
   Homebridge/Matter.js classes.
 - Document the distinction between controller write-order staging and WAVE
@@ -133,10 +134,13 @@ Command serialization, publication, and evidence-based confirmation remain in
 
 ### Acceptance
 
-- Pure planner tests replay:
+- Matter integration tests replay:
   - Off -> Cool with the staged Cool target;
-  - Off -> Heat without falling back to the WAVE's remembered 26 °C target;
-  - Cool <-> Heat with distinct saved targets;
+  - Off -> Heat without leaving the WAVE at its remembered 26 °C target;
+  - Cool <-> Heat with distinct saved targets and confirmed intermediate mode;
+  - supersession by a newer mode/target intent;
+  - immediate power-off cancellation of queued target/fan work;
+- Pure planner tests cover:
   - Auto lower/upper ranges;
   - no-op and missing-baseline cases;
   - fractional Celsius preservation.

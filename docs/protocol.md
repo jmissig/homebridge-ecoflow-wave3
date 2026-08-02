@@ -389,12 +389,14 @@ publishing a command.
   current Unix time and `7` carried a signed-PDT-looking `-700`, while `135`
   and `136` remain unknown. They are foreign configuration evidence, not
   climate-command confirmation.
-- When Apple Home stages thermostat values while the appliance is off, wake
-  the WAVE with a confirmed `cfg_main_power = true` command first. Only after
-  the appliance is awake should a second confirmed command select the staged
-  mode and its complete saved target/range profile. Hardware showed that an
-  asleep WAVE may accept a composite wake command yet resume the destination
-  mode's older saved target.
+- When Apple Home stages thermostat values while the appliance is off, retain
+  them as revisioned semantic intent. Wake the WAVE with a confirmed
+  `cfg_main_power = true` command first, confirm the destination mode with a
+  mode-only command, then re-plan and confirm the active target/range from the
+  newest authoritative snapshot. Hardware showed that an asleep WAVE may
+  accept a composite wake command yet resume the destination mode's older
+  saved target. A newer intent supersedes unfinished steps; power-off cancels
+  queued thermostat and fan work.
 
 ## Household hardware observations
 
@@ -455,9 +457,11 @@ publishing a command.
   mode-only Heat command changed `operatingModeId` to `2`.
 - Because that Heat command omitted a target, the WAVE 3 selected its stored
   Heat profile target of 26°C and Apple Home later reconciled to 26°C.
-- Mode transitions should therefore include the currently presented Matter
-  setpoint for Cool or Heat, or both presented thresholds for Auto, even when
-  the appliance is already on by the time the mode write is processed.
+- Later testing disproved the tentative composite-write recommendation above.
+  Mode transitions must not borrow Matter's inactive companion setpoint.
+  Explicit controller setpoint writes are staged separately and applied only
+  after the destination mode is confirmed; otherwise the WAVE's confirmed
+  saved profile remains authoritative.
 
 [Source: household Apple Home/Matter diagnostic log and narrated target selection shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533524342313451610)
 
@@ -467,8 +471,11 @@ publishing a command.
   presented `21 °C` and the attempted startup payload carried a target. This
   disproves the assumption that one composite wake/profile write is reliable
   while the appliance is asleep.
-- The safe startup transaction is two confirmed commands: wake with power,
-  then select the destination mode with its complete target/range profile.
+- The safe startup transaction is three independently confirmed semantic
+  steps when an explicit target/range was staged: wake with power, select the
+  destination mode, then apply the target/range after observing the mode's
+  restored profile. If no explicit target was staged, the authoritative saved
+  WAVE profile is retained.
 - Full display uploads expose separate saved parameter records for Cool, Heat,
   Fan, Dry, and Auto. These records are authoritative WAVE profiles. Matter's
   inactive heating/cooling companion setpoint is a controller presentation
@@ -555,9 +562,10 @@ publishing a command.
   interaction with Auto produced the same sequencing failure.
 - Matter mode and setpoint attributes selected while off must therefore be
   staged locally. Later testing refined the transaction boundary: the
-  authoritative OnOff command first wakes the WAVE, then a second confirmed
-  mode command applies the staged or authoritative destination profile. Each
-  command retains the normal acknowledgement and observed-state policy.
+  authoritative OnOff command first wakes the WAVE, a second confirmed command
+  selects the mode, and a third confirmed command applies an explicitly staged
+  target/range after the saved destination profile is observed. Each command
+  retains the normal acknowledgement and observed-state policy.
 
 [Source: household Matter/Homebridge diagnostic log and narrated Apple Home actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533508417145147622)
 

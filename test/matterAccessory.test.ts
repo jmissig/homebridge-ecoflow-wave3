@@ -476,11 +476,8 @@ describe('WAVE 3 Matter accessory', () => {
       await endpoint.act('turn on', agent => agent.onOff.on());
       assert.deepEqual(controller.commands.slice(commandsBeforeModeWhileOff), [
         { type: 'power', on: true },
-        {
-          type: 'mode',
-          mode: 'heat',
-          targetTemperatureCelsius: 20,
-        },
+        { type: 'mode', mode: 'heat' },
+        { type: 'targetTemperature', celsius: 20 },
       ]);
       assert.equal(controller.snapshot.state.powered, true);
       assert.equal(controller.snapshot.state.mode, 'heat');
@@ -502,16 +499,8 @@ describe('WAVE 3 Matter accessory', () => {
       );
       assert.deepEqual(controller.commands.slice(commandsBeforeDelayedModeReplay), [
         { type: 'power', on: true },
-        {
-          type: 'mode',
-          mode: 'cool',
-          targetTemperatureCelsius: 22,
-        },
-        {
-          type: 'mode',
-          mode: 'heat',
-          targetTemperatureCelsius: 26,
-        },
+        { type: 'mode', mode: 'cool' },
+        { type: 'mode', mode: 'heat' },
       ]);
 
       await endpoint.act('turn off before unsupported Auto write', agent => agent.onOff.off());
@@ -523,11 +512,6 @@ describe('WAVE 3 Matter accessory', () => {
       await endpoint.act('turn on after unsupported Auto write', agent => agent.onOff.on());
       assert.deepEqual(controller.commands.slice(commandsBeforeAutoStartup), [
         { type: 'power', on: true },
-        {
-          type: 'mode',
-          mode: 'heat',
-          targetTemperatureCelsius: 26,
-        },
       ]);
 
       const powerBeforeRapidToggle = controller.commands.length;
@@ -538,23 +522,10 @@ describe('WAVE 3 Matter accessory', () => {
       assert.deepEqual(controller.commands.slice(powerBeforeRapidToggle), [
         { type: 'power', on: false },
         { type: 'power', on: true },
-        {
-          type: 'mode',
-          mode: 'heat',
-          targetTemperatureCelsius: 26,
-        },
       ]);
       for (const [systemMode, expected] of [
-        [MATTER_SYSTEM_MODE.cool, {
-          type: 'mode',
-          mode: 'cool',
-          targetTemperatureCelsius: 22,
-        }],
-        [MATTER_SYSTEM_MODE.heat, {
-          type: 'mode',
-          mode: 'heat',
-          targetTemperatureCelsius: 26,
-        }],
+        [MATTER_SYSTEM_MODE.cool, { type: 'mode', mode: 'cool' }],
+        [MATTER_SYSTEM_MODE.heat, { type: 'mode', mode: 'heat' }],
         [MATTER_SYSTEM_MODE.fan, { type: 'mode', mode: 'fan' }],
         [MATTER_SYSTEM_MODE.dry, { type: 'mode', mode: 'dry' }],
         [MATTER_SYSTEM_MODE.sleep, { type: 'submode', submode: 3 }],
@@ -602,7 +573,49 @@ describe('WAVE 3 Matter accessory', () => {
         'legitimate cool write after stale projection',
       );
       assert.deepEqual(controller.commands.slice(commandsBeforeFormerlyStaleMode), [
-        { type: 'mode', mode: 'cool', targetTemperatureCelsius: 22 },
+        { type: 'mode', mode: 'cool' },
+      ]);
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: { ...onlineSnapshot().state, mode: 'cool', targetTemperatureCelsius: 22 },
+      });
+      const supersededIntentBefore = controller.commands.length;
+      const supersededMode = controller.deferNextConfirmation();
+      directControl.setSystemMode(MATTER_SYSTEM_MODE.heat);
+      await supersededMode.started;
+      directControl.setSystemMode(MATTER_SYSTEM_MODE.cool);
+      directControl.setCoolingSetpoint(2_300);
+      await drainMicrotasks();
+      supersededMode.confirm();
+      await waitUntil(
+        () => controller.snapshot.state.mode === 'cool'
+          && controller.snapshot.state.targetTemperatureCelsius === 23,
+        'newer thermostat intent supersedes unfinished mode work',
+      );
+      assert.deepEqual(controller.commands.slice(supersededIntentBefore), [
+        { type: 'mode', mode: 'heat' },
+        { type: 'mode', mode: 'cool' },
+        { type: 'targetTemperature', celsius: 23 },
+      ]);
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: { ...onlineSnapshot().state, mode: 'cool', targetTemperatureCelsius: 22 },
+      });
+      const cancelledIntentBefore = controller.commands.length;
+      const cancelledMode = controller.deferNextConfirmation();
+      directControl.setSystemMode(MATTER_SYSTEM_MODE.heat);
+      await cancelledMode.started;
+      directControl.setHeatingSetpoint(2_000);
+      await drainMicrotasks();
+      const immediatePowerOff = directControl.setPower(false, async () => undefined);
+      cancelledMode.confirm();
+      await immediatePowerOff;
+      await drainMicrotasks();
+      assert.deepEqual(controller.commands.slice(cancelledIntentBefore), [
+        { type: 'mode', mode: 'heat' },
+        { type: 'power', on: false },
       ]);
 
       controller.setSnapshot(onlineSnapshot());
@@ -826,10 +839,11 @@ describe('WAVE 3 Matter accessory', () => {
         controller.commands.filter(command => command.type === 'airflowSpeed').length,
         airflowBeforeReturnToConfirmed,
       );
-      assert.deepEqual(controller.commands.slice(0, 3), [
+      assert.deepEqual(controller.commands.slice(0, 4), [
         { type: 'power', on: false },
         { type: 'power', on: true },
-        { type: 'mode', mode: 'heat', targetTemperatureCelsius: 20 },
+        { type: 'mode', mode: 'heat' },
+        { type: 'targetTemperature', celsius: 20 },
       ]);
 
       for (const [fanMode, speed] of [[1, 20], [2, 60], [3, 100]] as const) {
@@ -1174,7 +1188,7 @@ describe('WAVE 3 Matter accessory', () => {
 
       let errorCount = errors.length;
       const interruptedModeCommand = controller.deferNextFailure();
-      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } });
       await interruptedModeCommand.started;
       controller.setSnapshot({
         ...controller.snapshot,
@@ -1293,7 +1307,7 @@ describe('WAVE 3 Matter accessory', () => {
 
       controller.failNext('timeout');
       errorCount = errors.length;
-      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } });
       await waitUntil(
         () => errors.length === errorCount + 1,
         'failed attribute command reconciliation',
@@ -1795,6 +1809,10 @@ function fakeController(initial: Wave3ControllerSnapshot): Wave3AccessoryControl
 
 function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryController & {
   commands: Wave3Command[];
+  deferNextConfirmation(): {
+    started: Promise<void>;
+    confirm(): void;
+  };
   deferNextFailure(): {
     started: Promise<void>;
     fail(reason: Wave3CommandFailure): void;
@@ -1806,6 +1824,10 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
   let listener: ((snapshot: Wave3ControllerSnapshot) => void) | undefined;
   const commands: Wave3Command[] = [];
   let nextFailure: Wave3CommandFailure | undefined;
+  let deferredConfirmation: {
+    started: ReturnType<typeof deferred>;
+    confirmation: ReturnType<typeof deferred>;
+  } | undefined;
   let deferredExecution: {
     started: ReturnType<typeof deferred>;
     failure: Promise<Wave3CommandFailure>;
@@ -1815,6 +1837,18 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
       return snapshot;
     },
     commands,
+    deferNextConfirmation() {
+      assert.equal(deferredConfirmation, undefined);
+      const started = deferred();
+      const confirmation = deferred();
+      deferredConfirmation = { started, confirmation };
+      return {
+        started: started.promise,
+        confirm() {
+          confirmation.resolve();
+        },
+      };
+    },
     deferNextFailure() {
       assert.equal(deferredExecution, undefined);
       const started = deferred();
@@ -1845,6 +1879,12 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
     },
     execute: async command => {
       commands.push(command);
+      if (deferredConfirmation !== undefined) {
+        const execution = deferredConfirmation;
+        deferredConfirmation = undefined;
+        execution.started.resolve();
+        await execution.confirmation.promise;
+      }
       if (deferredExecution !== undefined) {
         const execution = deferredExecution;
         deferredExecution = undefined;
@@ -1866,6 +1906,18 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
         state.mode = command.mode;
         state.powered = true;
         state.submode = 0;
+        if (command.targetTemperatureCelsius === undefined) {
+          state.targetTemperatureCelsius = snapshot.modeProfiles[command.mode]
+            ?.targetTemperatureCelsius;
+        }
+        if (command.targetTemperatureLowerCelsius === undefined) {
+          state.targetTemperatureLowerCelsius = snapshot.modeProfiles[command.mode]
+            ?.targetTemperatureLowerCelsius;
+        }
+        if (command.targetTemperatureUpperCelsius === undefined) {
+          state.targetTemperatureUpperCelsius = snapshot.modeProfiles[command.mode]
+            ?.targetTemperatureUpperCelsius;
+        }
         if (command.targetTemperatureCelsius !== undefined) {
           state.targetTemperatureCelsius = command.targetTemperatureCelsius;
         }

@@ -6,7 +6,7 @@ Preserve this plugin's narrow purpose. Do not broaden it into a general EcoFlow 
 
 ## Project posture
 
-Current posture: **early exploration**
+Current posture: **Matter-only migration before first release**
 
 This is a new, hardware-specific Homebridge plugin. Architecture, dependencies, configuration, and service mapping may change substantially while the first reliable WAVE 3 integration is established.
 
@@ -26,14 +26,14 @@ This project is:
 - a Homebridge **2.0-only** plugin
 - a contemporary TypeScript project based on the current official Homebridge dynamic-platform plugin template
 - a WAVE 3 integration using EcoFlow's app-facing cloud API, MQTT topics, and protobuf messages where no supported WAVE 3 API exists
-- a clean HomeKit climate surface over the subset of WAVE 3 behavior that is understood and verified
+- a clean Matter climate surface over the subset of WAVE 3 behavior that is understood and verified
 
 Source of truth and evidence:
 
 - Homebridge plugin shape and lifecycle: the current `latest` branch of [`homebridge/homebridge-plugin-template`](https://github.com/homebridge/homebridge-plugin-template) and the current Homebridge 2 developer API
 - Known WAVE 3 protocol shape: the WAVE 3 implementation in [`tolwi/hassio-ecoflow-cloud`](https://github.com/tolwi/hassio-ecoflow-cloud), especially `custom_components/ecoflow_cloud/devices/internal/wave3.py` and `custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto`
 - Final behavioral authority: observed state, acknowledgements, and results from the household WAVE 3
-- HomeKit product behavior: what Apple Home can represent clearly and reliably, not a one-for-one copy of Home Assistant entities
+- Matter product behavior: what Matter expresses honestly and Apple Home renders clearly and reliably, not a one-for-one copy of Home Assistant entities
 
 The Home Assistant implementation is valuable reverse-engineering evidence, not an official EcoFlow contract. Record uncertainty instead of presenting inferred fields as settled facts.
 
@@ -45,7 +45,7 @@ Non-goals / anti-goals:
 - no generic EcoFlow SDK, generic device registry, or all-product abstraction
 - no public-API compatibility path intended for unrelated or older EcoFlow devices
 - no Home Assistant feature-parity checklist
-- no custom Matter accessory surface unless explicitly requested
+- no permanent HAP compatibility surface; the accepted destination is Matter-only
 - no speculative local MQTT, Bluetooth, or LAN-control subsystem in the first working slice
 
 Attractive but wrong expansion: **do not turn this into the universal EcoFlow plugin.** Build the small WAVE 3 climate integration that actually works.
@@ -78,7 +78,7 @@ Treat that list as a checked reference, not a permanently frozen dependency mani
 
 This repository may contain exploratory scaffold files created before these constraints were clarified. Converge or rebuild them against the accepted baseline; do not preserve CommonJS, Homebridge 1 support, or stale dependency versions out of inertia.
 
-## Product and HomeKit shape
+## Product and Matter shape
 
 Use a dynamic platform because it fits Homebridge's current template and cached-accessory lifecycle. Keep discovery intentionally narrow:
 
@@ -87,25 +87,31 @@ Use a dynamic platform because it fits Homebridge's current template and cached-
 - derive stable accessory UUIDs from a stable WAVE 3 identifier such as its serial number
 - restore, update, and remove cached accessories through Homebridge's platform APIs
 
-The primary HomeKit surface should be climate-first:
+The primary Matter surface should be climate-first:
 
 - one WAVE 3 accessory
-- one primary `HeaterCooler` service
-- power / active state
-- current temperature
-- cooling, heating, and automatic target modes where behavior is verified
-- cooling and heating thresholds appropriate to the selected mode
-- fan speed when its mapping is verified
+- one primary Matter `Thermostat` endpoint, selected over Homebridge's
+  `RoomAirConditioner` wrapper because the former exposes Heat, Cool, and Auto
+- one composed Matter `Fan` endpoint for airflow speed when needed by the
+  Homebridge Matter device model
+- Off, Cool, Heat, Auto, Fan Only, Dry, and Sleep system modes where behavior
+  is verified
+- current temperature and cooling/heating setpoints appropriate to the selected
+  per-device temperature source
+- ambient humidity only when the ambient temperature source is selected
+- firmware revision in standard Matter bridged-device metadata
 
 WAVE 3 behaviors known from the Home Assistant implementation include cool, heat, dry, fan, and auto modes, temperature and humidity targets, drainage controls, beeper, display settings, timers, power telemetry, battery telemetry, temperatures, and condensate state.
 
-Do not expose every known field merely because it exists. For fan-only mode, dry mode, humidity, battery, condensate state, drainage, beeper, display, timers, and diagnostics:
+Do not expose every known field merely because it exists. For Eco, Boost,
+battery, condensate state, drainage, beeper, display, timers, and diagnostics:
 
-- first ask whether standard HomeKit services and characteristics express the behavior honestly
-- prefer a small companion service only when it improves normal Home app and Siri use
+- first ask whether standard Matter clusters, modes, presets, and attributes
+  express the behavior honestly
+- prefer a composed Matter endpoint only when it improves normal controller use
 - avoid duplicate controls that can fight over the same WAVE 3 mode
 - keep diagnostic telemetry out of the primary climate surface
-- do not invent custom characteristics by default
+- do not invent manufacturer-specific clusters by default
 
 ## Protocol and control model
 
@@ -113,7 +119,7 @@ Keep Homebridge, device control, cloud transport, and protobuf concerns separate
 
 ```text
 Homebridge platform lifecycle
-    -> WAVE 3 accessory / HomeKit mapping
+    -> WAVE 3 Matter accessory mapping
     -> WAVE 3 controller and normalized state
     -> EcoFlow private app client
     -> HTTPS authentication + cloud MQTT
@@ -123,7 +129,8 @@ Homebridge platform lifecycle
 Responsibilities:
 
 - **Platform** -- validate config, manage cached accessories, start and stop device sessions
-- **Accessory** -- map normalized WAVE 3 state and commands to standard HomeKit services
+- **Accessory** -- map normalized WAVE 3 state and commands to standard Matter
+  devices, clusters, attributes, and command handlers
 - **Controller** -- own normalized state, command sequencing, acknowledgement, timeouts, refresh, and reconnect behavior
 - **Private client** -- own login, regional API host, temporary MQTT credentials, TLS, subscriptions, publication, and lifecycle
 - **Protocol codec** -- encode and decode typed WAVE 3 messages without Homebridge dependencies
@@ -131,10 +138,11 @@ Responsibilities:
 Rules:
 
 - Keep raw protobuf field names and topic details below the controller boundary.
-- Do not let HomeKit handlers construct MQTT topics or protobuf objects.
+- Do not let Matter handlers construct MQTT topics or protobuf objects.
 - Do not treat successful MQTT publication as successful device control.
 - Prefer device telemetry or a correlated acknowledgement as confirmation.
-- Keep HomeKit getters fast; return cached normalized state and update characteristics asynchronously from device events.
+- Keep Matter reads fast; return cached normalized state and update cluster
+  attributes asynchronously from device events.
 - Make offline, stale, rejected, and timed-out states explicit.
 - Re-subscribe and request current state after reconnect.
 - Ensure shutdown closes MQTT connections and timers cleanly.
@@ -160,14 +168,17 @@ Treat these as protocol hypotheses until verified against the household WAVE 3. 
 - Use Node built-ins and small focused packages where practical.
 - Keep runtime dependencies few and directly justified.
 - Use a maintained MQTT client and a maintained protobuf implementation rather than writing either protocol stack from scratch.
-- Do not add `homebridge-lib` or custom HAP types unless a concrete WAVE 3 requirement makes them necessary.
+- Do not add `homebridge-lib`, HAP compatibility types, or a second accessory
+  framework. Use Homebridge 2's `api.matter` surface and its direct Matter.js
+  cluster/type access.
 - Do not introduce a framework for dependency injection, state management, validation, retries, or events when a small explicit boundary is clearer.
 
 For toolchain and dependency updates, compare against the current official template first. The template is the default; local divergence should be intentional and documented.
 
 ## Configuration and secrets
 
-Configuration should be the smallest set needed for a WAVE 3 session and useful HomeKit naming.
+Configuration should be the smallest set needed for a WAVE 3 session and useful
+Matter/Apple Home naming.
 
 - Use `config.schema.json` with strict, helpful validation and Homebridge UI labels.
 - Support the regional EcoFlow API host when required; do not silently send credentials to an arbitrary host.
@@ -192,9 +203,14 @@ The WAVE 3 mapping is adapted from the Apache-2.0-licensed `tolwi/hassio-ecoflow
 
 ## Current state
 
-The repository is pre-release and has not established a hardware-validated baseline.
+The repository is pre-release. Its EcoFlow authentication, cloud MQTT,
+protobuf, normalized state, command confirmation, app coexistence, and core
+power/temperature/fan control paths have a household WAVE 3 hardware baseline.
 
-Exploratory code may demonstrate an initial cloud MQTT/protobuf path, but it predates the clarified requirements to use the latest official template, contemporary ESM TypeScript, and Homebridge 2 only. Treat it as research material until it has been reconciled with this file and tested on the household WAVE 3.
+The current checked-in presentation is still HAP `HeaterCooler`; it is a
+temporary implementation to be replaced by the Matter-only plan in `TODO.md`
+and [Decision 0003](docs/decisions/0003-matter-only.md). Do not add new HAP
+features or preserve HAP compatibility during that migration.
 
 Do not describe a command or service as supported merely because it compiles, has a plausible protobuf field, or matches a Home Assistant implementation.
 
@@ -224,7 +240,7 @@ Tests should cover:
 - command generation
 - acknowledgement and timeout behavior
 - reconnect, re-subscribe, and refresh behavior
-- HomeKit mode and characteristic mapping
+- Matter device, cluster, mode, attribute, and command mapping
 - cached-accessory restoration and stale-accessory removal where practical
 - redaction of sensitive log values
 
@@ -247,8 +263,8 @@ Pause and re-evaluate if:
 
 - the plugin begins acquiring support tables or abstractions for non-WAVE-3 devices
 - Homebridge 1 or pre-Node-24 compatibility starts shaping the code
-- HomeKit handlers depend directly on MQTT or protobuf details
-- a published command immediately updates HomeKit state without device confirmation
+- Matter handlers depend directly on MQTT or protobuf details
+- a published command immediately updates Matter state without device confirmation
 - reconnects create duplicate listeners, subscriptions, accessories, or timers
 - the official EcoFlow app and plugin cannot coexist reliably
 - logs or fixtures contain credentials, full serial numbers, or identifying payloads
@@ -295,8 +311,10 @@ Do not publish or present the plugin as production-ready until it has passed Hom
 
 - Start with `AGENTS.md`, `README.md`, `TODO.md`, `package.json`, and current git state.
 - Check the current official Homebridge template before scaffold or toolchain work.
-- Use the Home Assistant WAVE 3 implementation as evidence, then narrow it to the HomeKit job.
-- Make one coherent slice at a time: protocol evidence, typed codec, controller behavior, or HomeKit mapping.
+- Use the Home Assistant WAVE 3 implementation as evidence, then narrow it to
+  the Matter climate job.
+- Make one coherent slice at a time: protocol evidence, typed codec, controller
+  behavior, or Matter mapping.
 - Separate fixture-backed confidence from live-device confidence.
 - Keep changes small enough to review before touching the household device.
 - When uncertain, choose the WAVE-3-only interpretation and ask before broadening scope.

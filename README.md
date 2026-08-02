@@ -14,6 +14,13 @@ app.
 > but broader mode and long-session acceptance remain incomplete. Do not rely
 > on it for unattended climate control.
 
+> [!NOTE]
+> The checked-in implementation still uses HAP `HeaterCooler`, but the accepted
+> pre-release direction is a Matter-only replacement. The migration sequence is
+> tracked in [`TODO.md`](TODO.md) and
+> [Decision 0003](docs/decisions/0003-matter-only.md). There will not be a
+> permanently supported dual HAP/Matter mode.
+
 ## What it provides
 
 - Power control

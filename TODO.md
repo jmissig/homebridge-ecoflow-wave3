@@ -1,286 +1,230 @@
 # Current
 
-Build a narrow, testable Homebridge 2 plugin by porting only the WAVE 3
-knowledge we need from the Home Assistant EcoFlow Cloud integration.
+Migrate the existing hardware-validated WAVE 3 integration from its temporary
+HAP `HeaterCooler` presentation to a Matter-only Homebridge 2 child bridge.
 
-The implementation order is deliberate:
+[Decision 0003](docs/decisions/0003-matter-only.md) governs this work. The
+cloud, protocol, normalized-state, command-confirmation, rate-limiting, and
+app-coexistence layers are retained. HAP is not a supported parallel target.
 
 ```text
-upstream evidence
-    -> typed WAVE 3 protocol
-    -> fakeable EcoFlow cloud session
-    -> confirmed controller state
-    -> HomeKit climate mapping
-    -> read-only hardware observation
-    -> one-at-a-time command validation
+EcoFlow cloud + WAVE 3 protocol
+    -> confirmed Wave3Controller state and commands
+    -> Matter-only presentation adapter
+    -> one Matter-enabled EcoFlow child bridge
+    -> Apple Home commissioning
 ```
 
-Do not skip from upstream field names directly to live-device writes.
+## Now — Phase M1: Matter-only platform contract
 
-## Now — Phase 1: Protocol dossier and port boundary
+- [ ] Require `api.isMatterEnabled()` / `api.matter` before starting device
+  sessions; emit one clear configuration error and stop when Matter is absent.
+- [ ] Add Homebridge package metadata for Matter support and remove
+  `supports-hap` and HAP-specific keywords.
+- [ ] Update plugin and bridge documentation for the required child-bridge
+  configuration:
 
-- [x] Pin the exact upstream `tolwi/hassio-ecoflow-cloud` commit used for the
-  first port.
-- [x] Create a focused protocol note that traces each imported behavior to its
-  upstream file and field:
-  - authentication and regional API hosts
-  - WAVE 3 account discovery and device identification
-  - MQTT credential acquisition and broker options
-  - `/app/...` publish and subscribe topics
-  - WAVE 3 message envelope, command IDs, sequence IDs, and payload transform
-  - display, runtime, and command-acknowledgement messages
-  - power, operating mode, temperature, humidity, fan speed, and submode fields
-- [x] Separate three confidence levels in the protocol note:
-  - known from upstream code
-  - inferred from upstream behavior or comments
-  - verified against the household WAVE 3
-- [x] Review the upstream protobuf schema and select the smallest coherent
-  WAVE-3-only subset needed for the first climate slice.
-- [x] Compare maintained TypeScript protobuf options and choose the smallest
-  toolchain that supports proto3 optional fields and deterministic tests.
-- [x] Record the upstream commit and copied/adapted files in
-  `THIRD_PARTY_NOTICES.md`; add SPDX and modification notices to derived files.
-- [x] Replace the empty test harness with a TypeScript-capable unit-test setup
-  before protocol code lands.
+  ```json
+  "_bridge": {
+    "hap": { "enabled": false },
+    "matter": { "enabled": true, "name": "EcoFlow WAVE 3" }
+  }
+  ```
 
-**Phase 1 exit:** every field and message planned for the first slice has a
-traceable upstream origin, explicit confidence level, licensing plan, and test
-strategy.
+- [ ] Preserve the existing child-bridge debug-mode guidance; Matter selection
+  and debug logging are independent settings.
+- [ ] Keep stable device UUIDs derived from the configured WAVE 3 identifier,
+  but use `api.matter.uuid` at the presentation boundary.
+- [ ] Define the Matter accessory context needed for cache restoration,
+  configuration reconciliation, and stale-device removal.
 
-Primary upstream evidence:
+**Phase M1 exit:** the platform has an explicit Matter-only startup contract
+and no implicit HAP fallback.
 
-- [`wave3.py`](https://github.com/tolwi/hassio-ecoflow-cloud/blob/main/custom_components/ecoflow_cloud/devices/internal/wave3.py)
-- [`wave3.proto`](https://github.com/tolwi/hassio-ecoflow-cloud/blob/main/custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto)
-- [Initial WAVE 3 implementation PR #762](https://github.com/tolwi/hassio-ecoflow-cloud/pull/762)
+## Phase M2: Matter accessory and cluster mapping
 
-## Phase 2: Typed WAVE 3 codec and domain state
+- [ ] Replace `Wave3PlatformAccessory` with a Matter presentation adapter that
+  consumes only `Wave3Controller` snapshots and commands.
+- [ ] Register one Matter accessory per configured WAVE 3 through
+  `api.matter.registerPlatformAccessories`.
+- [ ] Use Homebridge's Matter `Thermostat` device as the primary endpoint
+  because it enables Heating, Cooling, and Auto. Do not fall back to the
+  narrower predefined `RoomAirConditioner` wrapper merely for its name.
+- [ ] Compose a Matter `Fan` part when required to expose the Fan Control
+  cluster cleanly without duplicating power/mode authority.
+- [ ] Initialize and update standard Matter state:
+  - thermostat local temperature
+  - occupied heating and cooling setpoints
+  - system mode and running mode
+  - fan mode, percentage, and discrete WAVE speed mapping
+  - ambient humidity when `currentTemperatureSource` is `ambient`
+  - firmware revision and stable manufacturer/model/serial metadata
+- [ ] Preserve the per-device temperature-source contract:
+  - `ambient` -> ambient local temperature plus humidity part
+  - `outlet` -> indoor supply-air local temperature, no humidity part
+  - `none` -> null/unavailable Matter local temperature and no humidity part
+- [ ] Update external device changes with
+  `api.matter.updateAccessoryState`; do not mutate Matter state optimistically
+  when an EcoFlow command is merely published.
+- [ ] Use `api.matter.updatePlatformAccessories` for firmware/name/context
+  metadata changes and unregister stale Matter accessories by UUID.
 
-- [x] Add the reviewed protobuf subset with Apache-2.0 provenance.
-- [x] Implement a Homebridge-independent WAVE 3 codec:
-  - decode the outer message envelope
-  - apply the observed payload transform only under the evidenced conditions
-  - decode display, runtime, and command-acknowledgement payloads
-  - encode configuration-write commands with explicit sequence IDs
-- [x] Define a small normalized `Wave3State` with no Homebridge, MQTT, or raw
-  protobuf types.
-- [x] Normalize the first-slice state:
-  - sleeping / powered state
-  - operating mode
-  - ambient temperature and humidity
-  - target temperature or automatic temperature range
-  - airflow speed
-  - current submode
-- [x] Define typed first-slice commands:
-  - power on via `cfg_main_power`
-  - power off via `cfg_sys_pause`
-  - cool, heat, auto, and fan modes
-  - target temperature and automatic upper/lower thresholds
-  - airflow speed
-  - supported operating submodes
-- [x] Preserve unknown fields and unsupported messages as bounded diagnostics,
-  not crashes or silently invented state.
-- [x] Add synthetic fixture tests for envelope routing, payload transforms,
-  state normalization, command encoding, sequence preservation, malformed
-  messages, and unknown command IDs.
+**Phase M2 exit:** fake controller snapshots produce a complete Matter
+accessory with stable identity, cache behavior, metadata, climate state, fan
+state, and temperature-source variants.
 
-**Phase 2 exit:** protocol tests can decode known synthetic messages and encode
-the first command set without importing Homebridge or connecting to EcoFlow.
+## Phase M3: Matter command and error mapping
 
-## Phase 3: Private EcoFlow cloud session
+- [ ] Translate Matter thermostat handlers into existing typed WAVE commands:
+  - Off
+  - Cool
+  - Heat
+  - Auto
+  - cooling and heating setpoints
+  - setpoint raise/lower when Apple Home uses it
+- [ ] Translate Matter fan handlers into settled/coalesced WAVE fan-speed
+  commands without creating a second power or mode authority.
+- [ ] Add Matter system-mode support for Fan Only, Dry, and Sleep. Use direct
+  Matter cluster/type access when Homebridge's friendly device wrapper omits a
+  standard Matter enum or feature.
+- [ ] Map Eco, Normal, Sleep, and Boost submodes into standard Matter concepts
+  where possible:
+  - Sleep -> Matter Sleep system mode
+  - Eco -> Matter economy programming flag or named preset
+  - Normal -> clear the active special preset/programming mode
+  - Boost -> a named preset only if the standard preset surface supports it
+- [ ] Do not add manufacturer-specific clusters merely to expose Eco or Boost;
+  leave a mode unexposed when no standard Matter representation works.
+- [ ] Preserve existing controller safety:
+  - 750 ms slider settling and latest-value coalescing
+  - serialized commands
+  - duplicate suppression
+  - acknowledgement accumulation
+  - observed-state confirmation
+  - unrelated EcoFlow-app traffic filtering
+- [ ] Translate controller outcomes into standard Matter interaction errors
+  such as constraint, invalid-in-state, busy, timeout, unavailable, and
+  generic failure without poisoning cached read state.
+- [ ] Retain last confirmed Matter attributes through ordinary EcoFlow cloud
+  and device gaps; use explicit reachability/account-failure state only where
+  Homebridge's Matter bridge supports it without making Apple Home twitchy.
 
-- [x] Define strict typed plugin configuration and `config.schema.json` fields
-  for account login, region/API host, display name, and required WAVE 3 serial
-  number.
-- [x] Constrain API hosts to reviewed EcoFlow regional endpoints by default;
-  require an explicit advanced override for any other host.
-- [x] Implement the private HTTPS authentication flow without logging
-  passwords, tokens, authorization headers, or full device identifiers.
-- [x] Treat every configured serial as WAVE 3 because the pinned private API
-  exposes no device-list endpoint; do not query or register unrelated EcoFlow
-  products.
-- [x] Acquire temporary MQTT credentials and connect with TLS verification.
-- [x] Implement WAVE-3-only topic construction, subscription, initial state
-  refresh, publication, disconnect, and clean shutdown.
-- [x] Re-subscribe and request current state after every reconnect without
-  duplicating listeners or timers.
-- [x] Put HTTP and MQTT behind fakeable boundaries.
-- [x] Test success, invalid credentials, wrong region, missing/invalid serial,
-  multiple configured WAVE 3 units, disconnect, reconnect, subscription
-  failure, refresh failure, and secret redaction without using a live account.
+**Phase M3 exit:** every Matter write reaches the existing confirmed-state
+controller and reports a standard Matter outcome; no HAP error type remains in
+the command path.
 
-**Phase 3 exit:** a fully fake-backed session can authenticate, configure only
-explicit WAVE 3 serials, subscribe, refresh, reconnect, publish bytes, and shut
-down cleanly.
+## Phase M4: Matter-focused automated verification
 
-## Phase 4: Confirmed-state controller
+- [ ] Replace HAP accessory tests with Matter registration, state, handler, and
+  cache tests.
+- [ ] Test complete and partial snapshot updates, including partial packets
+  arriving before authoritative startup state.
+- [ ] Test all thermostat system modes, setpoints, fan speeds, humidity,
+  firmware, and temperature-source variants.
+- [ ] Test composed endpoint/part IDs and ensure fan and humidity parts remain
+  stable across restarts.
+- [ ] Test command-handler error translation, timeout, reconnect during a
+  command, and account/session failure.
+- [ ] Test multiple configured WAVE 3 units, duplicate prevention, metadata
+  updates, stale Matter accessory removal, and restart/cache restoration.
+- [ ] Test that the plugin refuses to start device sessions when Matter is not
+  enabled and never registers a HAP accessory.
+- [ ] Keep `npm run verify` network- and hardware-independent.
 
-- [x] Build one controller per WAVE 3 around the codec and cloud session.
-- [x] Merge partial display/runtime messages into immutable normalized state.
-- [x] Track online, stale, reconnecting, and stopped states explicitly.
-- [x] Correlate command acknowledgements by sequence ID where the protocol
-  supports it.
-- [x] Distinguish MQTT publication, broker acknowledgement, WAVE command
-  acknowledgement, and observed device-state confirmation.
-- [x] Define bounded command timeouts and error results.
-- [x] Do not make optimistic state the authoritative HomeKit state.
-- [x] Coalesce or serialize conflicting climate commands so mode and target
-  changes cannot race.
-- [x] Add deterministic tests for partial updates, stale state, delayed
-  acknowledgements, rejected/unknown acknowledgements, timeouts, reconnect
-  during a command, duplicate messages, and out-of-order state.
+**Phase M4 exit:** the aggregate suite proves the plugin publishes and controls
+only Matter accessories while retaining the existing cloud/controller safety
+properties.
 
-**Phase 4 exit:** fake transports demonstrate that commands succeed only under
-the chosen acknowledgement/state-confirmation policy and fail predictably
-otherwise.
+## Phase M5: Delete the HAP surface
 
-## Complete — Phase 5: Homebridge platform and primary climate accessory
+- [ ] Delete `src/platformAccessory.ts` and replace its imports/usages with the
+  Matter adapter.
+- [ ] Delete HAP `PlatformAccessory`, `Service.HeaterCooler`,
+  `HumiditySensor`, characteristic, `HapStatusError`, and cached-HAP lifecycle
+  code.
+- [ ] Delete HAP-specific tests and test doubles after equivalent Matter tests
+  pass.
+- [ ] Remove the direct `@homebridge/hap-nodejs` development dependency if no
+  non-HAP test or type still needs it.
+- [ ] Remove HAP configuration, troubleshooting, and product-language from
+  `README.md`, `AGENTS.md`, and release metadata; retain historical HAP evidence
+  only in git history and decision records.
+- [ ] Update architecture diagrams and protocol notes so the presentation
+  boundary is Matter, not HomeKit/HAP.
 
-- [x] Validate config before starting any account or MQTT work.
-- [x] Discover/register only WAVE 3 accessories after
-  `didFinishLaunching`.
-- [x] Use the WAVE 3 serial number or another verified stable identifier for
-  accessory UUID generation while redacting it from logs.
-- [x] Restore existing cached accessories, update their context safely, and
-  remove stale WAVE-3-only accessories.
-- [x] Map the controller to one primary `HeaterCooler` service:
-  - `Active`
-  - `CurrentHeaterCoolerState`
-  - `TargetHeaterCoolerState`
-  - `CurrentTemperature`
-  - cooling and heating thresholds
-  - `RotationSpeed` if the five-step mapping remains valid
-- [x] Keep characteristic getters fast and backed by cached confirmed state.
-- [x] Push device events asynchronously into HomeKit characteristics.
-- [x] Surface offline/stale/command-failure state with standard HAP behavior.
-- [x] Test characteristic-to-command mapping and state-to-characteristic
-  mapping without a live bridge or device.
-- [x] Test platform cache restoration, duplicate prevention, and stale removal.
+**Phase M5 exit:** the source tree contains no maintained HAP adapter or HAP
+compatibility path.
 
-**Phase 5 exit:** fake controller tests exercise the complete HomeKit climate
-surface while `npm run verify` remains network- and hardware-independent.
+## Phase M6: Child-bridge cutover and commissioning
 
-## Phase 6: Read-only household WAVE 3 validation
+- [ ] Pull/build/install the Matter-only plugin under the Saga account that
+  runs this Homebridge child bridge.
+- [ ] Stop using the existing HAP pairing and unpair the old EcoFlow WAVE 3
+  child bridge from Apple Home.
+- [ ] Disable HAP and enable Matter only for the EcoFlow child bridge; leave all
+  other bridges and child bridges unchanged.
+- [ ] Restart only the EcoFlow child bridge and confirm Homebridge produces a
+  Matter commissioning QR code.
+- [ ] Pair the Matter bridge to Apple Home and accept the expected uncertified
+  Matter accessory warning if presented.
+- [ ] Reassign the WAVE 3 to its room and deliberately rebuild any desired
+  scenes or automations; do not assume HAP identity or automations migrate.
+- [ ] Confirm one WAVE 3 appears as one coherent accessory and inspect whether
+  composed Fan/Humidity parts create useful rather than confusing tiles.
 
-- [ ] Use an isolated Homebridge 2 child bridge and a dedicated development
-  config/cache.
-- [ ] Validate login, regional host selection, WAVE 3 discovery, MQTT
-  connection, subscription, initial refresh, and clean shutdown.
-- [ ] Observe state only; do not send control commands in the first live run.
-- [ ] Confirm message routing and normalized values for power, mode, ambient
-  temperature, humidity, target settings, and fan speed.
-- [ ] Confirm the EcoFlow app and plugin can remain connected simultaneously.
-- [ ] Verify Home retains the last confirmed presentation through stale,
-  reconnecting, and device-offline periods while writes remain blocked.
-  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533277123425472562)
-- [ ] Exercise disconnect/reconnect and verify subscriptions and refresh
-  recover once.
-- [ ] Capture the smallest useful anonymized binary fixtures for display,
-  runtime, and acknowledgement messages.
-- [ ] Review fixtures and logs for credentials, tokens, full serial numbers,
-  account identifiers, and other identifying payload data before commit.
+**Phase M6 exit:** Apple Home is commissioned only to the EcoFlow Matter child
+bridge; no EcoFlow HAP pairing remains.
 
-**Phase 6 exit:** read-only live behavior matches the normalized model,
-reconnect works, fixtures are safely anonymized, and no device command has
-been sent.
+## Phase M7: One-command-at-a-time Matter hardware acceptance
 
-## Phase 7: One-command-at-a-time hardware validation
+For every control: record pre-state, issue one Apple Home command, record the
+EcoFlow acknowledgement and resulting telemetry, verify physical behavior,
+and confirm Matter state does not rubber-band.
 
-Validate each command in a separate bounded pass. For every item:
+- [ ] Read-only state, current-temperature source, humidity, and firmware.
+- [ ] Power on and power off.
+- [ ] Cool mode and cooling setpoint.
+- [ ] Heat mode and heating setpoint.
+- [ ] Auto mode and both thresholds.
+- [ ] Five fan speeds and rapid-slider coalescing.
+- [ ] Fan Only mode.
+- [ ] Dry mode.
+- [ ] Sleep mode.
+- [ ] Eco/Normal and Boost only if represented through standard Matter
+  programming/preset semantics.
+- [ ] `ambient`, `outlet`, and `none` temperature-source configurations.
+- [ ] EcoFlow app and Matter control at the same time.
+- [ ] MQTT reconnect, Homebridge child-bridge restart, WAVE power cycle, and an
+  extended unattended session.
+- [ ] Normal and per-child-bridge debug logging with all identifiers and
+  credentials redacted.
 
-1. record pre-command device state
-2. send one command
-3. record MQTT acknowledgement
-4. observe resulting device telemetry and physical behavior
-5. verify HomeKit state does not rubber-band
-6. mark the behavior supported, revise the mapping, or leave it unsupported
+**Phase M7 exit:** every exposed Matter control has repeatable household-device
+evidence and stable Apple Home behavior.
 
-- [ ] Power on.
-- [ ] Power off.
-- [ ] Cool mode.
-- [ ] Heat mode.
-- [ ] Auto / heat-cool mode.
-- [ ] Target temperature in cool mode.
-- [ ] Target temperature in heat mode.
-- [ ] Re-test HomeKit temperature-slider writes after latest-value coalescing;
-  verify rapid movement emits one settled command per threshold.
-- [ ] Automatic lower and upper temperature thresholds.
-- [ ] Fan-only mode.
-- [ ] Five fan-speed levels.
-- [ ] Re-test HomeKit fan-speed slider writes after latest-value coalescing;
-  verify rapid slider movement emits one settled command and does not restart
-  the appliance control cycle.
-- [ ] Reconnect after the device has accepted commands for an extended session.
-- [ ] Confirm whether command acceptance degrades over time and, if so,
-  identify the smallest evidenced refresh or reconnect behavior.
-- [ ] Maintain a supported-controls section that distinguishes tested,
-  partially tested, and unsupported behavior.
+## Phase M8: Matter-only release preparation
 
-**Phase 7 exit:** every control exposed by the primary HomeKit surface has
-repeatable real-device evidence.
-
-## Phase 8: Secondary HomeKit surfaces
-
-Evaluate these only after the primary climate accessory is reliable:
-
-- [ ] Confirm how Homebridge, HomeKit, and the Home app represent fan-only
-  operation; add it if it can be expressed honestly, either within
-  `HeaterCooler` or as one carefully synchronized `Fanv2` companion service.
-  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
-- [ ] Decide whether dry mode can be represented honestly with standard
-  HomeKit services and characteristics.
-- [ ] Evaluate battery level and charging state when an add-on battery is
-  actually present.
-- [ ] Evaluate condensate-full warning and drainage state.
-- [ ] Evaluate auto drainage, beeper, display brightness, and presets only
-  when they improve normal household use.
-- [ ] Keep timers, deep diagnostics, Pet Care, charge limits, and unrelated
-  power telemetry out unless a concrete HomeKit use case is approved.
-- [ ] Add hardware evidence and tests for each secondary surface before
-  exposing it.
-
-**Phase 8 exit:** any companion service has a clear Home app purpose, standard
-HomeKit semantics, hardware evidence, and no conflicting controls.
-
-## Phase 9: Child-bridge acceptance and release preparation
-
-- [ ] Confirm Apple Home displays the observed PD firmware revision
-  (`1.1.0.104` in the first household packet) in accessory information and
-  retains it across partial updates and restarts.
-  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
-  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
-- [ ] Hardware-check all three per-device current-temperature sources:
-  `ambient`, provisionally mapped field-494 `outlet`, and experimental `none`.
-  Confirm whether Apple Home accepts a `HeaterCooler` with its normally
-  required `CurrentTemperature` characteristic removed. Ambient alone should
-  retain the humidity companion.
-  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272228437692630)
-  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
-- [ ] Verify Home app presentation, naming, room assignment, status updates,
-  and “No Response” behavior.
-- [ ] Verify useful Siri phrases for power, mode, temperature, and fan speed.
-- [ ] Run extended child-bridge testing across broker reconnects, Homebridge
-  restarts, EcoFlow app use, and WAVE 3 power cycles.
-- [ ] Confirm logs remain useful at normal and debug levels without leaking
-  secrets.
-- [ ] Investigate whether the current private app API or MQTT data can reliably
-  discover WAVE 3 devices for the authenticated account; if so, replace or
-  supplement required manual serial-number entry with auto-discovery.
-  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
-- [ ] Update `README.md` so configuration and supported controls match only
-  what was hardware-validated.
-- [ ] Add installation, troubleshooting, region selection, child-bridge, and
-  private-API risk guidance.
+- [ ] Update the supported-controls list to distinguish tested, partially
+  tested, and intentionally unexposed behavior.
+- [ ] Add Matter-only installation, commissioning, re-pairing,
+  troubleshooting, region, private-API risk, and uncertified-bridge guidance.
+- [ ] Investigate authenticated-account WAVE 3 autodiscovery; retain manual
+  serial configuration until it is proven safe and WAVE-3-specific.
 - [ ] Run `npm run verify` and inspect `npm pack --dry-run`.
 - [ ] Keep the package private until Julian explicitly approves publication.
 - [ ] Prepare versioning, release notes, and npm metadata only after acceptance.
 
-**Phase 9 exit:** the plugin is reviewable as a release candidate; publication
-remains a separate explicit decision.
+**Phase M8 exit:** the Matter-only plugin is reviewable as a release candidate;
+publication remains a separate explicit decision.
 
-## Later / explicitly out of the first release
+## Later / outside the first Matter release
 
-- [ ] Investigate local MQTT redirection only as a separate experiment after
-  cloud-backed control is stable.
-- [ ] Investigate Bluetooth or LAN control only as a separate experiment.
-- [ ] Revisit Matter only if Julian explicitly changes the HAP-only direction.
+- [ ] Battery and charging state when an add-on battery is present.
+- [ ] Condensate-full warning, drainage state, and auto drainage.
+- [ ] Beeper, display brightness, timers, Pet Care, and charge limits only when
+  a concrete standard Matter use case is approved.
+- [ ] Electrical power/energy telemetry only if the standard Matter electrical
+  clusters improve normal household use.
+- [ ] Local MQTT redirection, Bluetooth, or LAN control only as separate
+  experiments after Matter-backed cloud control is stable.
 - [ ] Do not add other EcoFlow or older WAVE products to this repository.

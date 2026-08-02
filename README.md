@@ -1,11 +1,9 @@
-# EcoFlow WAVE 3 for Apple Home and Matter
+# Homebridge EcoFlow WAVE 3
 
-Your EcoFlow WAVE 3, now available in Apple Home—or another compatible Matter
-system—through Homebridge.
-
-This plugin publishes one Matter Room Air Conditioner accessory for every
-WAVE 3 you configure. Control power, temperature, operating mode, and fan
-speed alongside the rest of your smart home.
+This plugin adds explicitly configured EcoFlow WAVE 3 units to Apple Home and
+other compatible Matter controllers through Homebridge. Each unit appears as
+a Matter Room Air Conditioner with controls for power, temperature, operating
+mode, and fan speed.
 
 ## Requirements
 

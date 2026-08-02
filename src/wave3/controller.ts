@@ -410,7 +410,7 @@ export class Wave3Controller {
       if (this.pending?.publicationCompleted !== false) {
         this.settlePending('disconnected');
       }
-      this.updateSnapshot('offline');
+      this.updateSnapshot('accountError');
       return;
     }
     if (state === 'stopped') {
@@ -427,7 +427,7 @@ export class Wave3Controller {
       this.logger.error('EcoFlow diagnostics: controller observed a cloud session failure');
       this.clearCurrentGenerationState();
       this.settlePending('disconnected');
-      this.updateSnapshot('offline');
+      this.updateSnapshot('accountError');
     }
   }
 
@@ -634,6 +634,7 @@ function availabilityForSession(
   case 'offline':
     return 'reconnecting';
   case 'failed':
+    return 'accountError';
   case 'idle':
     return 'offline';
   case 'stopped':

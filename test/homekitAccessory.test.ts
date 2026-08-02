@@ -273,6 +273,7 @@ describe('WAVE 3 HomeKit accessory', () => {
     const controller = new FakeController(snapshot({
       powered: true,
       mode: 'cool',
+      ambientTemperatureCelsius: 18,
       targetTemperatureCelsius: 20,
     }));
     const accessory = new FakeAccessory('Office WAVE 3', 'uuid-temperature', 'SERIALTEMP');
@@ -503,7 +504,7 @@ describe('WAVE 3 HomeKit accessory', () => {
     ]);
   });
 
-  it('uses idle for unknown activity, preserves an evidenced inactive target, and rejects unsupported targets', async () => {
+  it('uses idle for unknown activity and preserves the last evidenced target through unsupported modes', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
       mode: 'cool',
@@ -537,11 +538,13 @@ describe('WAVE 3 HomeKit accessory', () => {
 
     controller.emit(snapshot({ powered: true, mode: 'fan' }));
     await Promise.resolve();
-    const targetError = await getCharacteristicError(
-      accessory.heaterCooler!,
-      Characteristic.TargetHeaterCoolerState,
+    assert.equal(
+      await getCharacteristic(
+        accessory.heaterCooler!,
+        Characteristic.TargetHeaterCoolerState,
+      ),
+      Characteristic.TargetHeaterCoolerState.COOL,
     );
-    assert.equal(targetError, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
   });
 
   it('reconciles a newer confirmed snapshot after HAP completes an older write', async () => {
@@ -560,6 +563,7 @@ describe('WAVE 3 HomeKit accessory', () => {
       current.emit(snapshot({
         powered: true,
         mode: 'cool',
+        ambientTemperatureCelsius: 18,
         targetTemperatureCelsius: 22,
       }));
     };
@@ -580,7 +584,7 @@ describe('WAVE 3 HomeKit accessory', () => {
     );
   });
 
-  it('pushes snapshots asynchronously and reports offline or missing state as HAP errors', async () => {
+  it('pushes snapshots asynchronously and retains confirmed values through availability gaps', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
       mode: 'cool',
@@ -623,19 +627,66 @@ describe('WAVE 3 HomeKit accessory', () => {
       runtimeTemperatures: {},
     });
     await Promise.resolve();
-    const staleError = await getCharacteristicError(
-      service,
-      Characteristic.CurrentTemperature,
+    assert.equal(
+      await getCharacteristic(service, Characteristic.CurrentTemperature),
+      18,
     );
-    assert.equal(staleError, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
 
     controller.emit(snapshot({ powered: true, mode: 'cool' }));
     await Promise.resolve();
-    const missingError = await getCharacteristicError(
+    assert.equal(
+      await getCharacteristic(service, Characteristic.CurrentTemperature),
+      18,
+    );
+
+    controller.emit({
+      availability: 'reconnecting',
+      state: {},
+      runtimeTemperatures: {},
+    });
+    await Promise.resolve();
+    assert.equal(
+      await getCharacteristic(service, Characteristic.CurrentTemperature),
+      18,
+    );
+    const writeError = await setCharacteristicError(
+      service,
+      Characteristic.Active,
+      Characteristic.Active.INACTIVE,
+      true,
+    );
+    assert.equal(writeError, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+
+    controller.emit({
+      availability: 'accountError',
+      state: {},
+      runtimeTemperatures: {},
+    });
+    await Promise.resolve();
+    const accountError = await getCharacteristicError(
       service,
       Characteristic.CurrentTemperature,
     );
-    assert.equal(missingError, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    assert.equal(accountError, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+  });
+
+  it('reports no response when no trustworthy device state has ever arrived', async () => {
+    const controller = new FakeController({
+      availability: 'offline',
+      state: {},
+      runtimeTemperatures: {},
+    });
+    const accessory = new FakeAccessory('Offline WAVE 3', 'uuid-offline', 'SERIALOFF');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+    const error = await getCharacteristicError(
+      accessory.heaterCooler!,
+      Characteristic.CurrentTemperature,
+    );
+    assert.equal(error, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
   });
 });
 

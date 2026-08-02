@@ -70,6 +70,12 @@ export class Wave3PlatformAccessory {
   public readonly heaterCoolerService: Service;
 
   private snapshot: Wave3ControllerSnapshot;
+  private readonly lastPresentedValues: HomeKitClimateValues = {
+    coolingThreshold: 16,
+    heatingThreshold: 16,
+    rotationSpeed: 20,
+  };
+  private hasConfirmedPresentation = false;
   private readonly detachSnapshot: () => void;
   private writeTail: Promise<void> = Promise.resolve();
   private pendingAirflowWrite?: PendingAirflowWrite;
@@ -396,8 +402,16 @@ export class Wave3PlatformAccessory {
   }
 
   private readCharacteristic(key: HomeKitClimateKey): CharacteristicValue {
-    this.requireOnline();
-    const value = this.mapSnapshot(this.snapshot)[key];
+    if (this.snapshot.availability === 'accountError'
+      || this.snapshot.availability === 'stopped') {
+      throw this.communicationError();
+    }
+    const liveValue = this.snapshot.availability === 'online'
+      ? this.mapSnapshot(this.snapshot)[key]
+      : undefined;
+    const value = liveValue ?? (this.hasConfirmedPresentation
+      ? this.lastPresentedValues[key]
+      : undefined);
     if (value === undefined) {
       throw this.communicationError();
     }
@@ -434,7 +448,9 @@ export class Wave3PlatformAccessory {
   }
 
   private pushSnapshot(snapshot: Wave3ControllerSnapshot): void {
-    if (snapshot.availability !== 'online') {
+    if (snapshot.availability === 'stopped'
+      || snapshot.availability === 'accountError'
+      || (snapshot.availability !== 'online' && !this.hasConfirmedPresentation)) {
       const error = this.communicationError();
       for (const characteristicType of this.climateCharacteristics()) {
         this.heaterCoolerService.updateCharacteristic(characteristicType, error);
@@ -442,7 +458,33 @@ export class Wave3PlatformAccessory {
       return;
     }
 
-    const values = this.mapSnapshot(snapshot);
+    if (snapshot.availability === 'online') {
+      const liveValues = this.mapSnapshot(snapshot);
+      for (const [key, value] of Object.entries(liveValues) as Array<
+        [keyof HomeKitClimateValues, number | undefined]
+      >) {
+        if (value !== undefined) {
+          this.lastPresentedValues[key] = value;
+        }
+      }
+      if (hasUsableHomeKitPresentation(snapshot, liveValues)) {
+        this.hasConfirmedPresentation = true;
+      }
+    } else {
+      this.platform.log.info(
+        `EcoFlow diagnostics: retaining last confirmed HomeKit values while device availability=${snapshot.availability}`,
+      );
+    }
+
+    if (!this.hasConfirmedPresentation) {
+      const error = this.communicationError();
+      for (const characteristicType of this.climateCharacteristics()) {
+        this.heaterCoolerService.updateCharacteristic(characteristicType, error);
+      }
+      return;
+    }
+
+    const values = this.lastPresentedValues;
     const characteristic = this.platform.Characteristic;
     const mappings = [
       [characteristic.Active, values.active],
@@ -454,12 +496,7 @@ export class Wave3PlatformAccessory {
       [characteristic.RotationSpeed, values.rotationSpeed],
     ] as const;
     for (const [characteristicType, value] of mappings) {
-      if (value === undefined) {
-        this.heaterCoolerService.updateCharacteristic(
-          characteristicType,
-          this.communicationError(),
-        );
-      } else {
+      if (value !== undefined) {
         this.heaterCoolerService.updateCharacteristic(characteristicType, value);
       }
     }
@@ -566,6 +603,34 @@ export function mapSnapshotToHomeKit(
       ? state.airflowSpeed
       : undefined,
   };
+}
+
+function hasUsableHomeKitPresentation(
+  snapshot: Wave3ControllerSnapshot,
+  values: HomeKitClimateValues,
+): boolean {
+  if (values.active === undefined
+    || values.currentState === undefined
+    || values.currentTemperature === undefined) {
+    return false;
+  }
+  if (snapshot.state.powered === false) {
+    return true;
+  }
+  if (values.targetState === undefined) {
+    return false;
+  }
+  if (snapshot.state.mode === 'cool') {
+    return values.coolingThreshold !== undefined;
+  }
+  if (snapshot.state.mode === 'heat') {
+    return values.heatingThreshold !== undefined;
+  }
+  if (snapshot.state.mode === 'auto') {
+    return values.coolingThreshold !== undefined
+      && values.heatingThreshold !== undefined;
+  }
+  return false;
 }
 
 function currentHomeKitState(

@@ -169,6 +169,9 @@ surface while `npm run verify` remains network- and hardware-independent.
 - [ ] Confirm message routing and normalized values for power, mode, ambient
   temperature, humidity, target settings, and fan speed.
 - [ ] Confirm the EcoFlow app and plugin can remain connected simultaneously.
+- [ ] Verify Home retains the last confirmed presentation through stale,
+  reconnecting, and device-offline periods while writes remain blocked.
+  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533277123425472562)
 - [ ] Exercise disconnect/reconnect and verify subscriptions and refresh
   recover once.
 - [ ] Capture the smallest useful anonymized binary fixtures for display,

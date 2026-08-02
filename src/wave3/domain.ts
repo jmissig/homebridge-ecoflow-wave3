@@ -82,6 +82,7 @@ export interface Wave3Acknowledgement {
 }
 
 export type Wave3Availability =
+  | 'accountError'
   | 'offline'
   | 'reconnecting'
   | 'online'

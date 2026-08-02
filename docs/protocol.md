@@ -338,6 +338,13 @@ publishing a command.
   packets contain missing climate state or unrelated incremental telemetry.
 - Ambient temperature alone is insufficient for a usable `HeaterCooler`
   snapshot even though it proves current-generation device communication.
+- HomeKit should retain a complete last-confirmed presentation through
+  transient stale, reconnecting, and device-offline states. Writes must still
+  require current online state; a startup that never obtains trustworthy
+  device state or an explicit account/session failure should continue to
+  report communication failure.
+
+[Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533277123425472562)
 
 ## Known uncertainty
 

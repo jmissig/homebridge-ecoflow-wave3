@@ -48,6 +48,7 @@ export interface EcoFlowWave3PlatformDependencies {
   createController(
     serialNumber: string,
     session: PlatformCloudSession,
+    logger: CloudSessionLogger,
   ): Wave3AccessoryController;
   bindAccessory(
     platform: EcoFlowWave3Platform,
@@ -63,9 +64,10 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
     new MqttJsTransport(),
     logger,
   ),
-  createController: (serialNumber, session) => new Wave3Controller(
+  createController: (serialNumber, session, logger) => new Wave3Controller(
     serialNumber,
     session,
+    { logger },
   ),
   bindAccessory: (platform, accessory, controller) => new Wave3PlatformAccessory(
     platform,
@@ -211,7 +213,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       };
       this.api.updatePlatformAccessories([accessory]);
 
-      const controller = this.dependencies.createController(device.serialNumber, session);
+      const controller = this.dependencies.createController(device.serialNumber, session, logger);
       const binding = this.dependencies.bindAccessory(this, accessory, controller);
       this.controllers.set(uuid, controller);
       this.bindings.set(uuid, binding);

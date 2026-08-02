@@ -15,6 +15,9 @@ export interface MqttMessage {
 export interface MqttConnection {
   onConnect(listener: () => void): () => void;
   onDisconnect(listener: () => void): () => void;
+  onReconnect?(listener: () => void): () => void;
+  onError?(listener: () => void): () => void;
+  onClose?(listener: () => void): () => void;
   onMessage(listener: (message: MqttMessage) => void): () => void;
   subscribe(topics: readonly string[], signal?: AbortSignal): Promise<void>;
   publish(
@@ -127,6 +130,21 @@ class MqttJsConnection implements MqttConnection {
   onDisconnect(listener: () => void): () => void {
     this.client.on('offline', listener);
     return () => this.client.off('offline', listener);
+  }
+
+  onReconnect(listener: () => void): () => void {
+    this.client.on('reconnect', listener);
+    return () => this.client.off('reconnect', listener);
+  }
+
+  onError(listener: () => void): () => void {
+    this.client.on('error', listener);
+    return () => this.client.off('error', listener);
+  }
+
+  onClose(listener: () => void): () => void {
+    this.client.on('close', listener);
+    return () => this.client.off('close', listener);
   }
 
   onMessage(listener: (message: MqttMessage) => void): () => void {

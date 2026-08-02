@@ -522,6 +522,71 @@ describe('EcoFlow cloud session', () => {
     }
   });
 
+  it('logs inbound routing and decode decisions without exposing MQTT identifiers or raw payloads', async () => {
+    const logger = new CapturingLogger();
+    const connection = new FakeMqttConnection();
+    const session = new EcoFlowCloudSession(
+      testConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+      logger,
+      undefined,
+      15_000,
+      sequentialRequestIds(),
+    );
+
+    await session.start();
+    connection.emitMessage({
+      topic: '/app/device/property/TESTWAVE30001',
+      payload: Uint8Array.of(0xff),
+    });
+    connection.emitMessage({
+      topic: '/app/TEST_USER/TESTWAVE30001/thing/property/get_reply',
+      payload: jsonBytes({
+        id: 'UNEXPECTED_REPLY_ID',
+        operateType: 'latestQuotas',
+        data: {
+          online: 1,
+          quotaMap: {
+            dev_sleep_state: 0,
+            wave_operating_mode: 1,
+          },
+        },
+      }),
+    });
+    connection.emitMessage({
+      topic: '/app/UNEXPECTED_ACCOUNT/UNEXPECTED_DEVICE/thing/property/unknown',
+      payload: Uint8Array.of(1, 2, 3),
+    });
+    await session.stop();
+
+    const visibleText = logger.messages.join('\n');
+    for (const expected of [
+      'topic=/app/device/property/<device>',
+      'protobuf decode kind=malformed',
+      'dropping getReply for device #1',
+      'quota decode kind=quota deviceOnline=true',
+      'no configured WAVE 3 topic matched',
+      'controller listener(s)',
+    ]) {
+      assert.equal(visibleText.includes(expected), true, expected);
+    }
+    for (const secret of [
+      'TEST_USER',
+      'TESTWAVE30001',
+      'TESTWAVE30002',
+      'UNEXPECTED_ACCOUNT',
+      'UNEXPECTED_DEVICE',
+      'owner@example.test',
+      'TEST_ACCOUNT_PASSWORD',
+      'TEST_TOKEN',
+      'TEST_MQTT_ACCOUNT',
+      'TEST_MQTT_PASSWORD',
+    ]) {
+      assert.equal(visibleText.includes(secret), false, secret);
+    }
+  });
+
   it('cancels never-resolving authentication and MQTT open operations', async () => {
     const http: HttpTransport = {
       request: async (_request, signal) => neverUntilAborted(signal),

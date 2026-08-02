@@ -17,6 +17,7 @@ import type {
 } from './wave3/domain.js';
 
 const DEFAULT_TEMPERATURE_CENTIDEGREES = 2_000;
+const DESIRED_MATTER_VALUE_TTL_MS = 30_000;
 
 export const MATTER_SYSTEM_MODE = {
   auto: 0x01,
@@ -36,6 +37,7 @@ const MATTER_FAN_MODE = {
 
 interface DesiredMatterValue {
   count: number;
+  expiresAt: number;
   value: unknown;
 }
 
@@ -502,8 +504,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (this.stopped) {
       return;
     }
-    const snapshot = this.lastConfirmedSnapshot;
-    if (snapshot === undefined) {
+    if (this.lastConfirmedSnapshot === undefined) {
       return;
     }
     setImmediate(() => {
@@ -511,7 +512,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
         return;
       }
       this.updateTail = this.updateTail
-        .then(() => this.pushSnapshot(snapshot))
+        .then(() => {
+          const latest = this.lastConfirmedSnapshot;
+          return latest === undefined ? undefined : this.pushSnapshot(latest);
+        })
         .catch(error => {
           this.logger.error(`EcoFlow WAVE 3 Matter state restoration failed: ${errorMessage(error)}`);
         });
@@ -1060,9 +1064,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     }
     const confirmedAttributes = await waitForAttributes(this.matter, uuid, cluster, attributes);
     if (confirmedAttributes.size > 0) {
-      forgetDesiredCluster(uuid, cluster, Object.fromEntries(
-        Object.entries(attributes).filter(([attribute]) => confirmedAttributes.has(attribute)),
-      ));
+      forgetAllDesiredAttributes(uuid, cluster, confirmedAttributes);
     }
     // Homebridge 2.2.1 dispatches bridged state updates asynchronously and its
     // public promise can resolve before Matter.js applies them. If read-back
@@ -1092,7 +1094,12 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (this.stopped) {
       return;
     }
-    if (!await waitForAttributes(this.matter, this.accessory.UUID, cluster, attributes)) {
+    if ((await waitForAttributes(
+      this.matter,
+      this.accessory.UUID,
+      cluster,
+      attributes,
+    )).size !== Object.keys(attributes).length) {
       return;
     }
     if (this.stopped) {
@@ -1238,13 +1245,26 @@ function rememberDesiredCluster(
   attributes: Record<string, unknown>,
 ): void {
   for (const [attribute, value] of Object.entries(attributes)) {
+    if (!requiresMatterWriteGuard(cluster, attribute)) {
+      continue;
+    }
     const key = desiredStateKey(uuid, cluster, attribute);
     const values = desiredMatterState.get(key) ?? [];
+    pruneExpiredDesiredValues(values);
+    // Snapshot projections are serialized. Once a newer projection wants a
+    // different value, an older unconfirmed value can no longer describe the
+    // authoritative controller state and must not suppress a later user write.
+    for (let index = values.length - 1; index >= 0; index -= 1) {
+      if (!Object.is(values[index]!.value, value)) {
+        values.splice(index, 1);
+      }
+    }
     const existing = values.find(entry => Object.is(entry.value, value));
     if (existing === undefined) {
-      values.push({ count: 1, value });
+      values.push({ count: 1, expiresAt: Date.now() + DESIRED_MATTER_VALUE_TTL_MS, value });
     } else {
       existing.count += 1;
+      existing.expiresAt = Date.now() + DESIRED_MATTER_VALUE_TTL_MS;
     }
     desiredMatterState.set(key, values);
   }
@@ -1282,12 +1302,50 @@ function requireDesiredValueOrControl(
 ): boolean {
   const desired = { [attribute]: value };
   const key = desiredStateKey(uuid, cluster, attribute);
-  if (desiredMatterState.get(key)?.some(entry => Object.is(entry.value, value)) === true) {
+  const values = desiredMatterState.get(key);
+  if (values !== undefined) {
+    pruneExpiredDesiredValues(values);
+    if (values.length === 0) {
+      desiredMatterState.delete(key);
+    }
+  }
+  if (values?.some(entry => Object.is(entry.value, value)) === true) {
     forgetDesiredCluster(uuid, cluster, desired);
     return false;
   }
   control(requireMatterControl(uuid));
   return true;
+}
+
+function forgetAllDesiredAttributes(
+  uuid: string,
+  cluster: string,
+  attributes: ReadonlySet<string>,
+): void {
+  for (const attribute of attributes) {
+    desiredMatterState.delete(desiredStateKey(uuid, cluster, attribute));
+  }
+}
+
+function pruneExpiredDesiredValues(values: DesiredMatterValue[]): void {
+  const now = Date.now();
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (values[index]!.expiresAt <= now) {
+      values.splice(index, 1);
+    }
+  }
+}
+
+function requiresMatterWriteGuard(cluster: string, attribute: string): boolean {
+  return (cluster === 'thermostat' && (
+    attribute === 'systemMode'
+    || attribute === 'occupiedHeatingSetpoint'
+    || attribute === 'occupiedCoolingSetpoint'
+  )) || (cluster === 'fanControl' && (
+    attribute === 'fanMode'
+    || attribute === 'percentSetting'
+    || attribute === 'speedSetting'
+  ));
 }
 
 function desiredStateKey(uuid: string, cluster: string, attribute: string): string {

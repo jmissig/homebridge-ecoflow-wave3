@@ -364,6 +364,8 @@ describe('WAVE 3 Matter accessory', () => {
       );
       await aggregator.add(endpoint);
       let stateUpdateGate: ReturnType<typeof deferred> | undefined;
+      let dropNextThermostatStateUpdate = false;
+      let droppedThermostatStateUpdates = 0;
       const runtimeMatter = {
         ...baseMatter,
         updateAccessoryState: async (
@@ -372,6 +374,11 @@ describe('WAVE 3 Matter accessory', () => {
           attributes: Record<string, unknown>,
         ) => {
           await stateUpdateGate?.promise;
+          if (cluster === baseMatter.clusterNames.Thermostat && dropNextThermostatStateUpdate) {
+            dropNextThermostatStateUpdate = false;
+            droppedThermostatStateUpdates += 1;
+            return;
+          }
           void endpoint.set({ [cluster]: attributes } as never);
         },
         getAccessoryState: async (_uuid: string, cluster: string) => {
@@ -454,6 +461,36 @@ describe('WAVE 3 Matter accessory', () => {
         assert.deepEqual(controller.commands.slice(before), [expected]);
         await waitUntil(() => endpoint.state.thermostat.systemMode === systemMode);
       }
+
+      controller.setSnapshot(onlineSnapshot());
+      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      dropNextThermostatStateUpdate = true;
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: { ...onlineSnapshot().state, mode: 'cool', targetTemperatureCelsius: 21 },
+      });
+      await waitUntil(
+        () => droppedThermostatStateUpdates === 1,
+        'dropped stale thermostat projection',
+      );
+      await new Promise<void>(resolve => setTimeout(resolve, 550));
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: { ...onlineSnapshot().state, mode: 'heat', targetTemperatureCelsius: 23 },
+      });
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat,
+        'newer confirmed heat projection',
+      );
+      const commandsBeforeFormerlyStaleMode = controller.commands.length;
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
+      await waitUntil(
+        () => controller.snapshot.state.mode === 'cool',
+        'legitimate cool write after stale projection',
+      );
+      assert.deepEqual(controller.commands.slice(commandsBeforeFormerlyStaleMode), [
+        { type: 'mode', mode: 'cool' },
+      ]);
 
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
@@ -1244,7 +1281,7 @@ describe('WAVE 3 Matter accessory', () => {
       ...onlineSnapshot(),
       firmwareVersions: { pd: '1.1.0.105' },
     });
-    await drainMicrotasks();
+    await waitUntil(() => accessory.context.firmwareRevision === '1.1.0.105');
     assert.deepEqual(
       harness.stateUpdates.filter(
         update => update.cluster === 'bridgedDeviceBasicInformation',
@@ -1254,6 +1291,33 @@ describe('WAVE 3 Matter accessory', () => {
         softwareVersionString: '1.1.0.105',
       },
     );
+
+    (binding as unknown as { restoreConfirmedState(): void }).restoreConfirmedState();
+    controller.emit({
+      ...onlineSnapshot(),
+      state: { ...onlineSnapshot().state, mode: 'heat', targetTemperatureCelsius: 23 },
+      firmwareVersions: { pd: '1.1.0.105' },
+    });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await drainMicrotasks();
+    assert.equal(
+      harness.stateUpdates.filter(update => update.cluster === 'thermostat').at(-1)
+        ?.attributes.systemMode,
+      MATTER_SYSTEM_MODE.heat,
+    );
+
+    harness.dropNextFirmwareUpdate();
+    controller.emit({
+      ...onlineSnapshot(),
+      firmwareVersions: { pd: '1.1.0.106' },
+    });
+    await new Promise<void>(resolve => setTimeout(resolve, 550));
+    assert.equal(accessory.context.firmwareRevision, '1.1.0.105');
+    controller.emit({
+      ...onlineSnapshot(),
+      firmwareVersions: { pd: '1.1.0.106' },
+    });
+    await waitUntil(() => accessory.context.firmwareRevision === '1.1.0.106');
     const afterFirmwareUpdate = harness.stateUpdates.length;
 
     controller.emit({
@@ -1347,12 +1411,14 @@ describe('WAVE 3 Matter accessory', () => {
 });
 
 function matterHarness(updateGate?: ReturnType<typeof deferred>): {
+  dropNextFirmwareUpdate(): void;
   matter: MatterAPI;
   stateUpdates: Array<{ cluster: string; attributes: Record<string, unknown> }>;
   metadataUpdates: MatterAccessory[];
   } {
   const stateUpdates: Array<{ cluster: string; attributes: Record<string, unknown> }> = [];
   const metadataUpdates: MatterAccessory[] = [];
+  let dropNextFirmwareUpdate = false;
   const clusterState = new Map<string, Record<string, unknown>>([
     ['bridgedDeviceBasicInformation', {}],
   ]);
@@ -1371,6 +1437,10 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
         attributes: Record<string, unknown>,
       ) => {
         stateUpdates.push({ cluster, attributes });
+        if (cluster === 'bridgedDeviceBasicInformation' && dropNextFirmwareUpdate) {
+          dropNextFirmwareUpdate = false;
+          return;
+        }
         const applyUpdate = () => {
           clusterState.set(cluster, { ...clusterState.get(cluster), ...attributes });
         };
@@ -1385,6 +1455,9 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
         metadataUpdates.push(...accessories);
       },
     } as unknown as MatterAPI,
+    dropNextFirmwareUpdate: () => {
+      dropNextFirmwareUpdate = true;
+    },
     stateUpdates,
     metadataUpdates,
   };

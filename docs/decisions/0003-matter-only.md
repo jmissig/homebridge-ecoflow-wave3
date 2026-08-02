@@ -79,6 +79,14 @@ upstream path is fixed, this plugin reconciles name and context while
 re-registering cached accessories and does not call the unsafe metadata-update
 method.
 
+The bridged `registerPlatformAccessories` and `updateAccessoryState` methods in
+2.2.1 resolve after emitting internal events, before endpoint construction or
+attribute mutation is complete. The plugin therefore treats both promises as
+dispatch acknowledgements only: it polls `getAccessoryState` for endpoint
+readiness after registration and reads every emitted attribute set back before
+considering a snapshot update complete. Shutdown stops launch from creating
+additional bindings and drains this confirmed-update chain before returning.
+
 Homebridge 2.2.1 also caches `MatterAccessory.firmwareRevision` without mapping
 it onto the live `BridgedDeviceBasicInformation` server. The plugin therefore
 reports WAVE firmware directly through that standard Matter cluster's

@@ -150,7 +150,7 @@ class Wave3NoTemperatureThermostatServer extends Wave3NoTemperatureThermostatBas
 }
 
 export interface MatterAccessoryBinding {
-  stop(): void;
+  stop(): void | Promise<void>;
 }
 
 export interface MatterAccessoryLogger {
@@ -249,12 +249,15 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     });
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.stopped) {
+      await this.updateTail;
       return;
     }
     this.stopped = true;
     this.detachSnapshot();
+    forgetDesiredState(this.accessory.UUID);
+    await this.updateTail;
     forgetDesiredState(this.accessory.UUID);
   }
 
@@ -310,6 +313,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     }
     rememberDesiredCluster(uuid, cluster, attributes);
     await this.matter.updateAccessoryState(uuid, cluster, attributes);
+    if (!await waitForAttributes(this.matter, uuid, cluster, attributes)) {
+      throw new Error('Matter state update was not confirmed by Homebridge');
+    }
   }
 
   private async pushFirmware(firmwareRevision: string | undefined): Promise<void> {
@@ -333,7 +339,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (this.stopped) {
       return;
     }
-    if (!await waitForFirmware(this.matter, this.accessory.UUID, cluster, attributes)) {
+    if (!await waitForAttributes(this.matter, this.accessory.UUID, cluster, attributes)) {
       return;
     }
     if (this.stopped) {
@@ -485,25 +491,34 @@ async function waitForCluster(
   cluster: string,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (await matter.getAccessoryState(uuid, cluster) !== undefined) {
-      return true;
+    try {
+      if (await matter.getAccessoryState(uuid, cluster) !== undefined) {
+        return true;
+      }
+    } catch {
+      // Homebridge reports a missing endpoint while bridged registration is in flight.
     }
     await delay(25);
   }
   return false;
 }
 
-async function waitForFirmware(
+async function waitForAttributes(
   matter: MatterAPI,
   uuid: string,
   cluster: string,
-  expected: { softwareVersion: number; softwareVersionString: string },
+  expected: Record<string, unknown>,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const state = await matter.getAccessoryState(uuid, cluster);
-    if (state?.softwareVersion === expected.softwareVersion
-      && state.softwareVersionString === expected.softwareVersionString) {
-      return true;
+    try {
+      const state = await matter.getAccessoryState(uuid, cluster);
+      if (state !== undefined && Object.entries(expected).every(
+        ([attribute, value]) => Object.is(state[attribute], value),
+      )) {
+        return true;
+      }
+    } catch {
+      // Retry while Homebridge finishes endpoint registration or a deferred update.
     }
     await delay(25);
   }

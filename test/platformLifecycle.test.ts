@@ -135,10 +135,11 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const gate = deferred();
     const harness = platformHarness(validConfig(), gate);
     const launch = harness.signalDidFinishLaunching();
-    await Promise.resolve();
+    await waitUntil(() => harness.events.includes('session:start'));
     assert.equal(harness.sessionCreateCount, 1);
 
     const shutdown = harness.platform.shutdown();
+    await waitUntil(() => harness.sessionStopCount === 1);
     assert.equal(harness.sessionStopCount, 1);
     gate.resolve();
     await Promise.all([launch, shutdown]);
@@ -164,7 +165,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await Promise.all([launch, shutdown]);
 
     assert.equal(harness.sessionStopCount, 1);
-    assert.equal(harness.controllerStopCount, 2);
+    assert.equal(harness.controllerStopCount, 1);
     assert.equal(harness.bindingStopCount, 0);
     assert.doesNotMatch(harness.events.join(','), /session:start/);
   });
@@ -245,6 +246,7 @@ function platformHarness(
   let sessionStopCount = 0;
   let bindingStopCount = 0;
   let controllerStopCount = 0;
+  let registrationReady = registrationGate === undefined;
   const eventListeners = new Map<string, () => void>();
 
   class Accessory extends FakeCachedAccessory {}
@@ -276,8 +278,14 @@ function platformHarness(
           accessories: MatterAccessory[],
         ) => {
           events.push('register');
-          await registrationGate?.promise;
-          registered.push(...accessories);
+          if (registrationGate === undefined) {
+            registered.push(...accessories);
+          } else {
+            void registrationGate.promise.then(() => {
+              registered.push(...accessories);
+              registrationReady = true;
+            });
+          }
         },
         updatePlatformAccessories: async (accessories: MatterAccessory[]) => {
           events.push('update');
@@ -292,6 +300,7 @@ function platformHarness(
           unregistered.push(...accessories);
         },
         updateAccessoryState: async () => undefined,
+        getAccessoryState: async () => registrationReady ? { onOff: false } : undefined,
       }
       : undefined,
     isMatterEnabled: () => matterEnabled,
@@ -433,4 +442,14 @@ function deferred(): {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  throw new Error('Timed out waiting for test condition');
 }

@@ -237,7 +237,7 @@ describe('WAVE 3 Matter accessory', () => {
     await drainMicrotasks();
     assert.equal(harness.stateUpdates.length, 5);
 
-    binding.stop();
+    await binding.stop();
     controller.emit(onlineSnapshot());
     await drainMicrotasks();
     assert.equal(harness.stateUpdates.length, 5);
@@ -263,9 +263,9 @@ describe('WAVE 3 Matter accessory', () => {
     controller.emit(onlineSnapshot());
     await drainMicrotasks();
     assert.equal(harness.stateUpdates.length, 1);
-    binding.stop();
+    const stopping = binding.stop();
     updateGate.resolve();
-    await drainMicrotasks();
+    await stopping;
     assert.equal(harness.stateUpdates.length, 1);
   });
 });
@@ -295,8 +295,14 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
         attributes: Record<string, unknown>,
       ) => {
         stateUpdates.push({ cluster, attributes });
-        clusterState.set(cluster, { ...clusterState.get(cluster), ...attributes });
-        await updateGate?.promise;
+        const applyUpdate = () => {
+          clusterState.set(cluster, { ...clusterState.get(cluster), ...attributes });
+        };
+        if (updateGate === undefined) {
+          applyUpdate();
+        } else {
+          void updateGate.promise.then(applyUpdate);
+        }
       },
       getAccessoryState: async (_uuid: string, cluster: string) => clusterState.get(cluster),
       updatePlatformAccessories: async (accessories: MatterAccessory[]) => {

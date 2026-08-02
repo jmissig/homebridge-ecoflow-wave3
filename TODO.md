@@ -80,6 +80,9 @@ and no implicit HAP fallback.
   cluster (`softwareVersion` and `softwareVersionString`), because Homebridge
   2.2.1 does not map `MatterAccessory.firmwareRevision` onto the live bridged
   endpoint.
+- [x] Treat Homebridge 2.2.1 bridged registration and state-update promises as
+  event dispatch only: confirm endpoint readiness and every attribute mutation
+  through `getAccessoryState`, and drain that work during shutdown.
 
 **Phase M2 exit:** fake controller snapshots produce a complete Matter
 accessory with stable identity, cache behavior, metadata, climate state, fan

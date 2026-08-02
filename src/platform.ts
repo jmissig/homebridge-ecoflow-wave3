@@ -235,11 +235,18 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       this.log.info(`Removed ${staleMatterAccessories.length} stale Matter WAVE 3 accessory record(s)`);
     }
 
+    if (this.shutdownStarted) {
+      return;
+    }
+
     const logger = cloudLogger(this.log);
     const session = this.dependencies.createSession(this.parsedConfig, logger);
     this.session = session;
 
     for (const device of this.parsedConfig.devices) {
+      if (this.shutdownStarted) {
+        break;
+      }
       const uuid = this.uuidForSerial(device.serialNumber);
       const cachedAccessory = this.matterAccessories.get(uuid);
       const sourceChanged = cachedAccessory !== undefined
@@ -251,6 +258,9 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
           [cachedAccessory],
         );
         this.matterAccessories.delete(uuid);
+        if (this.shutdownStarted) {
+          break;
+        }
       }
 
       const controller = this.dependencies.createController(device.serialNumber, session, logger);
@@ -263,8 +273,12 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       );
       this.matterAccessories.set(uuid, accessory);
       await this.matter!.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-      if (this.shutdownStarted) {
+      const registered = await this.waitForMatterRegistration(uuid);
+      if (this.shutdownStarted || !registered) {
         controller.stop();
+        if (!this.shutdownStarted) {
+          this.log.error('EcoFlow WAVE 3 Matter endpoint registration did not complete');
+        }
         continue;
       }
       if (cachedAccessory === undefined || sourceChanged) {
@@ -304,9 +318,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   }
 
   private async stopRuntimeResources(): Promise<void> {
-    for (const binding of this.bindings.values()) {
-      binding.stop();
-    }
+    await Promise.all([...this.bindings.values()].map(binding => binding.stop()));
     this.bindings.clear();
     for (const controller of this.controllers.values()) {
       controller.stop();
@@ -321,6 +333,20 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     }
     this.sessionStopPromise ??= this.session.stop();
     await this.sessionStopPromise;
+  }
+
+  private async waitForMatterRegistration(uuid: string): Promise<boolean> {
+    for (let attempt = 0; attempt < 200 && !this.shutdownStarted; attempt += 1) {
+      try {
+        if (await this.matter!.getAccessoryState(uuid, this.matter!.clusterNames.OnOff) !== undefined) {
+          return true;
+        }
+      } catch {
+        // Homebridge reports a missing endpoint while bridged registration is still in flight.
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, 25));
+    }
+    return false;
   }
 
   private uuidForSerial(serialNumber: string): string {

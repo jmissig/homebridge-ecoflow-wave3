@@ -23,13 +23,13 @@ describe('WAVE 3 Matter accessory', () => {
   it('maps every supported system mode and all five fan speeds from snapshots', () => {
     const harness = matterHarness();
     const cases = [
-      { mode: 'off', powered: false, submode: 0, speed: 20, systemMode: 3, fanMode: 0, running: 0 },
-      { mode: 'auto', powered: true, submode: 0, speed: 20, systemMode: 1, fanMode: 1, running: 0 },
-      { mode: 'cool', powered: true, submode: 0, speed: 40, systemMode: 3, fanMode: 2, running: 3 },
-      { mode: 'heat', powered: true, submode: 0, speed: 60, systemMode: 4, fanMode: 2, running: 4 },
-      { mode: 'fan', powered: true, submode: 0, speed: 80, systemMode: 7, fanMode: 3, running: 0 },
-      { mode: 'dry', powered: true, submode: 0, speed: 100, systemMode: 8, fanMode: 3, running: 0 },
-      { mode: 'cool', powered: true, submode: 3, speed: 20, systemMode: 9, fanMode: 1, running: 3 },
+      { mode: 'off', powered: false, submode: 0, speed: 20, systemMode: 3, fanMode: 0 },
+      { mode: 'auto', powered: true, submode: 0, speed: 20, systemMode: 1, fanMode: 1 },
+      { mode: 'cool', powered: true, submode: 0, speed: 40, systemMode: 3, fanMode: 2 },
+      { mode: 'heat', powered: true, submode: 0, speed: 60, systemMode: 4, fanMode: 2 },
+      { mode: 'fan', powered: true, submode: 0, speed: 80, systemMode: 7, fanMode: 3 },
+      { mode: 'dry', powered: true, submode: 0, speed: 100, systemMode: 8, fanMode: 3 },
+      { mode: 'cool', powered: true, submode: 3, speed: 20, systemMode: 9, fanMode: 1 },
     ] as const;
 
     for (const [index, value] of cases.entries()) {
@@ -61,7 +61,7 @@ describe('WAVE 3 Matter accessory', () => {
       );
       assert.equal(accessory.clusters?.onOff?.onOff, value.powered);
       assert.equal(accessory.clusters?.thermostat?.systemMode, value.systemMode);
-      assert.equal(accessory.clusters?.thermostat?.thermostatRunningMode, value.running);
+      assert.equal(accessory.clusters?.thermostat?.thermostatRunningMode, undefined);
       assert.equal(accessory.clusters?.fanControl?.fanMode, value.fanMode);
       assert.equal(accessory.clusters?.fanControl?.percentSetting, value.powered ? value.speed : 0);
       assert.equal(accessory.clusters?.fanControl?.speedSetting, value.powered ? value.speed / 20 : 0);
@@ -248,6 +248,7 @@ describe('WAVE 3 Matter accessory', () => {
           thermostat: {
             localTemperature: number | null;
             systemMode: number;
+            thermostatRunningMode?: number;
             occupiedCoolingSetpoint: number;
             occupiedHeatingSetpoint: number;
             minSetpointDeadBand: number;
@@ -297,6 +298,7 @@ describe('WAVE 3 Matter accessory', () => {
         assert.equal(endpointState().thermostat.occupiedCoolingSetpoint, 2_300);
         assert.equal(endpointState().thermostat.occupiedHeatingSetpoint, 2_300);
         assert.equal(endpointState().thermostat.minSetpointDeadBand, 0);
+        assert.equal(endpointState().thermostat.thermostatRunningMode, undefined);
         assert.equal(
           endpointState().thermostat.localTemperature,
           source === 'ambient' ? 2_300 : source === 'outlet' ? 1_700 : null,
@@ -1121,7 +1123,6 @@ describe('WAVE 3 Matter accessory', () => {
       minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
       systemMode: MATTER_SYSTEM_MODE.auto,
-      thermostatRunningMode: 0,
     });
     assert.deepEqual(accessory.clusters?.fanControl, {
       fanMode: 2,

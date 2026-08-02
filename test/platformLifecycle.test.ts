@@ -210,12 +210,13 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
       undefined,
       2,
     );
-    await registering.signalDidFinishLaunching();
-    await registering.platform.shutdown();
+    const registeringLaunch = registering.signalDidFinishLaunching();
+    await waitUntil(() => registering.events.includes('register'));
+    assert.doesNotMatch(registering.events.join(','), /session:start/);
+    await Promise.all([registeringLaunch, registering.platform.shutdown()]);
     assert.equal(registering.sessionStopCount, 1);
     assert.equal(registering.controllerStopCount, 1);
     assert.equal(registering.platform.matterAccessories.size, 0);
-    assert.match(registering.logs.error.join('\n'), /registration did not complete/);
     assert.match(registering.logs.warn.join('\n'), /Stopped waiting.*registration to materialize/);
 
     const droppedUnregistration = deferred();

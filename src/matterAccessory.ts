@@ -27,12 +27,6 @@ export const MATTER_SYSTEM_MODE = {
   sleep: 0x09,
 } as const;
 
-const MATTER_RUNNING_MODE = {
-  off: 0x00,
-  cool: 0x03,
-  heat: 0x04,
-} as const;
-
 const MATTER_FAN_MODE = {
   off: 0x00,
   low: 0x01,
@@ -382,6 +376,11 @@ export function createWave3MatterAccessory(
     context,
     clusters,
   };
+}
+
+export function releaseWave3MatterAccessoryState(uuid: string): void {
+  matterControls.delete(uuid);
+  forgetDesiredState(uuid);
 }
 
 export class Wave3MatterAccessory implements MatterAccessoryBinding {
@@ -1162,7 +1161,6 @@ function clustersForSnapshot(
       minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
       systemMode: context.lastSystemMode ?? MATTER_SYSTEM_MODE.cool,
-      thermostatRunningMode: runningModeForState(powered, state.mode),
     },
     fanControl: {
       ...previousFan,
@@ -1175,6 +1173,12 @@ function clustersForSnapshot(
       speedCurrent: powered ? speedIndex(airflow) : 0,
     },
   };
+
+  // The display packets identify the selected operating mode, not whether the
+  // compressor is currently heating or cooling. ThermostatRunningMode is an
+  // optional attribute, so omit it until the protocol supplies direct
+  // activity evidence. Also remove it from pre-0.2 cached cluster state.
+  delete clusters.thermostat?.thermostatRunningMode;
 
   if (currentTemperatureSource === 'ambient') {
     clusters.relativeHumidityMeasurement = {
@@ -1381,19 +1385,6 @@ function systemModeForState(mode: Wave3Mode | undefined, submode: number | undef
     return undefined;
   }
   return MATTER_SYSTEM_MODE[mode];
-}
-
-function runningModeForState(powered: boolean, mode: Wave3Mode | undefined): number {
-  if (!powered) {
-    return MATTER_RUNNING_MODE.off;
-  }
-  if (mode === 'cool') {
-    return MATTER_RUNNING_MODE.cool;
-  }
-  if (mode === 'heat') {
-    return MATTER_RUNNING_MODE.heat;
-  }
-  return MATTER_RUNNING_MODE.off;
 }
 
 function normalizedAirflow(value: number | undefined): number | undefined {

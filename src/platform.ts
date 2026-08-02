@@ -27,6 +27,7 @@ import {
 } from './platformAccessory.js';
 import {
   createWave3MatterAccessory,
+  releaseWave3MatterAccessoryState,
   Wave3MatterAccessory,
   type MatterAccessoryBinding,
 } from './matterAccessory.js';
@@ -296,6 +297,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         controller.stop();
         this.matterAccessories.delete(uuid);
         await this.cleanupDispatchedRegistration(accessory);
+        releaseWave3MatterAccessoryState(uuid);
         if (!this.shutdownStarted) {
           this.log.error('EcoFlow WAVE 3 Matter endpoint registration did not complete');
         }
@@ -358,8 +360,8 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   private async waitForMatterRegistration(
     accessory: MatterAccessory<Wave3MatterAccessoryContext>,
   ): Promise<boolean> {
-    const maxAttempts = this.dependencies.matterOperationPollAttempts ?? 200;
-    for (let attempts = 0; attempts < maxAttempts && !this.shutdownStarted; attempts += 1) {
+    let attempts = 0;
+    while (!this.shutdownStarted) {
       try {
         const onOff = await this.matter!.getAccessoryState(
           accessory.UUID,
@@ -377,7 +379,8 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       } catch {
         // Homebridge reports a missing endpoint while bridged registration is still in flight.
       }
-      if (attempts === 199) {
+      attempts += 1;
+      if (attempts === 200) {
         this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
       }
       await this.waitForMatterOperationPoll();

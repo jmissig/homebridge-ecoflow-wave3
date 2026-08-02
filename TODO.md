@@ -17,11 +17,11 @@ EcoFlow cloud + WAVE 3 protocol
 
 ## Now — Phase M1: Matter-only platform contract
 
-- [ ] Require `api.isMatterEnabled()` / `api.matter` before starting device
+- [x] Require `api.isMatterEnabled()` / `api.matter` before starting device
   sessions; emit one clear configuration error and stop when Matter is absent.
-- [ ] Add Homebridge package metadata for Matter support and remove
+- [x] Add Homebridge package metadata for Matter support and remove
   `supports-hap` and HAP-specific keywords.
-- [ ] Update plugin and bridge documentation for the required child-bridge
+- [x] Update plugin and bridge documentation for the required child-bridge
   configuration:
 
   ```json
@@ -31,11 +31,11 @@ EcoFlow cloud + WAVE 3 protocol
   }
   ```
 
-- [ ] Preserve the existing child-bridge debug-mode guidance; Matter selection
+- [x] Preserve the existing child-bridge debug-mode guidance; Matter selection
   and debug logging are independent settings.
-- [ ] Keep stable device UUIDs derived from the configured WAVE 3 identifier,
+- [x] Keep stable device UUIDs derived from the configured WAVE 3 identifier,
   but use `api.matter.uuid` at the presentation boundary.
-- [ ] Define the Matter accessory context needed for cache restoration,
+- [x] Define the Matter accessory context needed for cache restoration,
   configuration reconciliation, and stale-device removal.
 
 **Phase M1 exit:** the platform has an explicit Matter-only startup contract

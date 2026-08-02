@@ -31,6 +31,14 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.match(harness.logs.error.join('\n'), /configuration is invalid/);
   });
 
+  it('requires Matter before starting account or device sessions', async () => {
+    const harness = platformHarness(validConfig(), undefined, false);
+    await harness.signalDidFinishLaunching();
+    assert.equal(harness.sessionCreateCount, 0);
+    assert.equal(harness.registered.length, 0);
+    assert.match(harness.logs.error.join('\n'), /requires Matter.*HAP fallback is not supported/);
+  });
+
   it('restores configured cache entries, prevents duplicates, registers missing devices, and removes stale entries', async () => {
     const harness = platformHarness(validConfig());
     const expectedFirstUuid = uuidFor('FIRST1234');
@@ -126,6 +134,7 @@ class FakeCachedAccessory {
 function platformHarness(
   config: PlatformConfig,
   startGate?: ReturnType<typeof deferred>,
+  matterEnabled = true,
 ): {
   platform: EcoFlowWave3Platform;
   registered: FakeCachedAccessory[];
@@ -169,6 +178,14 @@ function platformHarness(
       },
     },
     platformAccessory: Accessory,
+    matter: matterEnabled
+      ? {
+        uuid: {
+          generate: uuidForSeed,
+        },
+      }
+      : undefined,
+    isMatterEnabled: () => matterEnabled,
     registerPlatformAccessories: (
       _plugin: string,
       _platform: string,

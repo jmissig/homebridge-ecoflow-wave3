@@ -2,7 +2,7 @@
   "name": "homebridge-ecoflow-wave3",
   "displayName": "EcoFlow WAVE 3",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Homebridge 2 plugin for the EcoFlow WAVE 3 portable air conditioner.",
   "author": "Julian Missig",
@@ -17,11 +17,11 @@
   },
   "keywords": [
     "homebridge-plugin",
-    "supports-hap",
+    "matter",
     "ecoflow",
     "wave-3",
     "air-conditioner",
-    "homekit"
+    "apple-home"
   ],
   "main": "dist/index.js",
   "engines": {

@@ -3,6 +3,7 @@ import type {
   Characteristic,
   DynamicPlatformPlugin,
   Logging,
+  MatterAPI,
   PlatformAccessory,
   PlatformConfig,
   Service,
@@ -33,6 +34,13 @@ import {
 export interface Wave3AccessoryContext {
   schemaVersion: 1;
   serialNumber: string;
+  lastTargetMode?: 'auto' | 'cool' | 'heat';
+}
+
+export interface Wave3MatterAccessoryContext {
+  schemaVersion: 1;
+  serialNumber: string;
+  currentTemperatureSource: Wave3DeviceConfig['currentTemperatureSource'];
   lastTargetMode?: 'auto' | 'cool' | 'heat';
 }
 
@@ -88,6 +96,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   public readonly Characteristic: typeof Characteristic;
   public readonly homeKitWriteSettleMilliseconds = 750;
   public readonly accessories = new Map<string, PlatformAccessory>();
+  public readonly matter?: MatterAPI;
 
   private readonly duplicateAccessories: PlatformAccessory[] = [];
   private readonly bindings = new Map<string, Wave3PlatformAccessory>();
@@ -106,9 +115,18 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   ) {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
+    this.matter = api.matter;
 
     try {
-      this.parsedConfig = parseEcoFlowWave3Config(config);
+      const parsedConfig = parseEcoFlowWave3Config(config);
+      if (!api.isMatterEnabled() || this.matter === undefined) {
+        this.log.error(
+          'EcoFlow WAVE 3 requires Matter to be enabled for this child bridge; '
+          + 'HAP fallback is not supported',
+        );
+      } else {
+        this.parsedConfig = parsedConfig;
+      }
       this.log.debug('Validated EcoFlow WAVE 3 platform configuration');
     } catch (error) {
       const detail = error instanceof ConfigurationError ? error.message : 'unexpected configuration error';
@@ -246,7 +264,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   }
 
   private uuidForSerial(serialNumber: string): string {
-    return this.api.hap.uuid.generate(`${PLUGIN_NAME}:wave3:${serialNumber}`);
+    if (this.matter === undefined) {
+      throw new Error('Matter API is unavailable');
+    }
+    return this.matter.uuid.generate(`${PLUGIN_NAME}:wave3:${serialNumber}`);
   }
 }
 

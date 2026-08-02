@@ -106,12 +106,31 @@ Run early tests in an isolated Homebridge child bridge. After Homebridge
 restarts, the configured unit should appear as a heater/cooler accessory in
 Apple Home.
 
+The Matter-only 0.2 development line requires Matter on this child bridge and
+does not fall back to HAP. Configure the EcoFlow platform's `_bridge` block as:
+
+```json
+"_bridge": {
+  "username": "AA:BB:CC:DD:EE:FF",
+  "port": 30141,
+  "hap": { "enabled": false },
+  "matter": {
+    "enabled": true,
+    "name": "EcoFlow WAVE 3"
+  }
+}
+```
+
+This setting affects only the EcoFlow child bridge. Other Homebridge bridges
+and child bridges may continue using HAP.
+
 ## Debug logging
 
 The plugin uses Homebridge's standard debug logging. When the plugin runs in a
 child bridge, enable **Debug Mode** in that child bridge's settings to scope
 verbose logging to the EcoFlow child process. The equivalent `config.json`
-setting lives in the platform's existing `_bridge` block:
+setting is `debugModeEnabled` in the same `_bridge` block; it is independent of
+the `hap` and `matter` protocol settings:
 
 ```json
 "_bridge": {

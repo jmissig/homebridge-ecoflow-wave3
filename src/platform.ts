@@ -121,8 +121,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       const parsedConfig = parseEcoFlowWave3Config(config);
       if (!api.isMatterEnabled() || this.matter === undefined) {
         this.log.error(
-          'EcoFlow WAVE 3 requires Matter to be enabled for this child bridge; '
-          + 'HAP fallback is not supported',
+          'EcoFlow WAVE 3 is Matter-only; enable Matter and disable HAP for this child bridge',
         );
       } else {
         this.parsedConfig = parsedConfig;

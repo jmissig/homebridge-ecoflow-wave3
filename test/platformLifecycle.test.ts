@@ -32,12 +32,15 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.match(harness.logs.error.join('\n'), /configuration is invalid/);
   });
 
-  it('requires Matter before starting account or device sessions', async () => {
+  it('rejects a child bridge without Matter and explains the Matter-only setup', async () => {
     const harness = platformHarness(validConfig(), undefined, false);
     await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 0);
     assert.equal(harness.registered.length, 0);
-    assert.match(harness.logs.error.join('\n'), /requires Matter.*HAP fallback is not supported/);
+    assert.match(
+      harness.logs.error.join('\n'),
+      /is Matter-only; enable Matter and disable HAP for this child bridge/,
+    );
   });
 
   it('restores configured cache entries, prevents duplicates, registers missing devices, and removes stale entries', async () => {

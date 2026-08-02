@@ -575,6 +575,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
 
   private async applySystemMode(mode: Exclude<Wave3Mode, 'off'>): Promise<void> {
     const state = this.snapshot.state;
+    if (!state.powered || state.mode === 'off') {
+      throw new MatterStatus.InvalidInState(
+        'Use the Room Air Conditioner power control before selecting a system mode',
+      );
+    }
     if (state.submode === 3 || state.submode === 2 || state.submode === 4) {
       await this.execute({ type: 'submode', submode: 0 });
     }

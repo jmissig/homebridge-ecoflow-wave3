@@ -414,6 +414,19 @@ describe('WAVE 3 Matter accessory', () => {
       controller.setSnapshot(onlineSnapshot());
 
       await endpoint.act('turn off', agent => agent.onOff.off());
+      const commandsBeforeModeWhileOff = controller.commands.length;
+      const errorsBeforeModeWhileOff = errors.length;
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } });
+      await waitUntil(
+        () => errors.length === errorsBeforeModeWhileOff + 1,
+        'system-mode rejection while off',
+      );
+      assert.equal(controller.commands.length, commandsBeforeModeWhileOff);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'confirmed system mode restored while off',
+      );
+      assert.match(errors.at(-1)!, /power control before selecting a system mode/);
       await endpoint.act('turn on', agent => agent.onOff.on());
       const powerBeforeRapidToggle = controller.commands.length;
       await Promise.all([
@@ -1052,6 +1065,8 @@ describe('WAVE 3 Matter accessory', () => {
       await node.close();
     }
     assert.deepEqual(errors, [
+      'EcoFlow WAVE 3 Matter system mode command failed: '
+        + 'Use the Room Air Conditioner power control before selecting a system mode',
       ...Array<string>(5).fill(
         'EcoFlow WAVE 3 Matter state update failed: Matter state update was not confirmed by Homebridge',
       ),

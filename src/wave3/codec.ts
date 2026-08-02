@@ -5,6 +5,7 @@ import {
   toBinary,
   type DescMessage,
   type MessageShape,
+  type UnknownField,
 } from '@bufbuild/protobuf';
 
 import {
@@ -44,6 +45,12 @@ export interface Wave3Diagnostic {
   sequence?: number;
   payloadLength: number;
   unknownFieldCount?: number;
+  unknownFields?: ReadonlyArray<{
+    scope: string;
+    number: number;
+    wireType: string;
+    dataLength: number;
+  }>;
   unsupportedValues?: ReadonlyArray<{
     field: string;
     value: number;
@@ -107,12 +114,19 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
     }
     const encodedPayload = header.pdata ?? new Uint8Array();
 
+    const envelopeUnknownFields = collectUnknownFieldDiagnostics([
+      ['envelope', message],
+      ['header', header],
+    ]);
     const diagnostic: Wave3Diagnostic = {
       commandFunction: header.cmdFunc,
       commandId: header.cmdId,
       sequence: header.seq,
       payloadLength: encodedPayload.length,
-      unknownFieldCount: countUnknownFields(message, header),
+      unknownFieldCount: envelopeUnknownFields.count,
+      ...(envelopeUnknownFields.fields.length === 0
+        ? {}
+        : { unknownFields: envelopeUnknownFields.fields }),
     };
 
     if (encodedPayload.length === 0) {
@@ -144,7 +158,7 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
         update: normalized.update,
         diagnostic: withPayloadDiagnostics(
           diagnostic,
-          countDisplayUnknownFields(display),
+          collectDisplayUnknownFieldDiagnostics(display),
           normalized.unsupportedValues,
         ),
       };
@@ -156,7 +170,10 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
         kind: 'runtime',
         sequence: header.seq ?? 0,
         temperatures: normalizeRuntimeTemperatures(runtime),
-        diagnostic: withPayloadDiagnostics(diagnostic, countUnknownFields(runtime)),
+        diagnostic: withPayloadDiagnostics(
+          diagnostic,
+          collectUnknownFieldDiagnostics([['payload', runtime]]),
+        ),
       };
     }
 
@@ -169,7 +186,7 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
         acknowledgement: normalized.acknowledgement,
         diagnostic: withPayloadDiagnostics(
           diagnostic,
-          countUnknownFields(acknowledgement),
+          collectUnknownFieldDiagnostics([['payload', acknowledgement]]),
           normalized.unsupportedValues,
         ),
       };
@@ -684,30 +701,69 @@ function has<Schema extends DescMessage>(
   return field !== undefined && isFieldSet(message, field);
 }
 
+const MAX_DIAGNOSTIC_UNKNOWN_FIELDS = 16;
+const WIRE_TYPE_NAMES = [
+  'varint',
+  'fixed64',
+  'lengthDelimited',
+  'startGroup',
+  'endGroup',
+  'fixed32',
+] as const;
+
 function withPayloadDiagnostics(
   diagnostic: Wave3Diagnostic,
-  payloadUnknownFieldCount: number,
+  payloadUnknownFields: UnknownFieldDiagnostics,
   unsupportedValues?: Wave3Diagnostic['unsupportedValues'],
 ): Wave3Diagnostic {
+  const unknownFields = [
+    ...(diagnostic.unknownFields ?? []),
+    ...payloadUnknownFields.fields,
+  ].slice(0, MAX_DIAGNOSTIC_UNKNOWN_FIELDS);
   return {
     ...diagnostic,
-    unknownFieldCount: (diagnostic.unknownFieldCount ?? 0) + payloadUnknownFieldCount,
+    unknownFieldCount: (diagnostic.unknownFieldCount ?? 0) + payloadUnknownFields.count,
+    ...(unknownFields.length === 0 ? {} : { unknownFields }),
     ...(unsupportedValues === undefined ? {} : { unsupportedValues }),
   };
 }
 
-function countUnknownFields(...messages: Array<{ $unknown?: unknown[] } | undefined>): number {
-  return messages.reduce((count, message) => count + (message?.$unknown?.length ?? 0), 0);
+interface UnknownFieldDiagnostics {
+  count: number;
+  fields: NonNullable<Wave3Diagnostic['unknownFields']>;
 }
 
-function countDisplayUnknownFields(
+function collectUnknownFieldDiagnostics(
+  messages: ReadonlyArray<readonly [string, { $unknown?: UnknownField[] } | undefined]>,
+): UnknownFieldDiagnostics {
+  let count = 0;
+  const fields: Array<NonNullable<Wave3Diagnostic['unknownFields']>[number]> = [];
+  for (const [scope, message] of messages) {
+    for (const field of message?.$unknown ?? []) {
+      count += 1;
+      if (fields.length < MAX_DIAGNOSTIC_UNKNOWN_FIELDS) {
+        fields.push({
+          scope,
+          number: field.no,
+          wireType: WIRE_TYPE_NAMES[field.wireType] ?? `unknown(${field.wireType})`,
+          dataLength: field.data.length,
+        });
+      }
+    }
+  }
+  return { count, fields };
+}
+
+function collectDisplayUnknownFieldDiagnostics(
   display: MessageShape<typeof Wave3DisplayPropertyUploadSchema>,
-): number {
-  return countUnknownFields(
-    display,
-    display.waveModeInfo,
-    ...(display.waveModeInfo?.listInfo ?? []),
-  );
+): UnknownFieldDiagnostics {
+  return collectUnknownFieldDiagnostics([
+    ['payload', display],
+    ['waveModeInfo', display.waveModeInfo],
+    ...(display.waveModeInfo?.listInfo ?? []).map(
+      (mode, index) => [`waveModeInfo[${index}]`, mode] as const,
+    ),
+  ]);
 }
 
 function addUnsupportedValue(

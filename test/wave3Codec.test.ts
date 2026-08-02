@@ -408,7 +408,7 @@ describe('WAVE 3 codec', () => {
     assert.equal(wrongFunction.diagnostic.commandFunction, 7);
   });
 
-  it('reports unsupported values and counts payload/envelope unknowns without exposing bytes', () => {
+  it('reports unsupported values and bounded unknown-field metadata without exposing bytes', () => {
     const display = create(Wave3DisplayPropertyUploadSchema, { tempAmbient: 20 });
     const payload = concatenate(
       toBinary(Wave3DisplayPropertyUploadSchema, display),
@@ -424,13 +424,22 @@ describe('WAVE 3 codec', () => {
 
     assert.equal(decoded.kind, 'display');
     assert.equal(decoded.diagnostic.unknownFieldCount, 2);
-    assert.deepEqual(Object.keys(decoded.diagnostic).sort(), [
-      'commandFunction',
-      'commandId',
-      'payloadLength',
-      'sequence',
-      'unknownFieldCount',
+    assert.deepEqual(decoded.diagnostic.unknownFields, [
+      {
+        scope: 'envelope',
+        number: 701,
+        wireType: 'varint',
+        dataLength: 1,
+      },
+      {
+        scope: 'payload',
+        number: 700,
+        wireType: 'varint',
+        dataLength: 1,
+      },
     ]);
+    assert.equal(JSON.stringify(decoded.diagnostic).includes('[7]'), false);
+    assert.equal(JSON.stringify(decoded.diagnostic).includes('[8]'), false);
 
     const unknownMode = create(Wave3DisplayPropertyUploadSchema, {
       waveOperatingMode: 99,

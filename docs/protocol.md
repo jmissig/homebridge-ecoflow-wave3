@@ -34,7 +34,8 @@ The initial WAVE 3 contribution and discussion are preserved in
   evidence; not yet confirmed by hardware.
 - **Hardware** — reserved for behavior observed against the household WAVE 3.
 
-No item currently has **Hardware** confidence.
+Hardware confidence is recorded only for the bounded observations below; it
+does not yet establish supported HomeKit controls.
 
 ## Private authentication
 
@@ -280,6 +281,33 @@ publishing a command.
 - Acknowledgement correlation and state-confirmation rules must therefore be
   designed and fixture-tested before live commands are attempted.
 
+## Household hardware observations
+
+**Hardware — 2026-08-01 read-only child-bridge run**
+
+- Authentication against the Americas API, MQTT certification, TLS broker
+  connection, five-topic subscription, and initial `latestQuotas` publication
+  completed successfully.
+- The broker echoed the plugin's property-get publication. No matching
+  property-get reply appeared in the captured startup window.
+- The WAVE 3 property topic delivered `cmd_func=254`, `cmd_id=21` protobuf
+  packets while the official EcoFlow app remained connected.
+- The first packet contained recognized ambient-temperature evidence and two
+  unknown protobuf fields. The controller became fresh, but its normalized
+  state still lacked power, mode, and target settings.
+- A later packet contained two unknown protobuf fields and no recognized
+  first-slice evidence, so the controller rejected it without regressing the
+  previously accepted state.
+
+[Source: household Homebridge diagnostic log shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533270401684082809)
+
+**Inference**
+
+- Unknown field numbers and wire types are needed before deciding whether the
+  packets contain missing climate state or unrelated incremental telemetry.
+- Ambient temperature alone is insufficient for a usable `HeaterCooler`
+  snapshot even though it proves current-generation device communication.
+
 ## Known uncertainty
 
 - No private device-list endpoint is evidenced by the pinned upstream code.
@@ -288,7 +316,8 @@ publishing a command.
 - Upstream discussion reports that some WAVE 3 installations stop accepting
   commands after an extended session. The cause and safe recovery behavior
   remain unverified.
-- Official-app and plugin connection coexistence is unverified.
+- Basic official-app and plugin connection coexistence has been observed once;
+  reconnect and extended-session reliability remain unverified.
 - All field meanings remain reverse-engineered until household hardware
   validation.
 

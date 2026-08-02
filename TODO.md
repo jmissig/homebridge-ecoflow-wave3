@@ -47,13 +47,18 @@ per-mode profiles.
   modes.
 - [x] Never infer a destination target from Matter's inactive companion
   heating/cooling setpoint.
+- [x] When Apple Home writes only a new manual mode, carry the currently
+  active target into that destination mode; Apple Home keeps displaying that
+  value and does not write the inactive companion setpoint. [source: household
+  Cool→Heat trace and Julian's observation · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533603258143342704)
 - [x] Track which target/range values came from an explicit controller write
   versus projection needed only to keep Matter attributes transactionally
   valid.
 - [ ] Investigate why Apple Home can visually present one Heat/Cool target
   while its stored Matter companion setpoint contains another value.
-- [ ] Verify repeated Cool→Heat→Cool transitions restore the confirmed WAVE
-  profile for each destination mode.
+- [ ] Verify repeated Cool→Heat→Cool transitions keep the controller's
+  displayed active target while the independent confirmed WAVE profiles remain
+  available for reconciliation and non-Matter changes.
 
 ### 3. Keep Auto deferred without losing protocol support
 

@@ -104,9 +104,11 @@ independent of the ten-second evidence deadline for an individual command.
 
 The WAVE stores separate parameters for its operating modes. A mode-only Heat
 command can restore Heat's remembered target—26°C on the household unit—even
-when Apple Home had just displayed a different target. Current builds include
-the presented Cool/Heat target, or both Auto thresholds, with every mode
-transition. If this still occurs, capture the semantic command and subsequent
+when Apple Home had just displayed a different target. Apple Home has been
+observed writing only the new manual mode while continuing to display the old
+active target. Current builds carry that active Cool/Heat target through the
+confirmed mode transition; a later explicit setpoint write supersedes it. If
+the values still diverge, capture the semantic command and subsequent
 acknowledgement/state lines rather than changing several controls at once.
 
 ## Fan Only, Dry, or Sleep is absent

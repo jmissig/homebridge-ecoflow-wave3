@@ -320,14 +320,31 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     this.logger.debug?.(
       `EcoFlow diagnostics: Matter write systemMode=${systemMode} powered=${String(this.snapshot.state.powered)}`,
     );
-    if (systemMode !== MATTER_SYSTEM_MODE.sleep
-      && waveModeForSystemMode(systemMode) === undefined) {
+    const requestedMode = systemMode === MATTER_SYSTEM_MODE.sleep
+      ? undefined
+      : waveModeForSystemMode(systemMode);
+    if (systemMode !== MATTER_SYSTEM_MODE.sleep && requestedMode === undefined) {
       throw new MatterStatus.ConstraintError(`Unsupported Matter system mode ${systemMode}`);
     }
     if (systemMode === MATTER_SYSTEM_MODE.sleep && this.confirmedStateIsOff()) {
       throw new MatterStatus.InvalidInState('Sleep mode requires the WAVE 3 to be on');
     }
-    this.stageThermostatIntent({ systemMode });
+    const activeTarget = this.snapshot.state.targetTemperatureCelsius;
+    this.stageThermostatIntent({
+      systemMode,
+      // Apple Home writes only SystemMode when switching between manual Heat
+      // and Cool while continuing to display the previously active target.
+      // Carry that active target into the destination mode so the WAVE cannot
+      // restore a different saved profile behind the controller's UI. A later
+      // explicit setpoint write supersedes this staged value by revision.
+      ...(activeTarget === undefined || requestedMode === undefined
+        ? {}
+        : requestedMode === 'heat'
+          ? { heatingCelsius: activeTarget }
+          : requestedMode === 'cool'
+            ? { coolingCelsius: activeTarget }
+            : {}),
+    });
     if (this.confirmedStateIsOff()) {
       return;
     }

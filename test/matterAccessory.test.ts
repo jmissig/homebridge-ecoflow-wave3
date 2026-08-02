@@ -494,13 +494,14 @@ describe('WAVE 3 Matter accessory', () => {
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } });
       await waitUntil(
         () => controller.snapshot.state.mode === 'heat'
-          && controller.snapshot.state.targetTemperatureCelsius === 26,
-        'delayed Heat write restores its authoritative saved profile',
+          && controller.snapshot.state.targetTemperatureCelsius === 22,
+        'delayed Heat write carries the target Apple Home kept displaying',
       );
       assert.deepEqual(controller.commands.slice(commandsBeforeDelayedModeReplay), [
         { type: 'power', on: true },
         { type: 'mode', mode: 'cool' },
         { type: 'mode', mode: 'heat' },
+        { type: 'targetTemperature', celsius: 22 },
       ]);
 
       await endpoint.act('turn off before unsupported Auto write', agent => agent.onOff.off());
@@ -524,11 +525,14 @@ describe('WAVE 3 Matter accessory', () => {
         { type: 'power', on: true },
       ]);
       for (const [systemMode, expected] of [
-        [MATTER_SYSTEM_MODE.cool, { type: 'mode', mode: 'cool' }],
-        [MATTER_SYSTEM_MODE.heat, { type: 'mode', mode: 'heat' }],
-        [MATTER_SYSTEM_MODE.fan, { type: 'mode', mode: 'fan' }],
-        [MATTER_SYSTEM_MODE.dry, { type: 'mode', mode: 'dry' }],
-        [MATTER_SYSTEM_MODE.sleep, { type: 'submode', submode: 3 }],
+        [MATTER_SYSTEM_MODE.cool, [{ type: 'mode', mode: 'cool' }]],
+        [MATTER_SYSTEM_MODE.heat, [
+          { type: 'mode', mode: 'heat' },
+          { type: 'targetTemperature', celsius: 22 },
+        ]],
+        [MATTER_SYSTEM_MODE.fan, [{ type: 'mode', mode: 'fan' }]],
+        [MATTER_SYSTEM_MODE.dry, [{ type: 'mode', mode: 'dry' }]],
+        [MATTER_SYSTEM_MODE.sleep, [{ type: 'submode', submode: 3 }]],
       ] as const) {
         const before = controller.commands.length;
         await endpoint.set({ thermostat: { systemMode } });
@@ -536,7 +540,7 @@ describe('WAVE 3 Matter accessory', () => {
           () => controller.commands.length > before,
           `Matter system mode ${systemMode} command`,
         );
-        assert.deepEqual(controller.commands.slice(before), [expected]);
+        assert.deepEqual(controller.commands.slice(before), expected);
         await waitUntil(
           () => endpoint.state.thermostat.systemMode === systemMode,
           `projected Matter system mode ${systemMode}`,
@@ -574,6 +578,7 @@ describe('WAVE 3 Matter accessory', () => {
       );
       assert.deepEqual(controller.commands.slice(commandsBeforeFormerlyStaleMode), [
         { type: 'mode', mode: 'cool' },
+        { type: 'targetTemperature', celsius: 23 },
       ]);
 
       controller.setSnapshot({

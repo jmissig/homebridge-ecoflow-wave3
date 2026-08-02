@@ -106,3 +106,8 @@ Protocol details and implementation evidence live in
 Original work is licensed under the [BSD 3-Clause License](LICENSE).
 Protocol-derived files retain their Apache 2.0 licensing and attribution; see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+---
+
+Made with Codex and OpenClaw.
+

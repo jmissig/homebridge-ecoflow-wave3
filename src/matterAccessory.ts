@@ -78,13 +78,13 @@ class Wave3OnOffServer extends Wave3OnOffBase {
 class Wave3FanControlServer extends MultiSpeedFanControlServer {
   override initialize(): void {
     super.initialize();
-    this.reactTo(this.events.fanMode$Changing, this.validateFanMode, { offline: true });
-    this.reactTo(this.events.percentSetting$Changing, this.validatePercentSetting, { offline: true });
-    this.reactTo(this.events.speedSetting$Changing, this.validateSpeedSetting, { offline: true });
+    this.reactTo(this.events.fanMode$Changing, this.validateFanMode);
+    this.reactTo(this.events.percentSetting$Changing, this.validatePercentSetting);
+    this.reactTo(this.events.speedSetting$Changing, this.validateSpeedSetting);
   }
 
-  private async validateFanMode(value: number): Promise<void> {
-    await requireDesiredValueOrControl(
+  private validateFanMode(value: number): void {
+    requireDesiredValueOrControl(
       this.endpoint.id,
       'fanControl',
       'fanMode',
@@ -93,8 +93,8 @@ class Wave3FanControlServer extends MultiSpeedFanControlServer {
     );
   }
 
-  private async validatePercentSetting(value: number | null): Promise<void> {
-    await requireDesiredValueOrControl(
+  private validatePercentSetting(value: number | null): void {
+    requireDesiredValueOrControl(
       this.endpoint.id,
       'fanControl',
       'percentSetting',
@@ -103,8 +103,8 @@ class Wave3FanControlServer extends MultiSpeedFanControlServer {
     );
   }
 
-  private async validateSpeedSetting(value: number | null): Promise<void> {
-    await requireDesiredValueOrControl(
+  private validateSpeedSetting(value: number | null): void {
+    requireDesiredValueOrControl(
       this.endpoint.id,
       'fanControl',
       'speedSetting',
@@ -126,7 +126,6 @@ class Wave3ThermostatServer extends Wave3ThermostatBase {
         value,
         control => control.setSystemMode(value),
       ),
-      { offline: true },
     );
     this.reactTo(
       this.events.occupiedHeatingSetpoint$Changing,
@@ -137,7 +136,6 @@ class Wave3ThermostatServer extends Wave3ThermostatBase {
         value,
         control => control.setHeatingSetpoint(value),
       ),
-      { offline: true },
     );
     this.reactTo(
       this.events.occupiedCoolingSetpoint$Changing,
@@ -148,7 +146,6 @@ class Wave3ThermostatServer extends Wave3ThermostatBase {
         value,
         control => control.setCoolingSetpoint(value),
       ),
-      { offline: true },
     );
   }
 
@@ -169,7 +166,6 @@ class Wave3NoTemperatureThermostatServer extends Wave3NoTemperatureThermostatBas
         value,
         control => control.setSystemMode(value),
       ),
-      { offline: true },
     );
     this.reactTo(
       this.events.occupiedHeatingSetpoint$Changing,
@@ -180,7 +176,6 @@ class Wave3NoTemperatureThermostatServer extends Wave3NoTemperatureThermostatBas
         value,
         control => control.setHeatingSetpoint(value),
       ),
-      { offline: true },
     );
     this.reactTo(
       this.events.occupiedCoolingSetpoint$Changing,
@@ -191,7 +186,6 @@ class Wave3NoTemperatureThermostatServer extends Wave3NoTemperatureThermostatBas
         value,
         control => control.setCoolingSetpoint(value),
       ),
-      { offline: true },
     );
   }
 
@@ -209,15 +203,14 @@ export interface MatterAccessoryLogger {
 }
 
 interface Wave3MatterControl {
-  restoreConfirmedState(): void;
   setPower(on: boolean): Promise<void>;
-  setSystemMode(systemMode: number): Promise<void>;
-  setHeatingSetpoint(centidegrees: number): Promise<void>;
-  setCoolingSetpoint(centidegrees: number): Promise<void>;
+  setSystemMode(systemMode: number): void;
+  setHeatingSetpoint(centidegrees: number): void;
+  setCoolingSetpoint(centidegrees: number): void;
   raiseLowerSetpoint(mode: number, amount: number): Promise<void>;
-  setFanMode(fanMode: number): Promise<void>;
-  setFanPercent(percent: number | null): Promise<void>;
-  setFanSpeed(speed: number | null): Promise<void>;
+  setFanMode(fanMode: number): void;
+  setFanPercent(percent: number | null): void;
+  setFanSpeed(speed: number | null): void;
 }
 
 interface PendingFanWrite {
@@ -292,6 +285,7 @@ export function createWave3MatterAccessory(
 }
 
 export class Wave3MatterAccessory implements MatterAccessoryBinding {
+  private readonly activeCommands = new Set<Promise<void>>();
   private readonly detachSnapshot: () => void;
   private updateTail: Promise<void> = Promise.resolve();
   private presentedFirmwareRevision?: string;
@@ -307,21 +301,27 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     private readonly logger: MatterAccessoryLogger = { error: () => undefined },
   ) {
     this.snapshot = controller.snapshot;
+    // Registration has completed before the binding is created. The desired
+    // values used to admit asynchronous endpoint construction must not remain
+    // as permanent exemptions for later controller writes.
+    forgetDesiredState(accessory.UUID);
     matterControls.set(accessory.UUID, this.createMatterControl());
     this.updateTail = this.pushFirmware(
       controller.snapshot.firmwareVersions?.pd
       ?? controller.snapshot.firmwareVersions?.iot
       ?? accessory.context.firmwareRevision
       ?? accessory.firmwareRevision,
-    ).catch(() => {
-      this.logger.error('EcoFlow WAVE 3 Matter firmware update failed');
+    ).catch(error => {
+      this.logger.error(`EcoFlow WAVE 3 Matter firmware update failed: ${errorMessage(error)}`);
     });
     this.detachSnapshot = controller.onSnapshot(snapshot => {
       this.snapshot = snapshot;
       this.updateTail = this.updateTail
         .then(() => this.pushSnapshot(snapshot))
-        .catch(() => {
-          this.logger.error('EcoFlow WAVE 3 Matter state update failed');
+        .catch(error => {
+          if (!this.stopped && this.snapshot === snapshot) {
+            this.logger.error(`EcoFlow WAVE 3 Matter state update failed: ${errorMessage(error)}`);
+          }
         });
     });
   }
@@ -332,7 +332,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
     this.stopped = true;
-    matterControls.delete(this.accessory.UUID);
+    this.detachSnapshot();
     if (this.pendingFanWrite !== undefined) {
       if (this.pendingFanWrite.timer !== undefined) {
         clearTimeout(this.pendingFanWrite.timer);
@@ -343,7 +343,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       }
       this.pendingFanWrite = undefined;
     }
-    this.detachSnapshot();
+    await Promise.allSettled([...this.activeCommands]);
+    matterControls.delete(this.accessory.UUID);
     forgetDesiredState(this.accessory.UUID);
     await this.updateTail;
     forgetDesiredState(this.accessory.UUID);
@@ -351,7 +352,6 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
 
   private createMatterControl(): Wave3MatterControl {
     return {
-      restoreConfirmedState: () => this.restoreConfirmedState(),
       setPower: on => this.setPower(on),
       setSystemMode: systemMode => this.setSystemMode(systemMode),
       setHeatingSetpoint: value => this.setTemperatureSetpoint('heating', value),
@@ -374,8 +374,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       }
       this.updateTail = this.updateTail
         .then(() => this.pushSnapshot(snapshot))
-        .catch(() => {
-          this.logger.error('EcoFlow WAVE 3 Matter state restoration failed');
+        .catch(error => {
+          this.logger.error(`EcoFlow WAVE 3 Matter state restoration failed: ${errorMessage(error)}`);
         });
     });
   }
@@ -385,10 +385,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (this.snapshot.state.powered === on) {
       return;
     }
-    await this.execute({ type: 'power', on });
+    await this.trackInteractiveCommand(this.execute({ type: 'power', on }));
   }
 
-  private async setSystemMode(systemMode: number): Promise<void> {
+  private setSystemMode(systemMode: number): void {
     this.requireControllable();
     const state = this.snapshot.state;
     if (systemMode === MATTER_SYSTEM_MODE.sleep) {
@@ -398,7 +398,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       if (state.submode === 3) {
         return;
       }
-      await this.execute({ type: 'submode', submode: 3 });
+      this.trackAttributeCommand(
+        this.execute({ type: 'submode', submode: 3 }),
+        'system mode',
+      );
       return;
     }
 
@@ -406,6 +409,15 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (mode === undefined) {
       throw new MatterStatus.ConstraintError(`Unsupported Matter system mode ${systemMode}`);
     }
+    if (state.mode === mode && state.powered
+      && state.submode !== 3 && state.submode !== 2 && state.submode !== 4) {
+      return;
+    }
+    this.trackAttributeCommand(this.applySystemMode(mode), 'system mode');
+  }
+
+  private async applySystemMode(mode: Exclude<Wave3Mode, 'off'>): Promise<void> {
+    const state = this.snapshot.state;
     if (state.submode === 3 || state.submode === 2 || state.submode === 4) {
       await this.execute({ type: 'submode', submode: 0 });
     }
@@ -414,10 +426,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     }
   }
 
-  private async setTemperatureSetpoint(
+  private setTemperatureSetpoint(
     kind: 'heating' | 'cooling',
     value: number,
-  ): Promise<void> {
+  ): void {
     this.requireControllable();
     const celsius = matterTemperature(value);
     const state = this.snapshot.state;
@@ -434,16 +446,22 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       if (lowerCelsius > upperCelsius) {
         throw new MatterStatus.ConstraintError('Heating setpoint must not exceed cooling setpoint');
       }
-      await this.execute({
-        type: 'automaticTemperatureRange',
-        lowerCelsius,
-        upperCelsius,
-      });
+      this.trackAttributeCommand(
+        this.execute({
+          type: 'automaticTemperatureRange',
+          lowerCelsius,
+          upperCelsius,
+        }),
+        `${kind} setpoint`,
+      );
       return;
     }
     if ((kind === 'heating' && state.mode === 'heat')
       || (kind === 'cooling' && state.mode === 'cool')) {
-      await this.execute({ type: 'targetTemperature', celsius });
+      this.trackAttributeCommand(
+        this.execute({ type: 'targetTemperature', celsius }),
+        `${kind} setpoint`,
+      );
       return;
     }
 
@@ -472,7 +490,18 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       if (current === undefined) {
         throw new MatterStatus.InvalidInState('Heating setpoint is not active');
       }
-      await this.setTemperatureSetpoint('heating', centidegrees(current + delta));
+      if (state.mode === 'auto') {
+        await this.execute({
+          type: 'automaticTemperatureRange',
+          lowerCelsius: clampTemperature(current + delta, 16, state.targetTemperatureUpperCelsius!),
+          upperCelsius: state.targetTemperatureUpperCelsius!,
+        });
+      } else {
+        await this.execute({
+          type: 'targetTemperature',
+          celsius: clampTemperature(current + delta),
+        });
+      }
       return;
     }
     if (mode === 1) {
@@ -484,7 +513,18 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       if (current === undefined) {
         throw new MatterStatus.InvalidInState('Cooling setpoint is not active');
       }
-      await this.setTemperatureSetpoint('cooling', centidegrees(current + delta));
+      if (state.mode === 'auto') {
+        await this.execute({
+          type: 'automaticTemperatureRange',
+          lowerCelsius: state.targetTemperatureLowerCelsius!,
+          upperCelsius: clampTemperature(current + delta, state.targetTemperatureLowerCelsius!, 30),
+        });
+      } else {
+        await this.execute({
+          type: 'targetTemperature',
+          celsius: clampTemperature(current + delta),
+        });
+      }
       return;
     }
     if (mode === 2 && state.mode === 'auto') {
@@ -493,20 +533,22 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       if (lower === undefined || upper === undefined) {
         throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
       }
+      const appliedDelta = Math.max(16 - lower, Math.min(delta, 30 - upper));
       await this.execute({
         type: 'automaticTemperatureRange',
-        lowerCelsius: roundedTenth(lower + delta),
-        upperCelsius: roundedTenth(upper + delta),
+        lowerCelsius: roundedTenth(lower + appliedDelta),
+        upperCelsius: roundedTenth(upper + appliedDelta),
       });
       return;
     }
     throw new MatterStatus.InvalidInState('Requested setpoint adjustment is not active');
   }
 
-  private async setFanMode(fanMode: number): Promise<void> {
+  private setFanMode(fanMode: number): void {
     if (fanMode === MATTER_FAN_MODE.off) {
-      this.restoreConfirmedState();
-      return;
+      throw new MatterStatus.InvalidInState(
+        'Use the Room Air Conditioner power control to turn off',
+      );
     }
     const speed = fanMode === MATTER_FAN_MODE.low
       ? 20
@@ -518,29 +560,61 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (speed === undefined) {
       throw new MatterStatus.ConstraintError(`Unsupported Matter fan mode ${fanMode}`);
     }
-    await this.scheduleFan(speed);
+    this.trackAttributeCommand(this.scheduleFan(speed), 'fan mode');
   }
 
-  private async setFanPercent(percent: number | null): Promise<void> {
+  private setFanPercent(percent: number | null): void {
     if (percent === 0) {
-      this.restoreConfirmedState();
-      return;
+      throw new MatterStatus.InvalidInState(
+        'Use the Room Air Conditioner power control to turn off',
+      );
     }
     if (percent === null || percent < 0 || percent > 100) {
       throw new MatterStatus.ConstraintError('Fan percentage must be between 1 and 100');
     }
-    await this.scheduleFan(normalizedAirflow(percent) as Wave3AirflowSpeed);
+    this.trackAttributeCommand(
+      this.scheduleFan(normalizedAirflow(percent) as Wave3AirflowSpeed),
+      'fan percentage',
+    );
   }
 
-  private async setFanSpeed(speed: number | null): Promise<void> {
+  private setFanSpeed(speed: number | null): void {
     if (speed === 0) {
-      this.restoreConfirmedState();
-      return;
+      throw new MatterStatus.InvalidInState(
+        'Use the Room Air Conditioner power control to turn off',
+      );
     }
     if (speed === null || !Number.isInteger(speed) || speed < 0 || speed > 5) {
       throw new MatterStatus.ConstraintError('Fan speed must be between 1 and 5');
     }
-    await this.scheduleFan((speed * 20) as Wave3AirflowSpeed);
+    this.trackAttributeCommand(
+      this.scheduleFan((speed * 20) as Wave3AirflowSpeed),
+      'fan speed',
+    );
+  }
+
+  private trackAttributeCommand(command: Promise<void>, description: string): void {
+    const tracked = command
+      .catch(error => {
+        if (!this.stopped) {
+          this.logger.error(
+            `EcoFlow WAVE 3 Matter ${description} command failed: ${errorMessage(error)}`,
+          );
+          this.restoreConfirmedState();
+        }
+      })
+      .finally(() => {
+        this.activeCommands.delete(tracked);
+      });
+    this.activeCommands.add(tracked);
+  }
+
+  private trackInteractiveCommand(command: Promise<void>): Promise<void> {
+    const tracked = command.finally(() => {
+      this.activeCommands.delete(tracked);
+    });
+    this.activeCommands.add(tracked);
+    return tracked;
   }
 
   private scheduleFan(speed: Wave3AirflowSpeed): Promise<void> {
@@ -596,7 +670,15 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private async execute(command: Wave3Command): Promise<void> {
-    const result = await this.controller.execute(command);
+    let result;
+    try {
+      result = await this.controller.execute(command);
+    } catch (error) {
+      if (MatterStatus.isMatterProtocolError(error)) {
+        throw error;
+      }
+      throw new MatterStatus.Failure(`EcoFlow WAVE 3 command failed: ${errorMessage(error)}`);
+    }
     if (result.status === 'confirmed') {
       return;
     }
@@ -654,9 +736,13 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
     rememberDesiredCluster(uuid, cluster, attributes);
-    await this.matter.updateAccessoryState(uuid, cluster, attributes);
-    if (!await waitForAttributes(this.matter, uuid, cluster, attributes)) {
-      throw new Error('Matter state update was not confirmed by Homebridge');
+    try {
+      await this.matter.updateAccessoryState(uuid, cluster, attributes);
+      if (!await waitForAttributes(this.matter, uuid, cluster, attributes)) {
+        throw new Error('Matter state update was not confirmed by Homebridge');
+      }
+    } finally {
+      forgetDesiredCluster(uuid, cluster, attributes);
     }
   }
 
@@ -818,24 +904,30 @@ function rememberDesiredCluster(
   }
 }
 
-async function requireDesiredValueOrControl(
+function forgetDesiredCluster(
+  uuid: string,
+  cluster: string,
+  attributes: Record<string, unknown>,
+): void {
+  for (const [attribute, value] of Object.entries(attributes)) {
+    const key = desiredStateKey(uuid, cluster, attribute);
+    if (Object.is(desiredMatterState.get(key), value)) {
+      desiredMatterState.delete(key);
+    }
+  }
+}
+
+function requireDesiredValueOrControl(
   uuid: string,
   cluster: string,
   attribute: string,
   value: unknown,
-  control: (control: Wave3MatterControl) => Promise<void>,
-): Promise<void> {
+  control: (control: Wave3MatterControl) => void,
+): void {
   if (Object.is(desiredMatterState.get(desiredStateKey(uuid, cluster, attribute)), value)) {
     return;
   }
-  const matterControl = requireMatterControl(uuid);
-  try {
-    await control(matterControl);
-  } catch (error) {
-    matterControl.restoreConfirmedState();
-    throw error;
-  }
-  desiredMatterState.set(desiredStateKey(uuid, cluster, attribute), value);
+  control(requireMatterControl(uuid));
 }
 
 function desiredStateKey(uuid: string, cluster: string, attribute: string): string {
@@ -884,6 +976,14 @@ function matterTemperature(value: number): number {
 
 function roundedTenth(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function clampTemperature(value: number, minimum = 16, maximum = 30): number {
+  return roundedTenth(Math.max(minimum, Math.min(maximum, value)));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function matterErrorForFailure(reason: Wave3CommandFailure): Error {

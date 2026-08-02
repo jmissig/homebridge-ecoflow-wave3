@@ -102,11 +102,15 @@ the asynchronously registered endpoint is available.
 Homebridge's generic handler wrappers replace required Room Air Conditioner
 behavior features, including OnOff Dead Front Behavior and Fan Control Multi
 Speed. The plugin therefore binds its feature-preserving behaviors directly to
-the existing WAVE controller. OnOff commands, thermostat modes and setpoints,
-setpoint raise/lower, and settled fan writes all wait for the controller's
-acknowledgement-plus-observed-state confirmation. Controller failures use
-standard Matter status errors, and failed asynchronous attribute writes queue a
-restoration of the last confirmed snapshot.
+the existing WAVE controller. OnOff and setpoint-raise/lower are Matter
+commands, so they await the controller's acknowledgement-plus-observed-state
+confirmation and return standard Matter status errors. Thermostat mode,
+thermostat setpoint, and fan controls are standard writable Matter attributes.
+Matter.js 0.17.6 commits those synchronous writes before an asynchronous cloud
+round trip can finish; the plugin validates them synchronously, tracks and
+drains the confirmed controller operation, and logs plus restores the last
+confirmed snapshot if EcoFlow later rejects or times out. It does not claim
+that such attribute failures can be returned transactionally by this runtime.
 
 Sleep is represented by the standard Matter Sleep system mode. Eco and Boost
 remain unexposed: Homebridge 2.2.1's Room Air Conditioner endpoint does not

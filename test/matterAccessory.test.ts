@@ -13,7 +13,11 @@ import {
   Wave3MatterAccessory,
 } from '../src/matterAccessory.js';
 import type { Wave3AccessoryController } from '../src/platformAccessory.js';
-import type { Wave3Command, Wave3ControllerSnapshot } from '../src/wave3/domain.js';
+import type {
+  Wave3Command,
+  Wave3CommandFailure,
+  Wave3ControllerSnapshot,
+} from '../src/wave3/domain.js';
 
 describe('WAVE 3 Matter accessory', () => {
   it('constructs a conformant endpoint with the installed Matter runtime', async () => {
@@ -203,6 +207,7 @@ describe('WAVE 3 Matter accessory', () => {
   it('routes Matter controls through confirmed WAVE commands', async () => {
     const baseMatter = matterHarness().matter;
     const controller = recordingController(onlineSnapshot());
+    const errors: string[] = [];
     const accessory = createWave3MatterAccessory(
       baseMatter,
       'matter-runtime-controls',
@@ -268,6 +273,7 @@ describe('WAVE 3 Matter accessory', () => {
         accessory,
         controller,
         'ambient',
+        { error: message => errors.push(message) },
       );
 
       await endpoint.act('turn off', agent => agent.onOff.off());
@@ -282,12 +288,20 @@ describe('WAVE 3 Matter accessory', () => {
       ] as const) {
         const before = controller.commands.length;
         await endpoint.set({ thermostat: { systemMode } });
+        await waitUntil(
+          () => controller.commands.length > before,
+          `Matter system mode ${systemMode} command`,
+        );
         assert.deepEqual(controller.commands.slice(before), [expected]);
+        await waitUntil(() => endpoint.state.thermostat.systemMode === systemMode);
       }
 
       controller.setSnapshot(onlineSnapshot());
       await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_000 } });
+      await waitUntil(() => controller.commands.at(-1)?.type === 'automaticTemperatureRange'
+        && controller.snapshot.state.targetTemperatureLowerCelsius === 20);
       await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 2_500 } });
+      await waitUntil(() => controller.snapshot.state.targetTemperatureUpperCelsius === 25);
       assert.deepEqual(controller.commands.slice(-2), [
         {
           type: 'automaticTemperatureRange',
@@ -301,6 +315,11 @@ describe('WAVE 3 Matter accessory', () => {
         },
       ]);
 
+      const airflowBeforeSlider = controller.commands.filter(
+        command => command.type === 'airflowSpeed',
+      ).length;
+      await endpoint.set({ fanControl: { percentSetting: 22 } });
+      await endpoint.set({ fanControl: { percentSetting: 63 } });
       await endpoint.set({ fanControl: { percentSetting: 78 } });
       await waitUntil(
         () => controller.commands.some(command => command.type === 'airflowSpeed'),
@@ -310,15 +329,81 @@ describe('WAVE 3 Matter accessory', () => {
           && endpoint.state.fanControl.speedSetting === 4,
       );
       await new Promise<void>(resolve => setTimeout(resolve, 50));
+      assert.equal(
+        controller.commands.filter(command => command.type === 'airflowSpeed').length,
+        airflowBeforeSlider + 1,
+      );
       assert.deepEqual(controller.commands.at(-1), { type: 'airflowSpeed', speed: 80 });
       assert.deepEqual(controller.commands.slice(0, 2), [
         { type: 'power', on: false },
         { type: 'power', on: true },
       ]);
+
+      await assert.rejects(
+        endpoint.set({ fanControl: { percentSetting: 0 } }),
+        /power control to turn off/,
+      );
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: {
+          ...onlineSnapshot().state,
+          targetTemperatureLowerCelsius: 19,
+          targetTemperatureUpperCelsius: 24,
+        },
+      });
+      await endpoint.act('raise both to upper limit', agent => agent.thermostat.setpointRaiseLower({
+        mode: 2,
+        amount: 100,
+      }));
+      assert.deepEqual(controller.commands.at(-1), {
+        type: 'automaticTemperatureRange',
+        lowerCelsius: 25,
+        upperCelsius: 30,
+      });
+      await endpoint.act('lower both to lower limit', agent => agent.thermostat.setpointRaiseLower({
+        mode: 2,
+        amount: -200,
+      }));
+      assert.deepEqual(controller.commands.at(-1), {
+        type: 'automaticTemperatureRange',
+        lowerCelsius: 16,
+        upperCelsius: 21,
+      });
+
+      controller.failNext('disconnected');
+      await assert.rejects(
+        async () => endpoint.act('failed power command', agent => agent.onOff.off()),
+        /not currently controllable/,
+      );
+      assert.equal(endpoint.state.onOff.onOff, true);
+
+      controller.failNext('timeout');
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
+      await waitUntil(() => errors.length === 1, 'failed attribute command reconciliation');
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'confirmed thermostat restoration',
+      );
+      assert.match(errors[0]!, /did not confirm the command/);
+
+      const airflowCommands = controller.commands.filter(command => command.type === 'airflowSpeed').length;
+      await endpoint.set({ fanControl: { percentSetting: 40 } });
+      await binding.stop();
+      binding = undefined;
+      await new Promise<void>(resolve => setTimeout(resolve, 800));
+      assert.equal(
+        controller.commands.filter(command => command.type === 'airflowSpeed').length,
+        airflowCommands,
+      );
     } finally {
       await binding?.stop();
       await node.close();
     }
+    assert.deepEqual(errors, [
+      'EcoFlow WAVE 3 Matter system mode command failed: '
+        + 'EcoFlow WAVE 3 did not confirm the command',
+    ]);
   });
 
   it('builds a customized room air conditioner with auto, fan, humidity, and complete state', () => {
@@ -565,16 +650,21 @@ function fakeController(initial: Wave3ControllerSnapshot): Wave3AccessoryControl
 
 function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryController & {
   commands: Wave3Command[];
+  failNext(reason: Wave3CommandFailure): void;
   setSnapshot(snapshot: Wave3ControllerSnapshot): void;
 } {
   let snapshot = initial;
   let listener: ((snapshot: Wave3ControllerSnapshot) => void) | undefined;
   const commands: Wave3Command[] = [];
+  let nextFailure: Wave3CommandFailure | undefined;
   return {
     get snapshot() {
       return snapshot;
     },
     commands,
+    failNext(reason) {
+      nextFailure = reason;
+    },
     setSnapshot(value) {
       snapshot = value;
       listener?.(value);
@@ -587,6 +677,11 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
     },
     execute: async command => {
       commands.push(command);
+      if (nextFailure !== undefined) {
+        const reason = nextFailure;
+        nextFailure = undefined;
+        return { status: 'failed', sequence: commands.length, reason };
+      }
       const state = { ...snapshot.state };
       switch (command.type) {
       case 'power':
@@ -680,14 +775,14 @@ async function drainMicrotasks(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
 }
 
-async function waitUntil(predicate: () => boolean): Promise<void> {
+async function waitUntil(predicate: () => boolean, description = 'Matter runtime state'): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) {
       return;
     }
     await new Promise<void>(resolve => setTimeout(resolve, 10));
   }
-  throw new Error('Timed out waiting for Matter runtime state');
+  throw new Error(`Timed out waiting for ${description}`);
 }
 
 function deferred(): {

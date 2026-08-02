@@ -136,15 +136,20 @@ state, and temperature-source variants.
   - observed-state confirmation
   - unrelated EcoFlow-app traffic filtering
 - [x] Translate controller outcomes into standard Matter interaction errors
-  such as constraint, invalid-in-state, busy, timeout, unavailable, and
-  generic failure without poisoning cached read state.
+  for awaited Matter commands (`OnOff` and `SetpointRaiseLower`). Reject
+  invalid or unavailable thermostat/fan attribute writes synchronously. The
+  installed Matter.js runtime commits valid writable attributes before an
+  asynchronous cloud command can finish, so later EcoFlow failures must be
+  logged and reconciled to the last confirmed snapshot rather than falsely
+  claimed as transactional Matter write failures.
 - [x] Retain last confirmed Matter attributes through ordinary EcoFlow cloud
   and device gaps; use explicit reachability/account-failure state only where
   Homebridge's Matter bridge supports it without making Apple Home twitchy.
 
-**Phase M3 exit:** every Matter write reaches the existing confirmed-state
-controller and reports a standard Matter outcome; no HAP error type remains in
-the command path.
+**Phase M3 exit:** every accepted Matter control reaches the existing
+confirmed-state controller; awaited commands report standard Matter outcomes,
+and writable attributes reconcile async failures without unhandled work or HAP
+error types in the command path.
 
 ## Phase M4: Matter-focused automated verification
 

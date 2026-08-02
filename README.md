@@ -30,6 +30,12 @@ EcoFlow app.
 - Device firmware revision in Matter bridged-device information
 - One Matter accessory for each explicitly configured WAVE 3
 
+Matter power and setpoint-adjustment commands wait for EcoFlow confirmation.
+Standard thermostat-mode, target-temperature, and fan attributes are committed
+by Matter.js before a cloud round trip can finish; invalid writes reject
+immediately, while later EcoFlow failures are logged and the accessory returns
+to its last confirmed device state.
+
 The plugin uses EcoFlow's private, app-facing cloud service. It is not local
 control, requires an internet connection, and may stop working if EcoFlow
 changes that service. Eco, Boost, drainage, battery information, display

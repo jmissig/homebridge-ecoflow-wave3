@@ -35,6 +35,7 @@ describe('WAVE 3 Matter accessory', () => {
       thermostatSuggestions: false,
     });
     assert.ok(behaviors.fanControl);
+    assert.equal(behaviors.fanControl?.features?.multiSpeed, true);
     assert.ok(behaviors.relativeHumidityMeasurement);
     assert.equal(accessory.clusters?.onOff?.onOff, true);
     assert.deepEqual(accessory.clusters?.thermostat, {
@@ -46,6 +47,7 @@ describe('WAVE 3 Matter accessory', () => {
     });
     assert.deepEqual(accessory.clusters?.fanControl, {
       fanMode: 4,
+      fanModeSequence: 0,
       percentSetting: 60,
       percentCurrent: 60,
       speedMax: 5,
@@ -61,6 +63,8 @@ describe('WAVE 3 Matter accessory', () => {
     assert.equal(accessory.manufacturer, 'EcoFlow');
     assert.equal(accessory.model, 'WAVE 3');
     assert.equal(accessory.serialNumber, 'FIRST1234');
+    assert.throws(() => accessory.handlers?.onOff?.on?.(undefined), /unavailable until command mapping/);
+    assert.equal(accessory.handlers?.fanControl, undefined);
   });
 
   it('preserves the outlet and no-temperature endpoint contracts', () => {
@@ -115,11 +119,20 @@ describe('WAVE 3 Matter accessory', () => {
     await drainMicrotasks();
     assert.deepEqual(
       harness.stateUpdates.map(update => update.cluster),
-      ['onOff', 'thermostat', 'fanControl', 'relativeHumidityMeasurement'],
+      [
+        'bridgedDeviceBasicInformation',
+        'onOff',
+        'thermostat',
+        'fanControl',
+        'relativeHumidityMeasurement',
+      ],
     );
-    assert.equal(harness.stateUpdates[0]?.attributes.onOff, true);
-    assert.equal(harness.metadataUpdates.length, 1);
-    assert.equal(harness.metadataUpdates[0]?.firmwareRevision, '1.1.0.104');
+    assert.deepEqual(harness.stateUpdates[0]?.attributes, {
+      softwareVersion: 16_842_856,
+      softwareVersionString: '1.1.0.104',
+    });
+    assert.equal(harness.stateUpdates[1]?.attributes.onOff, true);
+    assert.equal(harness.metadataUpdates.length, 0);
 
     controller.emit({
       ...onlineSnapshot(),
@@ -127,12 +140,12 @@ describe('WAVE 3 Matter accessory', () => {
       state: { powered: false },
     });
     await drainMicrotasks();
-    assert.equal(harness.stateUpdates.length, 4);
+    assert.equal(harness.stateUpdates.length, 5);
 
     binding.stop();
     controller.emit(onlineSnapshot());
     await drainMicrotasks();
-    assert.equal(harness.stateUpdates.length, 4);
+    assert.equal(harness.stateUpdates.length, 5);
   });
 });
 
@@ -150,6 +163,7 @@ function matterHarness(): {
         Thermostat: 'thermostat',
         FanControl: 'fanControl',
         RelativeHumidityMeasurement: 'relativeHumidityMeasurement',
+        BridgedDeviceBasicInformation: 'bridgedDeviceBasicInformation',
       },
       updateAccessoryState: async (
         _uuid: string,

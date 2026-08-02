@@ -31,6 +31,24 @@ const MATTER_FAN_MODE = {
   on: 0x04,
 } as const;
 
+const snapshotClusterUpdates = new Set<string>();
+const MultiSpeedFanControlServer = devices.RoomAirConditionerRequirements.FanControlServer.with(
+  'MultiSpeed',
+);
+
+class Wave3FanControlServer extends MultiSpeedFanControlServer {
+  override initialize(): void {
+    super.initialize();
+    this.reactTo(this.events.fanMode$Changing, this.rejectControllerWrite, { offline: true });
+    this.reactTo(this.events.percentSetting$Changing, this.rejectControllerWrite, { offline: true });
+    this.reactTo(this.events.speedSetting$Changing, this.rejectControllerWrite, { offline: true });
+  }
+
+  private rejectControllerWrite(): void {
+    requireSnapshotUpdate(this.endpoint.id, 'fanControl');
+  }
+}
+
 export interface MatterAccessoryBinding {
   stop(): void;
 }
@@ -55,12 +73,12 @@ export function wave3RoomAirConditionerDeviceType(
   return currentTemperatureSource === 'ambient'
     ? devices.RoomAirConditionerDevice.with(
       thermostat,
-      requirements.FanControlServer,
+      Wave3FanControlServer,
       requirements.RelativeHumidityMeasurementServer,
     )
     : devices.RoomAirConditionerDevice.with(
       thermostat,
-      requirements.FanControlServer,
+      Wave3FanControlServer,
     );
 }
 
@@ -72,12 +90,17 @@ export function createWave3MatterAccessory(
   cached?: MatterAccessory<Wave3MatterAccessoryContext>,
 ): MatterAccessory<Wave3MatterAccessoryContext> {
   const cachedContext = cached?.context;
+  const firmwareRevision = snapshot.firmwareVersions?.pd
+    ?? snapshot.firmwareVersions?.iot
+    ?? cachedContext?.firmwareRevision
+    ?? cached?.firmwareRevision;
   const context: Wave3MatterAccessoryContext = {
     schemaVersion: 1,
     serialNumber: device.serialNumber,
     currentTemperatureSource: device.currentTemperatureSource,
     lastSystemMode: validSystemMode(cachedContext?.lastSystemMode)
       ?? MATTER_SYSTEM_MODE.cool,
+    ...(firmwareRevision === undefined ? {} : { firmwareRevision }),
   };
   const clusters = clustersForSnapshot(
     snapshot,
@@ -85,10 +108,6 @@ export function createWave3MatterAccessory(
     context,
     cached?.clusters,
   );
-  const firmwareRevision = snapshot.firmwareVersions?.pd
-    ?? snapshot.firmwareVersions?.iot
-    ?? cached?.firmwareRevision;
-
   return {
     UUID: uuid,
     displayName: device.name,
@@ -99,12 +118,14 @@ export function createWave3MatterAccessory(
     ...(firmwareRevision === undefined ? {} : { firmwareRevision }),
     context,
     clusters,
+    handlers: rejectingMatterHandlers(uuid),
   };
 }
 
 export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private readonly detachSnapshot: () => void;
   private updateTail: Promise<void> = Promise.resolve();
+  private presentedFirmwareRevision?: string;
   private stopped = false;
 
   constructor(
@@ -114,6 +135,14 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     private readonly currentTemperatureSource: CurrentTemperatureSource,
     private readonly logger: MatterAccessoryLogger = { error: () => undefined },
   ) {
+    this.updateTail = this.pushFirmware(
+      controller.snapshot.firmwareVersions?.pd
+      ?? controller.snapshot.firmwareVersions?.iot
+      ?? accessory.context.firmwareRevision
+      ?? accessory.firmwareRevision,
+    ).catch(() => {
+      this.logger.error('EcoFlow WAVE 3 Matter firmware update failed');
+    });
     this.detachSnapshot = controller.onSnapshot(snapshot => {
       this.updateTail = this.updateTail
         .then(() => this.pushSnapshot(snapshot))
@@ -136,12 +165,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
 
-    const firmwareRevision = snapshot.firmwareVersions?.pd
-      ?? snapshot.firmwareVersions?.iot;
-    if (firmwareRevision !== undefined && firmwareRevision !== this.accessory.firmwareRevision) {
-      this.accessory.firmwareRevision = firmwareRevision;
-      await this.matter.updatePlatformAccessories([this.accessory]);
-    }
+    await this.pushFirmware(snapshot.firmwareVersions?.pd ?? snapshot.firmwareVersions?.iot);
 
     if (snapshot.availability !== 'online') {
       return;
@@ -154,28 +178,59 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       this.accessory.clusters,
     );
     this.accessory.clusters = clusters;
-    await this.matter.updateAccessoryState(
+    await this.updateState(
       this.accessory.UUID,
       this.matter.clusterNames.OnOff,
       clusters.onOff ?? {},
     );
-    await this.matter.updateAccessoryState(
+    await this.updateState(
       this.accessory.UUID,
       this.matter.clusterNames.Thermostat,
       clusters.thermostat ?? {},
     );
-    await this.matter.updateAccessoryState(
+    await this.updateState(
       this.accessory.UUID,
       this.matter.clusterNames.FanControl,
       clusters.fanControl ?? {},
     );
     if (this.currentTemperatureSource === 'ambient') {
-      await this.matter.updateAccessoryState(
+      await this.updateState(
         this.accessory.UUID,
         this.matter.clusterNames.RelativeHumidityMeasurement,
         clusters.relativeHumidityMeasurement ?? {},
       );
     }
+  }
+
+  private async updateState(
+    uuid: string,
+    cluster: string,
+    attributes: Record<string, unknown>,
+  ): Promise<void> {
+    const key = snapshotUpdateKey(uuid, cluster);
+    snapshotClusterUpdates.add(key);
+    try {
+      await this.matter.updateAccessoryState(uuid, cluster, attributes);
+    } finally {
+      snapshotClusterUpdates.delete(key);
+    }
+  }
+
+  private async pushFirmware(firmwareRevision: string | undefined): Promise<void> {
+    if (firmwareRevision === undefined || firmwareRevision === this.presentedFirmwareRevision) {
+      return;
+    }
+    await this.matter.updateAccessoryState(
+      this.accessory.UUID,
+      this.matter.clusterNames.BridgedDeviceBasicInformation,
+      {
+        softwareVersion: packedFirmwareVersion(firmwareRevision),
+        softwareVersionString: firmwareRevision,
+      },
+    );
+    this.accessory.firmwareRevision = firmwareRevision;
+    this.accessory.context.firmwareRevision = firmwareRevision;
+    this.presentedFirmwareRevision = firmwareRevision;
   }
 }
 
@@ -241,6 +296,7 @@ function clustersForSnapshot(
     fanControl: {
       ...previousFan,
       fanMode: powered ? MATTER_FAN_MODE.on : MATTER_FAN_MODE.off,
+      fanModeSequence: 0,
       percentSetting: airflow,
       percentCurrent: powered ? airflow : 0,
       speedMax: 5,
@@ -262,6 +318,47 @@ function clustersForSnapshot(
   }
 
   return clusters;
+}
+
+function rejectingMatterHandlers(uuid: string): NonNullable<MatterAccessory['handlers']> {
+  const allowSnapshotOnOff = () => requireSnapshotUpdate(uuid, 'onOff');
+  const allowSnapshotThermostat = () => requireSnapshotUpdate(uuid, 'thermostat');
+  return {
+    onOff: {
+      on: allowSnapshotOnOff,
+      off: allowSnapshotOnOff,
+      toggle: allowSnapshotOnOff,
+    },
+    thermostat: {
+      systemModeChange: allowSnapshotThermostat,
+      occupiedHeatingSetpointChange: allowSnapshotThermostat,
+      occupiedCoolingSetpointChange: allowSnapshotThermostat,
+      setpointRaiseLower: allowSnapshotThermostat,
+    },
+  };
+}
+
+function requireSnapshotUpdate(uuid: string, cluster: string): void {
+  if (!snapshotClusterUpdates.has(snapshotUpdateKey(uuid, cluster))) {
+    throw new Error('Matter controls are unavailable until command mapping is initialized');
+  }
+}
+
+function snapshotUpdateKey(uuid: string, cluster: string): string {
+  return `${uuid}\u0000${cluster}`;
+}
+
+function packedFirmwareVersion(version: string): number {
+  const parts = version.split('.').map(part => Number.parseInt(part, 10));
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return 1;
+  }
+  return (
+    ((parts[0]! << 24) >>> 0)
+    | (parts[1]! << 16)
+    | (parts[2]! << 8)
+    | parts[3]!
+  ) >>> 0;
 }
 
 function systemModeForState(mode: Wave3Mode | undefined, submode: number | undefined): number | undefined {

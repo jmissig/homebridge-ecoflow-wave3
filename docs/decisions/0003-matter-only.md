@@ -70,6 +70,20 @@ different normalization.
 - Homebridge's Matter implementation is uncertified; Apple Home may show an
   uncertified-accessory warning during commissioning.
 
+## Homebridge 2.2.1 compatibility notes
+
+The 2.2.1 `updatePlatformAccessories` implementation replaces Homebridge's
+internal live accessory record with the plugin's plain public object, dropping
+the private endpoint needed by later `updateAccessoryState` calls. Until that
+upstream path is fixed, this plugin reconciles name and context while
+re-registering cached accessories and does not call the unsafe metadata-update
+method.
+
+Homebridge 2.2.1 also caches `MatterAccessory.firmwareRevision` without mapping
+it onto the live `BridgedDeviceBasicInformation` server. The plugin therefore
+reports WAVE firmware directly through that standard Matter cluster's
+`softwareVersion` and `softwareVersionString` attributes.
+
 ## Alternatives rejected
 
 - **Permanent HAP and Matter support:** rejected because it doubles the

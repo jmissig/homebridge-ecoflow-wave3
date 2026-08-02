@@ -71,8 +71,15 @@ and no implicit HAP fallback.
 - [x] Update external device changes with
   `api.matter.updateAccessoryState`; do not mutate Matter state optimistically
   when an EcoFlow command is merely published.
-- [x] Use `api.matter.updatePlatformAccessories` for firmware/name/context
-  metadata changes and unregister stale Matter accessories by UUID.
+- [x] Reconcile name/context while re-registering cached accessories and
+  unregister stale Matter accessories by UUID. Homebridge 2.2.1's
+  `updatePlatformAccessories` currently replaces its live internal accessory
+  object and loses the endpoint, so do not call it until that upstream path is
+  fixed.
+- [x] Publish firmware through the standard bridged-device basic-information
+  cluster (`softwareVersion` and `softwareVersionString`), because Homebridge
+  2.2.1 does not map `MatterAccessory.firmwareRevision` onto the live bridged
+  endpoint.
 
 **Phase M2 exit:** fake controller snapshots produce a complete Matter
 accessory with stable identity, cache behavior, metadata, climate state, fan

@@ -70,7 +70,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
       currentTemperatureSource: 'ambient',
       lastSystemMode: 0x04,
     });
-    assert.equal(harness.updated.length, 1);
+    assert.equal(harness.updated.length, 0);
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
     assert.deepEqual(harness.boundTemperatureSources, ['ambient', 'none']);
     assert.equal(harness.platform.matterAccessories.size, 2);

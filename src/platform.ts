@@ -47,6 +47,7 @@ export interface Wave3MatterAccessoryContext {
   serialNumber: string;
   currentTemperatureSource: Wave3DeviceConfig['currentTemperatureSource'];
   lastSystemMode?: number;
+  firmwareRevision?: string;
 }
 
 export interface PlatformCloudSession extends Wave3ControllerSession {
@@ -264,7 +265,6 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       if (cachedAccessory === undefined || sourceChanged) {
         this.log.info('Registered a configured Matter WAVE 3 accessory');
       } else {
-        await this.matter!.updatePlatformAccessories([accessory]);
         this.log.info('Restored a configured Matter WAVE 3 accessory from cache');
       }
 

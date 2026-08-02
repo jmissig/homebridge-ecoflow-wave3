@@ -108,13 +108,27 @@ Run early tests in an isolated Homebridge child bridge. After restart,
 Homebridge registers one Matter Room Air Conditioner per configured WAVE 3;
 pair the EcoFlow child bridge with Apple Home using its Matter QR code.
 
-If this installation previously used the 0.1 HAP child bridge, follow the
-[Matter commissioning runbook](docs/commissioning.md). HAP and Matter pairings
-are different identities; room assignments, scenes, and automations do not
-migrate automatically.
+## Set up the Matter-only child bridge
 
-The Matter-only 0.2 development line requires Matter on this child bridge and
-does not fall back to HAP. Configure the EcoFlow platform's `_bridge` block as:
+Homebridge configures HAP and Matter independently for each child bridge. This
+plugin must run as a platform child bridge with Matter enabled and HAP disabled;
+it has no HAP fallback. Other Homebridge bridges and child bridges are
+unaffected and may continue using HAP.
+
+In Homebridge UI:
+
+1. Enable **Child Bridge** for the EcoFlow WAVE 3 platform.
+2. Open that child bridge's settings.
+3. Enable **Matter**, then disable **HAP**. Homebridge requires at least one
+   protocol to remain enabled while editing.
+4. Save the configuration and restart only the EcoFlow child bridge.
+5. Confirm the logs show Matter accessory registration, EcoFlow authentication,
+   and an MQTT-ready session.
+6. Open the child bridge's Matter pairing screen and scan its QR code in Apple
+   Home. Homebridge's Matter implementation is uncertified, so Apple may show
+   an uncertified-accessory warning.
+
+The equivalent `_bridge` configuration is:
 
 ```json
 "_bridge": {
@@ -128,8 +142,14 @@ does not fall back to HAP. Configure the EcoFlow platform's `_bridge` block as:
 }
 ```
 
-This setting affects only the EcoFlow child bridge. Other Homebridge bridges
-and child bridges may continue using HAP.
+The `username` and `port` values above are placeholders; keep the values
+generated for the actual child bridge. No plugin-specific Matter flag is
+needed—the protocol selection belongs to Homebridge's child-bridge settings.
+
+Matter accessories do not appear in Homebridge UI's HAP accessory screen. Use
+Apple Home or another commissioned Matter controller to view and operate them.
+The [commissioning runbook](docs/commissioning.md) provides the cautious first
+read-only and real-device validation sequence.
 
 ## Debug logging
 

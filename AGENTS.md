@@ -90,10 +90,11 @@ Use a dynamic platform because it fits Homebridge's current template and cached-
 The primary Matter surface should be climate-first:
 
 - one WAVE 3 accessory
-- one primary Matter `Thermostat` endpoint, selected over Homebridge's
-  `RoomAirConditioner` wrapper because the former exposes Heat, Cool, and Auto
-- one composed Matter `Fan` endpoint for airflow speed when needed by the
-  Homebridge Matter device model
+- one customized Matter `RoomAirConditioner` endpoint built from Homebridge's
+  exported low-level Matter device requirements, with Heating, Cooling,
+  AutoMode, and FanControl enabled
+- `OnOff.onOff` is authoritative for appliance power; `Thermostat.systemMode`
+  selects the active HVAC mode and does not replace the power cluster
 - Off, Cool, Heat, Auto, Fan Only, Dry, and Sleep system modes where behavior
   is verified
 - current temperature and cooling/heating setpoints appropriate to the selected

@@ -47,12 +47,17 @@ and no implicit HAP fallback.
   consumes only `Wave3Controller` snapshots and commands.
 - [ ] Register one Matter accessory per configured WAVE 3 through
   `api.matter.registerPlatformAccessories`.
-- [ ] Use Homebridge's Matter `Thermostat` device as the primary endpoint
-  because it enables Heating, Cooling, and Auto. Do not fall back to the
-  narrower predefined `RoomAirConditioner` wrapper merely for its name.
-- [ ] Compose a Matter `Fan` part when required to expose the Fan Control
-  cluster cleanly without duplicating power/mode authority.
+- [ ] Build one customized Matter `RoomAirConditioner` endpoint from
+  Homebridge's exported `devices.RoomAirConditionerDevice` and
+  `devices.RoomAirConditionerRequirements`.
+- [ ] Enable Heating, Cooling, and AutoMode on its Thermostat server rather
+  than using Homebridge's narrower convenience `RoomAirConditioner` type
+  unchanged.
+- [ ] Add the Room Air Conditioner's optional Fan Control server to the same
+  endpoint. Do not create a separate Fan tile unless the standard optional
+  cluster cannot be made to work through Homebridge's Matter API.
 - [ ] Initialize and update standard Matter state:
+  - on/off power state
   - thermostat local temperature
   - occupied heating and cooling setpoints
   - system mode and running mode
@@ -75,8 +80,10 @@ state, and temperature-source variants.
 
 ## Phase M3: Matter command and error mapping
 
+- [ ] Treat `OnOff.onOff` as the sole authoritative Matter power surface:
+  - `false` -> WAVE power off
+  - `true` -> WAVE power on while retaining the last confirmed active mode
 - [ ] Translate Matter thermostat handlers into existing typed WAVE commands:
-  - Off
   - Cool
   - Heat
   - Auto
@@ -84,9 +91,18 @@ state, and temperature-source variants.
   - setpoint raise/lower when Apple Home uses it
 - [ ] Translate Matter fan handlers into settled/coalesced WAVE fan-speed
   commands without creating a second power or mode authority.
-- [ ] Add Matter system-mode support for Fan Only, Dry, and Sleep. Use direct
-  Matter cluster/type access when Homebridge's friendly device wrapper omits a
-  standard Matter enum or feature.
+- [ ] Implement the verified Matter system-mode values through
+  `Thermostat.systemMode`:
+  - Auto = `0x01`
+  - Cool = `0x03`
+  - Heat = `0x04`
+  - Fan Only = `0x07`
+  - Dry = `0x08`
+  - Sleep = `0x09`
+- [ ] Do not use `Thermostat.systemMode = Off` as the canonical power control;
+  Room Air Conditioner power belongs to `OnOff.onOff`.
+- [ ] Use direct Matter cluster/type access when Homebridge's friendly device
+  wrapper omits one of these standard enums or the AutoMode feature.
 - [ ] Map Eco, Normal, Sleep, and Boost submodes into standard Matter concepts
   where possible:
   - Sleep -> Matter Sleep system mode

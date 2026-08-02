@@ -18,14 +18,43 @@ bridges and child bridges may remain HAP-only; Matter is configured per bridge.
 
 Homebridge 2.2.1 exposes an opt-in `api.matter` plugin API per bridge, including
 platform accessory registration, cached accessory updates, cluster-state
-updates, Matter command handlers, composed endpoints, direct Matter.js device
-and cluster types, and a Matter `Thermostat` device with Heating, Cooling, and
-Auto features. The installed Homebridge documentation explicitly permits a
-bridge to expose Matter alongside or instead of HAP.
+updates, Matter command handlers, composed endpoints, and direct Matter.js
+device and cluster types. Its raw `RoomAirConditioner` requirements include
+On/Off, Thermostat, Fan Control, temperature measurement, and relative-humidity
+measurement servers. The installed Homebridge documentation explicitly permits
+a bridge to expose Matter alongside or instead of HAP.
 
 Matter's thermostat model includes system modes absent from HAP
 `HeaterCooler`, including Fan Only, Dry, and Sleep. This matches the WAVE 3
 better than preserving HAP and adding several synchronized companion services.
+
+## HVAC mapping contract
+
+Use a customized Matter `RoomAirConditioner` endpoint, not the narrower
+Homebridge convenience wrapper unchanged. Construct it from Homebridge's
+exported low-level `devices.RoomAirConditionerDevice` and
+`devices.RoomAirConditionerRequirements`, enabling Heating, Cooling, AutoMode,
+and FanControl.
+
+Power and active HVAC mode are separate Matter concerns:
+
+- Off -> `OnOff.onOff = false`
+- Powered -> `OnOff.onOff = true`
+- Auto -> `Thermostat.systemMode = Auto` (`0x01`)
+- Cool -> `Thermostat.systemMode = Cool` (`0x03`)
+- Heat -> `Thermostat.systemMode = Heat` (`0x04`)
+- Fan Only -> `Thermostat.systemMode = FanOnly` (`0x07`)
+- Dry -> `Thermostat.systemMode = Dry` (`0x08`)
+- Sleep -> `Thermostat.systemMode = Sleep` (`0x09`)
+
+The first five mappings were provided as implementation guidance by Julian and
+verified against the Matter enum shipped with Homebridge 2.2.1. Dry and Sleep
+are also present in that same enum. [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533331816684196001)
+
+Although `Thermostat.SystemMode.Off` (`0x00`) exists, the Room Air Conditioner
+device's `OnOff` cluster remains the canonical power surface. Retain the last
+confirmed active mode while off unless observed controller behavior requires a
+different normalization.
 
 ## Consequences
 
@@ -49,5 +78,6 @@ better than preserving HAP and adding several synchronized companion services.
 - **Stay on HAP and emulate missing modes with companion services:** rejected
   because Matter has the more honest HVAC model and is the accepted direction.
 - **Prototype both Matter HVAC device types before implementation:** rejected;
-  proceed directly with the Matter `Thermostat` model and adapt within Matter
-  if Homebridge's friendly wrapper is too narrow.
+  proceed directly with a customized Matter `RoomAirConditioner` endpoint and
+  use Homebridge's exported low-level device requirements where its friendly
+  wrapper is narrower.

@@ -31,15 +31,15 @@ Run these commands as the same Saga account that runs Homebridge:
 ```sh
 cd /path/to/homebridge-ecoflow-wave3
 git pull --ff-only
-npm install
-npm run verify
-npm run build
-npm install -g "./$(npm pack --silent)"
+./npm-install-dev-build.sh
 ```
 
-Use the packed artifact rather than installing the checkout directory. A
-direct global directory install creates a symlink and can load the checkout's
-development Homebridge/Matter.js instance alongside the running global one.
+The helper installs dependencies, runs verification and the build, creates a
+temporary packed artifact, installs it globally, and removes the temporary
+package afterward. Use the packed artifact rather than installing the checkout
+directory. A direct global directory install creates a symlink and can load the
+checkout's development Homebridge/Matter.js instance alongside the running
+global one.
 
 Confirm Homebridge reports plugin version `0.2.0` before commissioning.
 

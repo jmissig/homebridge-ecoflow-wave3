@@ -63,11 +63,11 @@ testing a checkout:
 ```sh
 git clone https://github.com/jmissig/homebridge-ecoflow-wave3.git
 cd homebridge-ecoflow-wave3
-npm install
-npm run verify
-npm install -g "./$(npm pack --silent)"
+./npm-install-dev-build.sh
 ```
 
+The helper installs dependencies, runs the complete verification/build, packs
+the plugin into a temporary directory, and installs that artifact globally.
 Install the packed artifact, not the checkout directory itself. A direct
 `npm install -g .` creates a symlink that can expose the checkout's development
 copy of Homebridge/Matter.js to the running plugin. Matter behavior and status

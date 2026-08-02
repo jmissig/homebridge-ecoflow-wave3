@@ -270,12 +270,25 @@ publication remains a separate explicit decision.
 
 ## Later / outside the first Matter release
 
+- [ ] Add standard Matter electrical telemetry after the live climate/control
+  surface is stable:
+  - raise the practical Homebridge minimum to 2.2.1 before depending on
+    `ElectricalPowerMeasurement` and `ElectricalEnergyMeasurement`; 2.2.1 is
+    the first release in which this Room Air Conditioner/thermostat combination
+    and the public electrical cluster-name map are both usable;
+  - validate which of household-observed display fields `53` and `777` is the
+    authoritative instantaneous-watt source, then publish it through
+    `ElectricalPowerMeasurement` without double-counting the duplicate trace;
+  - identify and hardware-validate a real cumulative-energy counter before
+    publishing `ElectricalEnergyMeasurement`; do not silently synthesize an
+    accounting-grade total from intermittent cloud samples;
+  - test units, nullable/unavailable state, counter reset/wrap behavior,
+    restart persistence, Apple Home presentation, and EcoFlow-app coexistence.
+  [told: Julian relaying Homebridge 2.2.0/2.2.1 API guidance · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533385294978486272)
 - [ ] Battery and charging state when an add-on battery is present.
 - [ ] Condensate-full warning, drainage state, and auto drainage.
 - [ ] Beeper, display brightness, timers, Pet Care, and charge limits only when
   a concrete standard Matter use case is approved.
-- [ ] Electrical power/energy telemetry only if the standard Matter electrical
-  clusters improve normal household use.
 - [ ] Local MQTT redirection, Bluetooth, or LAN control only as separate
   experiments after Matter-backed cloud control is stable.
 - [ ] Do not add other EcoFlow or older WAVE products to this repository.

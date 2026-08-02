@@ -265,8 +265,25 @@ Operating modes used upstream:
 
 Airflow steps used upstream are 20, 40, 60, 80, and 100.
 The pinned climate entity advertises a 16–30 °C target range with a 1 °C
-target step. Household hardware telemetry later demonstrated fractional target
-temperatures, so the Matter surface uses a 0.1 °C step within the same range.
+target step. Household hardware telemetry later demonstrated that the WAVE 3
+accepts and reports fractional targets such as `20.5 °C`, `20.8 °C`, and
+`21.8 °C`, even though its physical display shows whole numbers in Celsius
+mode. The physical display therefore must not be treated as evidence that the
+protocol only supports whole-degree targets.
+
+[Source: household packet evidence shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
+[Told: physical Celsius display observation from Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533523821397545122)
+
+Matter Thermostat represents setpoints in `0.01 °C` units and its
+`SetpointRaiseLower` command uses `0.1 °C` units, but the standard cluster has
+no attribute that advertises a device-specific setpoint increment. The plugin
+can preserve fractional values and clamp them to the 16–30 °C range, but it
+cannot tell Apple Home to render a whole-degree-only control. Any future
+whole-degree normalization should be an explicit presentation policy rather
+than a protocol limitation.
+
+[Source: installed Matter v1.6 Thermostat cluster model · inspected 2026-08-02](../package-lock.json)
+
 Submodes used upstream are normal `0`, boost `2`, sleep `3`, and eco `4`.
 Household display packets also repeatedly reported submode `1` for cool and
 heat saved-mode parameters. The plugin preserves that value as read-only state

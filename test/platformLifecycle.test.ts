@@ -151,6 +151,23 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await stoppedBeforeLaunch.signalDidFinishLaunching();
     assert.equal(stoppedBeforeLaunch.sessionCreateCount, 0);
   });
+
+  it('cleans resources created after shutdown begins during registration', async () => {
+    const registrationGate = deferred();
+    const harness = platformHarness(validConfig(), undefined, true, registrationGate);
+    const launch = harness.signalDidFinishLaunching();
+    await Promise.resolve();
+    assert.deepEqual(harness.events, ['register']);
+
+    const shutdown = harness.platform.shutdown();
+    registrationGate.resolve();
+    await Promise.all([launch, shutdown]);
+
+    assert.equal(harness.sessionStopCount, 1);
+    assert.equal(harness.controllerStopCount, 2);
+    assert.equal(harness.bindingStopCount, 0);
+    assert.doesNotMatch(harness.events.join(','), /session:start/);
+  });
 });
 
 class FakeCachedAccessory {
@@ -196,6 +213,7 @@ function platformHarness(
   config: PlatformConfig,
   startGate?: ReturnType<typeof deferred>,
   matterEnabled = true,
+  registrationGate?: ReturnType<typeof deferred>,
 ): {
   platform: EcoFlowWave3Platform;
   registered: MatterAccessory[];
@@ -258,6 +276,7 @@ function platformHarness(
           accessories: MatterAccessory[],
         ) => {
           events.push('register');
+          await registrationGate?.promise;
           registered.push(...accessories);
         },
         updatePlatformAccessories: async (accessories: MatterAccessory[]) => {

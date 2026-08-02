@@ -116,6 +116,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   private readonly controllers = new Map<string, Wave3AccessoryController>();
   private readonly parsedConfig?: EcoFlowWave3Config;
   private session?: PlatformCloudSession;
+  private sessionStopPromise?: Promise<void>;
   private launchPromise?: Promise<void>;
   private shutdownPromise?: Promise<void>;
   private shutdownStarted = false;
@@ -262,6 +263,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       );
       this.matterAccessories.set(uuid, accessory);
       await this.matter!.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      if (this.shutdownStarted) {
+        controller.stop();
+        continue;
+      }
       if (cachedAccessory === undefined || sourceChanged) {
         this.log.info('Registered a configured Matter WAVE 3 accessory');
       } else {
@@ -279,6 +284,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       this.bindings.set(uuid, binding);
     }
 
+    if (this.shutdownStarted) {
+      await this.stopSession();
+      return;
+    }
     try {
       await session.start();
     } catch {
@@ -289,6 +298,12 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   }
 
   private async shutdownPlatform(): Promise<void> {
+    await this.stopRuntimeResources();
+    await this.launchPromise;
+    await this.stopRuntimeResources();
+  }
+
+  private async stopRuntimeResources(): Promise<void> {
     for (const binding of this.bindings.values()) {
       binding.stop();
     }
@@ -297,8 +312,15 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       controller.stop();
     }
     this.controllers.clear();
-    await this.session?.stop();
-    await this.launchPromise;
+    await this.stopSession();
+  }
+
+  private async stopSession(): Promise<void> {
+    if (this.session === undefined) {
+      return;
+    }
+    this.sessionStopPromise ??= this.session.stop();
+    await this.sessionStopPromise;
   }
 
   private uuidForSerial(serialNumber: string): string {

@@ -242,9 +242,35 @@ describe('WAVE 3 Matter accessory', () => {
     await drainMicrotasks();
     assert.equal(harness.stateUpdates.length, 5);
   });
+
+  it('does not resume snapshot updates after stop during an awaited update', async () => {
+    const updateGate = deferred();
+    const harness = matterHarness(updateGate);
+    const controller = fakeController(offlineSnapshot());
+    const accessory = createWave3MatterAccessory(
+      harness.matter,
+      'matter-uuid:stopping',
+      device('ambient'),
+      controller.snapshot,
+    );
+    const binding = new Wave3MatterAccessory(
+      harness.matter,
+      accessory,
+      controller,
+      'ambient',
+    );
+
+    controller.emit(onlineSnapshot());
+    await drainMicrotasks();
+    assert.equal(harness.stateUpdates.length, 1);
+    binding.stop();
+    updateGate.resolve();
+    await drainMicrotasks();
+    assert.equal(harness.stateUpdates.length, 1);
+  });
 });
 
-function matterHarness(): {
+function matterHarness(updateGate?: ReturnType<typeof deferred>): {
   matter: MatterAPI;
   stateUpdates: Array<{ cluster: string; attributes: Record<string, unknown> }>;
   metadataUpdates: MatterAccessory[];
@@ -270,6 +296,7 @@ function matterHarness(): {
       ) => {
         stateUpdates.push({ cluster, attributes });
         clusterState.set(cluster, { ...clusterState.get(cluster), ...attributes });
+        await updateGate?.promise;
       },
       getAccessoryState: async (_uuid: string, cluster: string) => clusterState.get(cluster),
       updatePlatformAccessories: async (accessories: MatterAccessory[]) => {
@@ -336,4 +363,15 @@ function onlineSnapshot(): Wave3ControllerSnapshot {
 
 async function drainMicrotasks(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+function deferred(): {
+  promise: Promise<void>;
+  resolve(): void;
+  } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }

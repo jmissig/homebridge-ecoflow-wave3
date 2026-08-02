@@ -265,7 +265,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
 
     await this.pushFirmware(snapshot.firmwareVersions?.pd ?? snapshot.firmwareVersions?.iot);
 
-    if (snapshot.availability !== 'online') {
+    if (this.stopped || snapshot.availability !== 'online') {
       return;
     }
 
@@ -305,6 +305,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     cluster: string,
     attributes: Record<string, unknown>,
   ): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     rememberDesiredCluster(uuid, cluster, attributes);
     await this.matter.updateAccessoryState(uuid, cluster, attributes);
   }
@@ -327,7 +330,13 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       cluster,
       attributes,
     );
+    if (this.stopped) {
+      return;
+    }
     if (!await waitForFirmware(this.matter, this.accessory.UUID, cluster, attributes)) {
+      return;
+    }
+    if (this.stopped) {
       return;
     }
     this.accessory.firmwareRevision = firmwareRevision;

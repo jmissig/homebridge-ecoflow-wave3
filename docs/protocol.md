@@ -237,8 +237,8 @@ Operating modes used upstream:
 
 Airflow steps used upstream are 20, 40, 60, 80, and 100.
 The pinned climate entity advertises a 16–30 °C target range with a 1 °C
-target step. This is upstream evidence, not household-hardware verification;
-finer target precision remains deferred to Phase 7.
+target step. Household hardware telemetry later demonstrated fractional target
+temperatures, so the HomeKit surface uses a 0.1 °C step within the same range.
 Submodes used upstream are normal `0`, boost `2`, sleep `3`, and eco `4`.
 
 **Inference**
@@ -300,6 +300,23 @@ publishing a command.
   previously accepted state.
 
 [Source: household Homebridge diagnostic log shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533270401684082809)
+
+**Hardware — 2026-08-01 official-app setting changes**
+
+- Three official-app fan changes produced positive configuration
+  acknowledgements for airflow values `40`, `100`, and `20`, followed by
+  display updates with matching active cool-mode airflow values.
+- Official-app target changes produced fractional cool-mode values `21.8 °C`
+  and `20.8 °C`; the latter also appeared in a positive configuration
+  acknowledgement. This disproves the plugin's original whole-degree-only
+  assumption.
+- A later full display upload supplied sleep state, cool operating mode,
+  ambient temperature, ambient humidity, and complete per-mode parameters.
+- Display fields `53` and `777` moved together and match upstream power
+  telemetry definitions; mode-item field `4` matches the upstream humidity
+  target. None is required for the first HomeKit climate slice.
+
+[Source: household Homebridge diagnostic log and narrated app actions shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
 
 **Inference**
 

@@ -283,7 +283,7 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
       parameters.targetTemperatureUpperCelsius,
     ]) {
       if (temperature !== undefined
-        && (!Number.isInteger(temperature) || temperature < 16 || temperature > 30)) {
+        && !isSupportedTargetTemperature(temperature)) {
         throw new TypeError('quota target temperature is unsupported');
       }
     }
@@ -834,7 +834,7 @@ function isSupportedAmbientTemperature(value: number): boolean {
 }
 
 function isSupportedTargetTemperature(value: number): boolean {
-  return Number.isInteger(value) && value >= 16 && value <= 30;
+  return Number.isFinite(value) && value >= 16 && value <= 30;
 }
 
 function malformed(payloadLength: number, reason: string): DecodedWave3Message {
@@ -913,7 +913,10 @@ function validateSequence(sequence: number): void {
 }
 
 function validateTemperature(celsius: number): void {
-  if (!Number.isInteger(celsius) || celsius < 16 || celsius > 30) {
-    throw new RangeError('temperature must be a whole degree from 16 through 30 Celsius');
+  if (!Number.isFinite(celsius)
+    || celsius < 16
+    || celsius > 30
+    || Math.abs(celsius * 10 - Math.round(celsius * 10)) > 0.0001) {
+    throw new RangeError('temperature must use 0.1 degree steps from 16 through 30 Celsius');
   }
 }

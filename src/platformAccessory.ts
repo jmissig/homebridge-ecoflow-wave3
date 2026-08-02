@@ -156,7 +156,7 @@ export class Wave3PlatformAccessory {
     ]) {
       const instance = this.heaterCoolerService.getCharacteristic(threshold);
       instance.updateValue(16);
-      instance.setProps({ minValue: 16, maxValue: 30, minStep: 1 });
+      instance.setProps({ minValue: 16, maxValue: 30, minStep: 0.1 });
     }
     const rotationSpeed = this.heaterCoolerService
       .getCharacteristic(characteristic.RotationSpeed);
@@ -451,8 +451,11 @@ function thresholdCommand(
 }
 
 function validateTemperature(celsius: number): void {
-  if (!Number.isInteger(celsius) || celsius < 16 || celsius > 30) {
-    throw new RangeError('temperature must be a whole degree from 16 through 30 Celsius');
+  if (!Number.isFinite(celsius)
+    || celsius < 16
+    || celsius > 30
+    || Math.abs(celsius * 10 - Math.round(celsius * 10)) > 0.0001) {
+    throw new RangeError('temperature must use 0.1 degree steps from 16 through 30 Celsius');
   }
 }
 

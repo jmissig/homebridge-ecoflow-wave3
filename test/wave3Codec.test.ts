@@ -117,7 +117,7 @@ describe('WAVE 3 codec', () => {
     const prior = mergeWave3DisplayUpdate(undefined, initial.update);
     const incremental = create(Wave3DisplayPropertyUploadSchema, {
       waveModeInfo: {
-        listInfo: [{}, { tempSet: 22 }],
+        listInfo: [{}, { tempSet: 20.8 }],
       },
     });
     const decodedIncremental = decodeWave3Message(envelope(
@@ -129,7 +129,7 @@ describe('WAVE 3 codec', () => {
     if (decodedIncremental.kind === 'display') {
       const merged = mergeWave3DisplayUpdate(prior, decodedIncremental.update);
       assert.equal(merged.state.mode, 'cool');
-      assert.equal(merged.state.targetTemperatureCelsius, 22);
+      assert.ok(Math.abs((merged.state.targetTemperatureCelsius ?? 0) - 20.8) < 0.0001);
       assert.equal(merged.state.airflowSpeed, 60);
     }
   });
@@ -353,9 +353,18 @@ describe('WAVE 3 codec', () => {
       /temperature/,
     );
     assert.throws(
-      () => encodeWave3Command('TEST', 20, { type: 'targetTemperature', celsius: 22.5 }),
-      /whole degree/,
+      () => encodeWave3Command('TEST', 20, { type: 'targetTemperature', celsius: 22.55 }),
+      /0.1 degree steps/,
     );
+    const fractionalEnvelope = fromBinary(
+      Wave3SetMessageSchema,
+      encodeWave3Command('TEST', 20, { type: 'targetTemperature', celsius: 20.8 }).bytes,
+    );
+    const fractional = fromBinary(
+      Wave3ConfigWriteSchema,
+      fractionalEnvelope.header?.pdata ?? new Uint8Array(),
+    );
+    assert.ok(Math.abs((fractional.cfgTempSet ?? 0) - 20.8) < 0.0001);
     assert.throws(
       () => encodeWave3Command('TEST', 20, {
         type: 'automaticTemperatureRange',

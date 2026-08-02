@@ -257,11 +257,11 @@ describe('WAVE 3 HomeKit accessory', () => {
     const rotation = service.getCharacteristic(Characteristic.RotationSpeed);
     assert.deepEqual(
       pickRange(heating.props),
-      { minValue: 16, maxValue: 30, minStep: 1 },
+      { minValue: 16, maxValue: 30, minStep: 0.1 },
     );
     assert.deepEqual(
       pickRange(cooling.props),
-      { minValue: 16, maxValue: 30, minStep: 1 },
+      { minValue: 16, maxValue: 30, minStep: 0.1 },
     );
     assert.deepEqual(
       pickRange(rotation.props),
@@ -282,10 +282,16 @@ describe('WAVE 3 HomeKit accessory', () => {
       true,
     );
     assert.equal(invalidTemperature, HAPStatus.INVALID_VALUE_IN_REQUEST);
+    await setCharacteristic(
+      service,
+      Characteristic.HeatingThresholdTemperature,
+      20.8,
+      true,
+    );
     const invalidFraction = await setCharacteristicError(
       service,
       Characteristic.HeatingThresholdTemperature,
-      22.5,
+      22.55,
       true,
     );
     assert.equal(invalidFraction, HAPStatus.INVALID_VALUE_IN_REQUEST);
@@ -297,8 +303,9 @@ describe('WAVE 3 HomeKit accessory', () => {
       true,
     );
     assert.equal(invalidAirflow, HAPStatus.INVALID_VALUE_IN_REQUEST);
-    assert.deepEqual(controller.commands.slice(-1), [
+    assert.deepEqual(controller.commands.slice(-2), [
       { type: 'targetTemperature', celsius: 30 },
+      { type: 'targetTemperature', celsius: 20.8 },
     ]);
   });
 

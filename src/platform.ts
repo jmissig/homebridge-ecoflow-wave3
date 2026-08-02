@@ -126,8 +126,8 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         );
       } else {
         this.parsedConfig = parsedConfig;
+        this.log.debug('Validated EcoFlow WAVE 3 platform configuration');
       }
-      this.log.debug('Validated EcoFlow WAVE 3 platform configuration');
     } catch (error) {
       const detail = error instanceof ConfigurationError ? error.message : 'unexpected configuration error';
       this.log.error(`EcoFlow WAVE 3 configuration is invalid: ${detail}`);

@@ -174,14 +174,16 @@ function platformHarness(
       Service: {},
       Characteristic: {},
       uuid: {
-        generate: uuidForSeed,
+        generate: () => {
+          throw new Error('HAP UUID generator must not be used');
+        },
       },
     },
     platformAccessory: Accessory,
     matter: matterEnabled
       ? {
         uuid: {
-          generate: uuidForSeed,
+          generate: matterUuidForSeed,
         },
       }
       : undefined,
@@ -319,11 +321,11 @@ function validConfig(): PlatformConfig {
 }
 
 function uuidFor(serialNumber: string): string {
-  return uuidForSeed(`homebridge-ecoflow-wave3:wave3:${serialNumber}`);
+  return matterUuidForSeed(`homebridge-ecoflow-wave3:wave3:${serialNumber}`);
 }
 
-function uuidForSeed(seed: string): string {
-  return `uuid:${seed}`;
+function matterUuidForSeed(seed: string): string {
+  return `matter-uuid:${seed}`;
 }
 
 function deferred(): {

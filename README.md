@@ -92,9 +92,7 @@ If you edit `config.json` directly, the equivalent configuration is:
 - `ambient` — use the WAVE 3 ambient sensor and add its humidity sensor.
 - `outlet` — use field 494, identified upstream as indoor supply-air
   temperature. This mapping is experimental pending one more Home app check.
-- `none` — experimentally remove current temperature and humidity. HomeKit
-  normally requires `CurrentTemperature` on a heater/cooler, so Apple Home may
-  reject or degrade this presentation.
+- `none` — publish no Matter local-temperature or humidity measurement.
 
 Available API regions are:
 
@@ -102,9 +100,9 @@ Available API regions are:
 - `api-a.ecoflow.com` — Americas
 - `api-e.ecoflow.com` — Europe
 
-Run early tests in an isolated Homebridge child bridge. After Homebridge
-restarts, the configured unit should appear as a heater/cooler accessory in
-Apple Home.
+Run early tests in an isolated Homebridge child bridge. Matter accessory
+registration and pairing are implemented in the following 0.2 migration phase;
+this phase establishes the required bridge contract first.
 
 The Matter-only 0.2 development line requires Matter on this child bridge and
 does not fall back to HAP. Configure the EcoFlow platform's `_bridge` block as:

@@ -17,7 +17,7 @@
   },
   "keywords": [
     "homebridge-plugin",
-    "matter",
+    "supports-matter",
     "ecoflow",
     "wave-3",
     "air-conditioner",

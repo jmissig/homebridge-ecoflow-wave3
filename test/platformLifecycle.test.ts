@@ -180,6 +180,60 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(stoppedBeforeLaunch.sessionCreateCount, 0);
   });
 
+  it('stops controllers before draining bindings with in-flight command work', async () => {
+    const harness = platformHarness(
+      validConfig(),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      200,
+      { bindingStopWaitsForController: true },
+    );
+    await harness.signalDidFinishLaunching();
+    await Promise.race([
+      harness.platform.shutdown(),
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('Shutdown did not stop controllers before bindings')), 100);
+      }),
+    ]);
+    assert.equal(harness.controllerStopCount, 2);
+    assert.equal(harness.bindingStopCount, 2);
+    assert.equal(harness.sessionStopCount, 1);
+    assert.deepEqual(
+      harness.events.filter(event => /^(controller|binding):stop$/.test(event)),
+      ['controller:stop', 'controller:stop', 'binding:stop', 'binding:stop'],
+    );
+  });
+
+  it('fails closed and cleans partial resources after unexpected Matter setup failures', async () => {
+    for (const options of [
+      { failRegistrationAt: 2 },
+      { failBindingAt: 2 },
+    ]) {
+      const harness = platformHarness(
+        validConfig(),
+        undefined,
+        true,
+        undefined,
+        undefined,
+        200,
+        options,
+      );
+      await harness.signalDidFinishLaunching();
+      assert.equal(harness.sessionCreateCount, 1);
+      assert.equal(harness.sessionStopCount, 1);
+      assert.doesNotMatch(harness.events.join(','), /session:start/);
+      assert.equal(harness.controllerStopCount, 2);
+      assert.equal(harness.bindingStopCount, 1);
+      assert.equal(harness.platform.matterAccessories.size, 0);
+      assert.equal(harness.unregistered.length, 2);
+      assert.match(harness.logs.error.join('\n'), /Matter platform setup failed/);
+      await harness.platform.shutdown();
+      assert.equal(harness.sessionStopCount, 1);
+    }
+  });
+
   it('cleans resources created after shutdown begins during registration', async () => {
     const registrationGate = deferred();
     const harness = platformHarness(validConfig(), undefined, true, registrationGate);
@@ -320,6 +374,11 @@ function platformHarness(
   registrationGate?: ReturnType<typeof deferred>,
   unregistrationGate?: ReturnType<typeof deferred>,
   matterOperationPollAttempts = 200,
+  options: {
+    bindingStopWaitsForController?: boolean;
+    failBindingAt?: number;
+    failRegistrationAt?: number;
+  } = {},
 ): {
   platform: EcoFlowWave3Platform;
   registered: MatterAccessory[];
@@ -351,6 +410,9 @@ function platformHarness(
   let sessionStopCount = 0;
   let bindingStopCount = 0;
   let controllerStopCount = 0;
+  let bindingCreateCount = 0;
+  let registrationCount = 0;
+  const controllerStopped = deferred();
   let registrationReady = registrationGate === undefined;
   const eventListeners = new Map<string, () => void>();
 
@@ -383,6 +445,10 @@ function platformHarness(
           accessories: MatterAccessory[],
         ) => {
           events.push('register');
+          registrationCount += 1;
+          if (registrationCount === options.failRegistrationAt) {
+            throw new Error('synthetic Matter registration failure');
+          }
           if (registrationGate === undefined) {
             registered.push(...accessories);
             registrationReady = true;
@@ -478,14 +544,28 @@ function platformHarness(
         }),
         stop: () => {
           controllerStopCount += 1;
+          if (options.bindingStopWaitsForController) {
+            events.push('controller:stop');
+          }
+          controllerStopped.resolve();
         },
       } satisfies Wave3AccessoryController;
     },
     bindMatterAccessory: (_matter, _accessory, _controller, device) => {
+      bindingCreateCount += 1;
+      if (bindingCreateCount === options.failBindingAt) {
+        throw new Error('synthetic Matter binding failure');
+      }
       boundTemperatureSources.push(device.currentTemperatureSource);
       return {
-        stop: () => {
+        stop: async () => {
           bindingStopCount += 1;
+          if (options.bindingStopWaitsForController) {
+            events.push('binding:stop');
+          }
+          if (options.bindingStopWaitsForController && controllerStopCount === 0) {
+            await controllerStopped.promise;
+          }
         },
       };
     },

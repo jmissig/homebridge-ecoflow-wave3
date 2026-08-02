@@ -213,6 +213,17 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   }
 
   private async launchPlatform(): Promise<void> {
+    try {
+      await this.launchPlatformUnsafe();
+    } catch {
+      if (!this.shutdownStarted) {
+        this.log.error('EcoFlow WAVE 3 Matter platform setup failed');
+      }
+      await this.cleanupFailedLaunch();
+    }
+  }
+
+  private async launchPlatformUnsafe(): Promise<void> {
     if (this.parsedConfig === undefined) {
       return;
     }
@@ -284,6 +295,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       }
 
       const controller = this.dependencies.createController(device.serialNumber, session, logger);
+      this.controllers.set(uuid, controller);
       const accessory = createWave3MatterAccessory(
         this.matter!,
         uuid,
@@ -295,7 +307,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       await this.matter!.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       const registered = await this.waitForMatterRegistration(accessory);
       if (this.shutdownStarted || !registered) {
-        controller.stop();
+        this.stopController(uuid, controller);
         this.matterAccessories.delete(uuid);
         await this.cleanupDispatchedRegistration(accessory);
         releaseWave3MatterAccessoryState(uuid);
@@ -317,7 +329,6 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         device,
         logger,
       );
-      this.controllers.set(uuid, controller);
       this.bindings.set(uuid, binding);
     }
 
@@ -341,13 +352,57 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   }
 
   private async stopRuntimeResources(): Promise<void> {
-    await Promise.all([...this.bindings.values()].map(binding => binding.stop()));
-    this.bindings.clear();
-    for (const controller of this.controllers.values()) {
-      controller.stop();
+    for (const [uuid, controller] of this.controllers) {
+      this.stopController(uuid, controller);
     }
-    this.controllers.clear();
-    await this.stopSession();
+    await Promise.allSettled([...this.bindings.values()].map(binding => binding.stop()));
+    this.bindings.clear();
+    try {
+      await this.stopSession();
+    } catch {
+      this.log.error('EcoFlow WAVE 3 cloud session failed to stop cleanly');
+    }
+  }
+
+  private stopController(uuid: string, controller: Wave3AccessoryController): void {
+    if (this.controllers.get(uuid) !== controller) {
+      return;
+    }
+    this.controllers.delete(uuid);
+    try {
+      controller.stop();
+    } catch {
+      this.log.error('EcoFlow WAVE 3 controller failed to stop cleanly');
+    }
+  }
+
+  private async cleanupFailedLaunch(): Promise<void> {
+    await this.stopRuntimeResources();
+    const accessories = [...this.matterAccessories.values()];
+    if (accessories.length === 0) {
+      return;
+    }
+    for (const accessory of accessories) {
+      releaseWave3MatterAccessoryState(accessory.UUID);
+    }
+    try {
+      await this.matter!.unregisterPlatformAccessories(
+        PLUGIN_NAME,
+        PLATFORM_NAME,
+        accessories,
+      );
+      if (!await this.waitForMatterUnregistration(accessories.map(accessory => accessory.UUID))) {
+        this.log.error('EcoFlow WAVE 3 Matter cleanup did not remove all endpoints after setup failure');
+        return;
+      }
+      for (const accessory of accessories) {
+        if (this.matterAccessories.get(accessory.UUID) === accessory) {
+          this.matterAccessories.delete(accessory.UUID);
+        }
+      }
+    } catch {
+      this.log.error('EcoFlow WAVE 3 Matter cleanup failed after setup failure');
+    }
   }
 
   private async stopSession(): Promise<void> {

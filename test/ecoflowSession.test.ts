@@ -561,6 +561,10 @@ describe('EcoFlow cloud session', () => {
       }),
     });
     connection.emitMessage({
+      topic: '/app/TEST_USER/TESTWAVE30001/thing/property/get_reply',
+      payload: Uint8Array.of(0xff, 0x00, 0x80),
+    });
+    connection.emitMessage({
       topic: '/app/UNEXPECTED_ACCOUNT/UNEXPECTED_DEVICE/thing/property/unknown',
       payload: Uint8Array.of(1, 2, 3),
     });
@@ -571,7 +575,8 @@ describe('EcoFlow cloud session', () => {
       'topic=/app/device/property/<device>',
       'protobuf decode kind=malformed',
       'dropping getReply for device #1',
-      'quota decode kind=quota deviceOnline=true',
+      'payloadFormat=jsonObject',
+      'payloadFormat=nonJson',
       'no configured WAVE 3 topic matched',
       'controller listener(s)',
     ]) {

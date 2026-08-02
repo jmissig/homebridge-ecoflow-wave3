@@ -543,15 +543,15 @@ export class EcoFlowCloudSession {
         } else if (kind === 'getReply') {
           const pending = this.pendingRefreshes.get(device.serialNumber);
           const replyId = parseRefreshReplyId(message.payload);
-          if (!this.consumeMatchingRefresh(device.serialNumber, message.payload)) {
+          if (!this.consumeMatchingRefresh(device.serialNumber, replyId)) {
             this.logger.warn(
               `EcoFlow diagnostics: dropping getReply for ${label}; `
               + `replyId=${replyId ?? '<missing-or-non-string>'}, `
               + `expectedRequestId=${pending?.requestId ?? '<none>'}, `
               + `pendingGeneration=${pending?.generation ?? '<none>'}, `
-              + `currentGeneration=${this.connectionGeneration}`,
+              + `currentGeneration=${this.connectionGeneration}, `
+              + `payloadFormat=${classifyRefreshReplyPayload(message.payload)}`,
             );
-            this.logQuotaReply(label, decodeWave3QuotaReply(message.payload));
             return;
           }
           this.logger.info(`EcoFlow diagnostics: getReply request ID matched pending refresh for ${label}`);
@@ -765,11 +765,14 @@ export class EcoFlowCloudSession {
     }
   }
 
-  private consumeMatchingRefresh(serialNumber: string, payload: Uint8Array): boolean {
+  private consumeMatchingRefresh(
+    serialNumber: string,
+    replyId: string | undefined,
+  ): boolean {
     const pending = this.pendingRefreshes.get(serialNumber);
     if (pending === undefined
       || pending.generation !== this.connectionGeneration
-      || parseRefreshReplyId(payload) !== pending.requestId) {
+      || replyId !== pending.requestId) {
       return false;
     }
     this.pendingRefreshes.delete(serialNumber);
@@ -919,6 +922,16 @@ function parseRefreshReplyId(payload: Uint8Array): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function classifyRefreshReplyPayload(payload: Uint8Array): 'jsonObject' | 'nonJson' {
+  for (const byte of payload) {
+    if (byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d) {
+      continue;
+    }
+    return byte === 0x7b ? 'jsonObject' : 'nonJson';
+  }
+  return 'nonJson';
 }
 
 function isNewerSequence(candidate: number, previous: number | undefined): boolean {

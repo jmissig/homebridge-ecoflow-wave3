@@ -484,6 +484,24 @@ publishing a command.
 [Source: household Apple Home, EcoFlow app, and WAVE 3 observations shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533563322539049151)
 [Auto-range observation: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533565811455692810)
 
+**Matter interoperability — Auto temporarily not advertised**
+
+- Matter defines Auto as a distinct writable Thermostat `SystemMode`; the
+  thermostat is responsible for generating heating or cooling demand from the
+  lower and upper setpoints.
+- The plugin's prior endpoint advertised the required Heating, Cooling, and
+  Auto features with `ControlSequenceOfOperation=CoolingAndHeating` and passed
+  the installed Matter.js runtime conformance checks.
+- Two isolated Apple Home tests displayed Auto without writing
+  `SystemMode.Auto`. Apple Home sent power and later Cooling-setpoint traffic
+  instead. A correctly reported and controller-acknowledged Auto state also
+  failed to render as Auto.
+- Auto is therefore deferred at the Matter boundary. The protocol/domain layer
+  continues to preserve real WAVE Auto state. An EcoFlow-app-selected Auto
+  profile is presented to Matter as Cooling at its upper threshold.
+
+[Decision record](decisions/0004-defer-matter-auto.md)
+
 **Hardware — 2026-08-01 HomeKit command validation**
 
 - HomeKit target-temperature and power writes worked end to end.

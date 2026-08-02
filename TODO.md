@@ -9,6 +9,7 @@ than this active checklist.
 Current architecture and evidence:
 
 - [Matter-only decision](docs/decisions/0003-matter-only.md)
+- [Auto-mode interoperability decision](docs/decisions/0004-defer-matter-auto.md)
 - [Architecture comparison](docs/architecture-comparison.md)
 - [Protocol dossier](docs/protocol.md)
 - [Hardware evidence](docs/hardware-packet-evidence-2026-08-01.md)
@@ -29,14 +30,14 @@ per-mode profiles.
   1. send power-on only and confirm the resulting operational state;
   2. re-plan from the latest authoritative snapshot;
   3. send the destination mode and confirm it;
-  4. send the destination target or Auto range and confirm it.
+  4. send the destination target and confirm it.
 - [ ] When the WAVE is already on, confirm the mode change before applying its
   target/range rather than assuming the hardware accepts both atomically.
 - [ ] Re-plan queued work after every confirmed step so a wake-up into a saved
   profile cannot turn the remaining operation into a stale or false no-op.
 - [ ] Let a newer Matter intent supersede the remaining steps of an older one;
   power-off cancels all queued mode, setpoint, and fan work immediately.
-- [ ] Add transcript-shaped regressions for Off→Heat, Off→Cool, Off→Auto, and
+- [ ] Add transcript-shaped regressions for Off→Heat, Off→Cool, and
   on-device mode changes where the WAVE first restores a saved profile.
 
 ### 2. Keep WAVE profiles authoritative and Matter values presentational
@@ -50,26 +51,26 @@ per-mode profiles.
   valid.
 - [ ] Investigate why Apple Home can visually present one Heat/Cool target
   while its stored Matter companion setpoint contains another value.
-- [ ] Verify repeated Cool→Heat→Cool and Cool→Auto→Cool transitions restore the
-  confirmed WAVE profile for each destination mode.
+- [ ] Verify repeated Cool→Heat→Cool transitions restore the confirmed WAVE
+  profile for each destination mode.
 
-### 3. Finish Auto-mode diagnosis
+### 3. Keep Auto deferred without losing protocol support
 
-- [ ] Preserve the verified protocol semantics: wire mode `5`, lower/upper
+- Auto is not advertised in Matter for now. Matter defines Auto as a distinct
+  writable `SystemMode`, but Apple Home twice displayed Auto without writing
+  that value and ignored a correctly reported Auto state. [decision: Julian ·
+  2026-08-02](docs/decisions/0004-defer-matter-auto.md)
+- [ ] Preserve the verified WAVE protocol semantics: wire mode `5`, lower/upper
   thresholds, midpoint scalar target, 16–30°C limits, and a minimum 4°C range.
+- [ ] When the EcoFlow app selects Auto, retain its authoritative profile
+  internally and present Cooling at the Auto upper threshold to Matter.
 - [ ] Decode or safely diagnose the official app's Auto range-write
   acknowledgement fields. Accepted app writes did not change the subsequent
   full-state range, so distinguish device rejection/no-op from an unmapped
   response.
-- [ ] Add a compact semantic trace for Matter mode and threshold writes,
-  compiled WAVE intents, acknowledgements, and authoritative profile updates.
-- [ ] Record Apple Home's current controller limitations in user docs:
-  - selecting Auto may emit only power-on and later Cool setpoint writes;
-  - correctly reported and controller-acknowledged Auto state may still not
-    render as Auto in Apple Home;
-  - another Matter controller may behave differently.
-- [ ] Test Auto with a second Matter controller before attributing all Auto UI
-  behavior to the plugin or the WAVE.
+- [ ] Re-test Auto with a second Matter controller and after meaningful Apple
+  Home/Homebridge Matter updates. Re-enable it only after a controller writes
+  `SystemMode.Auto` and renders the authoritative report correctly.
 
 ### 4. Hardware acceptance for the corrected coordinator
 
@@ -80,9 +81,7 @@ and controller reconciliation.
 - [ ] Off→Cool with an explicit target.
 - [ ] Off→Heat with an explicit target that differs from the saved Heat
   profile.
-- [ ] Off→Auto with a distinctive valid range.
 - [ ] Cool→Heat→Cool profile restoration.
-- [ ] Official EcoFlow app→Auto and range adjustment while Matter is paired.
 - [ ] Five fan speeds and rapid-slider coalescing.
 - [ ] Concurrent EcoFlow app and Matter control without stale replay.
 - [ ] MQTT reconnect, child-bridge restart, WAVE power cycle, and an extended

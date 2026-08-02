@@ -21,11 +21,11 @@ import type {
 } from '../src/wave3/domain.js';
 
 describe('WAVE 3 Matter accessory', () => {
-  it('maps every supported system mode and all five fan speeds from snapshots', () => {
+  it('maps advertised system modes and degrades external Auto to cooling presentation', () => {
     const harness = matterHarness();
     const cases = [
       { mode: 'off', powered: false, submode: 0, speed: 20, systemMode: 3, fanMode: 0 },
-      { mode: 'auto', powered: true, submode: 0, speed: 20, systemMode: 1, fanMode: 1 },
+      { mode: 'auto', powered: true, submode: 0, speed: 20, systemMode: 3, fanMode: 1 },
       { mode: 'cool', powered: true, submode: 0, speed: 40, systemMode: 3, fanMode: 2 },
       { mode: 'heat', powered: true, submode: 0, speed: 60, systemMode: 4, fanMode: 2 },
       { mode: 'fan', powered: true, submode: 0, speed: 80, systemMode: 7, fanMode: 3 },
@@ -86,6 +86,9 @@ describe('WAVE 3 Matter accessory', () => {
         device(source),
         onlineSnapshot(),
       );
+      // Exercise migration from a cache written while Auto was advertised.
+      cached.context.lastSystemMode = MATTER_SYSTEM_MODE.auto;
+      cached.clusters!.thermostat!.minSetpointDeadBand = 0;
       const restored = createWave3MatterAccessory(
         harness.matter,
         cached.UUID,
@@ -94,7 +97,8 @@ describe('WAVE 3 Matter accessory', () => {
         cached,
       );
       assert.equal(restored.clusters?.onOff?.onOff, true);
-      assert.equal(restored.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.auto);
+      assert.equal(restored.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.cool);
+      assert.equal(restored.clusters?.thermostat?.minSetpointDeadBand, undefined);
       assert.equal(restored.clusters?.thermostat?.occupiedHeatingSetpoint, 1_900);
       assert.equal(restored.clusters?.thermostat?.occupiedCoolingSetpoint, 2_400);
       assert.equal(restored.clusters?.fanControl?.percentSetting, 60);
@@ -202,6 +206,7 @@ describe('WAVE 3 Matter accessory', () => {
       >;
       assert.equal(endpoint.lifecycle.isReady, true);
       assert.equal(supported.onOff?.features.deadFrontBehavior, true);
+      assert.equal(supported.thermostat?.features.autoMode, false);
       assert.equal(supported.fanControl?.features.multiSpeed, true);
       assert.equal('thermostatUserInterfaceConfiguration' in supported, true);
       assert.equal(
@@ -213,7 +218,7 @@ describe('WAVE 3 Matter accessory', () => {
         /unavailable until command mapping/,
       );
       assert.equal(endpoint.state.onOff.onOff, true);
-      assert.equal(endpoint.state.thermostat.systemMode, MATTER_SYSTEM_MODE.auto);
+      assert.equal(endpoint.state.thermostat.systemMode, MATTER_SYSTEM_MODE.cool);
       assert.equal(endpoint.state.fanControl.percentSetting, 60);
     } finally {
       await node.close();
@@ -279,7 +284,6 @@ describe('WAVE 3 Matter accessory', () => {
             thermostatRunningMode?: number;
             occupiedCoolingSetpoint: number;
             occupiedHeatingSetpoint: number;
-            minSetpointDeadBand: number;
           };
           fanControl: { percentSetting: number | null };
           relativeHumidityMeasurement?: { measuredValue: number | null };
@@ -325,7 +329,6 @@ describe('WAVE 3 Matter accessory', () => {
         assert.equal(endpointState().onOff.onOff, true);
         assert.equal(endpointState().thermostat.occupiedCoolingSetpoint, 2_300);
         assert.equal(endpointState().thermostat.occupiedHeatingSetpoint, 2_300);
-        assert.equal(endpointState().thermostat.minSetpointDeadBand, 0);
         assert.equal(endpointState().thermostat.thermostatRunningMode, undefined);
         assert.equal(
           endpointState().thermostat.localTemperature,
@@ -511,21 +514,19 @@ describe('WAVE 3 Matter accessory', () => {
         },
       ]);
 
-      await endpoint.act('turn off for automatic startup', agent => agent.onOff.off());
+      await endpoint.act('turn off before unsupported Auto write', agent => agent.onOff.off());
       const commandsBeforeAutoStartup = controller.commands.length;
-      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.auto } });
-      await endpoint.set({ thermostat: {
-        occupiedHeatingSetpoint: 1_800,
-        occupiedCoolingSetpoint: 2_300,
-      } });
-      await endpoint.act('turn on in automatic mode', agent => agent.onOff.on());
+      await assert.rejects(
+        async () => endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.auto } }),
+        /constraint|conformance|allowed/i,
+      );
+      await endpoint.act('turn on after unsupported Auto write', agent => agent.onOff.on());
       assert.deepEqual(controller.commands.slice(commandsBeforeAutoStartup), [
         { type: 'power', on: true },
         {
           type: 'mode',
-          mode: 'auto',
-          targetTemperatureLowerCelsius: 18,
-          targetTemperatureUpperCelsius: 23,
+          mode: 'heat',
+          targetTemperatureCelsius: 26,
         },
       ]);
 
@@ -539,9 +540,8 @@ describe('WAVE 3 Matter accessory', () => {
         { type: 'power', on: true },
         {
           type: 'mode',
-          mode: 'auto',
-          targetTemperatureLowerCelsius: 19,
-          targetTemperatureUpperCelsius: 24,
+          mode: 'heat',
+          targetTemperatureCelsius: 26,
         },
       ]);
       for (const [systemMode, expected] of [
@@ -554,12 +554,6 @@ describe('WAVE 3 Matter accessory', () => {
           type: 'mode',
           mode: 'heat',
           targetTemperatureCelsius: 26,
-        }],
-        [MATTER_SYSTEM_MODE.auto, {
-          type: 'mode',
-          mode: 'auto',
-          targetTemperatureLowerCelsius: 19,
-          targetTemperatureUpperCelsius: 24,
         }],
         [MATTER_SYSTEM_MODE.fan, { type: 'mode', mode: 'fan' }],
         [MATTER_SYSTEM_MODE.dry, { type: 'mode', mode: 'dry' }],
@@ -580,7 +574,7 @@ describe('WAVE 3 Matter accessory', () => {
 
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'initial automatic mode projection',
       );
       dropNextThermostatStateUpdate = true;
@@ -613,8 +607,7 @@ describe('WAVE 3 Matter accessory', () => {
 
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto
-          && endpoint.state.thermostat.minSetpointDeadBand === 0
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool
           && endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
           && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
         'baseline automatic range',
@@ -724,8 +717,7 @@ describe('WAVE 3 Matter accessory', () => {
         },
       });
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool
-          && endpoint.state.thermostat.minSetpointDeadBand === 0,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'cool projection before direct setpoint writes',
       );
       const coolTargetBefore = controller.commands.length;
@@ -782,7 +774,7 @@ describe('WAVE 3 Matter accessory', () => {
 
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'automatic projection before fan controls',
       );
 
@@ -1067,7 +1059,7 @@ describe('WAVE 3 Matter accessory', () => {
 
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'Auto mode projection before invalid raise/lower',
       );
       await assert.rejects(
@@ -1116,7 +1108,7 @@ describe('WAVE 3 Matter accessory', () => {
       });
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'automatic projection before deferred setpoint failure',
       );
 
@@ -1176,7 +1168,7 @@ describe('WAVE 3 Matter accessory', () => {
       }
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'automatic projection after command failure matrix',
       );
 
@@ -1194,7 +1186,7 @@ describe('WAVE 3 Matter accessory', () => {
         'failed mode command during reconnect',
       );
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'confirmed mode restoration during reconnect',
       );
 
@@ -1223,7 +1215,7 @@ describe('WAVE 3 Matter accessory', () => {
       );
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'automatic projection before pending fan cancellation',
       );
 
@@ -1307,7 +1299,7 @@ describe('WAVE 3 Matter accessory', () => {
         'failed attribute command reconciliation',
       );
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'confirmed thermostat restoration',
       );
       assert.match(errors.at(-1)!, /command confirmation timed out/);
@@ -1359,7 +1351,7 @@ describe('WAVE 3 Matter accessory', () => {
     assert.equal(diagnostics.some(message => /redacted-controls|TEST-SERIAL/.test(message)), false);
   });
 
-  it('builds a customized room air conditioner with auto, fan, humidity, and complete state', () => {
+  it('builds a customized room air conditioner with manual HVAC, fan, humidity, and complete state', () => {
     const harness = matterHarness();
     const accessory = createWave3MatterAccessory(
       harness.matter,
@@ -1374,7 +1366,7 @@ describe('WAVE 3 Matter accessory', () => {
       cooling: true,
       occupancy: false,
       setback: false,
-      autoMode: true,
+      autoMode: false,
       localTemperatureNotExposed: false,
       matterScheduleConfiguration: false,
       presets: false,
@@ -1397,9 +1389,8 @@ describe('WAVE 3 Matter accessory', () => {
       minCoolSetpointLimit: 1_600,
       maxCoolSetpointLimit: 3_000,
       absMaxCoolSetpointLimit: 3_000,
-      minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
-      systemMode: MATTER_SYSTEM_MODE.auto,
+      systemMode: MATTER_SYSTEM_MODE.cool,
     });
     assert.deepEqual(accessory.clusters?.fanControl, {
       fanMode: 2,
@@ -1698,7 +1689,7 @@ describe('WAVE 3 Matter accessory', () => {
       harness.stateUpdates.filter(
         update => update.cluster === 'thermostat',
       ).at(-1)?.attributes.systemMode,
-      MATTER_SYSTEM_MODE.auto,
+      MATTER_SYSTEM_MODE.cool,
     );
     await binding.stop();
   });

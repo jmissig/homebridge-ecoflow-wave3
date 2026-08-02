@@ -22,14 +22,16 @@ import { wave3RoomAirConditionerDeviceType } from '../src/matterAccessory.js';
 import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
 
 describe('EcoFlow WAVE 3 platform lifecycle', () => {
-  it('removes legacy cached HAP accessories without publishing a HAP surface', () => {
+  it('removes legacy cached HAP accessories only after Homebridge restoration completes', async () => {
     const harness = platformHarness(validConfig());
     const legacy = new FakeCachedAccessory('Legacy WAVE 3', 'legacy-hap-uuid');
 
     harness.platform.configureAccessory(legacy as unknown as PlatformAccessory);
 
+    assert.deepEqual(harness.legacyHapUnregistered, []);
+    await harness.signalDidFinishLaunching();
     assert.deepEqual(harness.legacyHapUnregistered, [legacy]);
-    assert.match(harness.logs.info.join('\n'), /Removed a legacy cached HAP/);
+    assert.match(harness.logs.info.join('\n'), /Removed 1 legacy cached HAP/);
   });
 
   it('validates configuration before creating a session', async () => {

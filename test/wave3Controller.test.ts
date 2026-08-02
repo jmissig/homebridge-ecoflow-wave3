@@ -81,13 +81,19 @@ describe('WAVE 3 controller', () => {
 
     session.emitPacket('property', runtimePacket(5, {
       indoorReturnAir: 23,
+      pdFirmware: 16_842_856,
     }));
     session.emitPacket('property', runtimePacket(6, {
       condenser: 41,
+      bmsFirmware: 16_777_217,
     }));
     assert.deepEqual(controller.snapshot.runtimeTemperatures, {
       indoorReturnAirCelsius: 23,
       condenserCelsius: 41,
+    });
+    assert.deepEqual(controller.snapshot.firmwareVersions, {
+      pd: '1.1.0.104',
+      bms: '1.0.0.1',
     });
     session.emitPacket('property', runtimePacket(4, {
       condenser: 99,
@@ -979,9 +985,13 @@ function runtimePacket(
   values: {
     indoorReturnAir?: number;
     condenser?: number;
+    pdFirmware?: number;
+    bmsFirmware?: number;
   },
 ): Uint8Array {
   const runtime = create(Wave3RuntimePropertyUploadSchema, {
+    pdFirmVer: values.pdFirmware,
+    bmsFirmVer: values.bmsFirmware,
     tempIndoorReturnAir: values.indoorReturnAir,
     tempCondenser: values.condenser,
   });

@@ -70,6 +70,7 @@ interface PendingTemperatureWrite {
 export class Wave3PlatformAccessory {
   public readonly heaterCoolerService: Service;
   public readonly humiditySensorService?: Service;
+  private readonly informationService: Service;
 
   private snapshot: Wave3ControllerSnapshot;
   private readonly lastPresentedValues: HomeKitClimateValues = {
@@ -99,7 +100,10 @@ export class Wave3PlatformAccessory {
       accessory.context.lastTargetMode,
       this.platform.Characteristic.TargetHeaterCoolerState,
     );
-    this.accessory.getService(this.platform.Service.AccessoryInformation)!
+    this.informationService = this.accessory.getService(
+      this.platform.Service.AccessoryInformation,
+    )!;
+    this.informationService
       .setCharacteristic(
         this.platform.Characteristic.Name,
         this.accessory.displayName,
@@ -478,6 +482,15 @@ export class Wave3PlatformAccessory {
   }
 
   private pushSnapshot(snapshot: Wave3ControllerSnapshot): void {
+    const firmwareRevision = snapshot.firmwareVersions?.pd
+      ?? snapshot.firmwareVersions?.iot;
+    if (firmwareRevision !== undefined) {
+      this.informationService.updateCharacteristic(
+        this.platform.Characteristic.FirmwareRevision,
+        firmwareRevision,
+      );
+    }
+
     if (snapshot.availability === 'accountError') {
       const error = this.communicationError();
       for (const characteristicType of this.climateCharacteristics()) {

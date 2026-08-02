@@ -58,6 +58,14 @@ export interface Wave3RuntimeTemperatures {
   compressorDischargeCelsius?: number;
 }
 
+export interface Wave3FirmwareVersions {
+  pd?: string;
+  iot?: string;
+  mppt?: string;
+  llc?: string;
+  bms?: string;
+}
+
 export type Wave3Command =
   | { type: 'power'; on: boolean }
   | { type: 'mode'; mode: Wave3ControllableMode }
@@ -95,6 +103,7 @@ export interface Wave3ControllerSnapshot {
   availability: Wave3Availability;
   state: Readonly<Wave3State>;
   runtimeTemperatures: Readonly<Wave3RuntimeTemperatures>;
+  firmwareVersions?: Readonly<Wave3FirmwareVersions>;
   updatedAt?: number;
 }
 

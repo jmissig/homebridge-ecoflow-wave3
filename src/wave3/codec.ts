@@ -24,6 +24,7 @@ import {
   type Wave3Command,
   type Wave3DisplayState,
   type Wave3DisplayUpdate,
+  type Wave3FirmwareVersions,
   type Wave3Mode,
   type Wave3ModeParameters,
   type Wave3RuntimeTemperatures,
@@ -73,6 +74,7 @@ export type DecodedWave3Message =
     kind: 'runtime';
     sequence: number;
     temperatures: Wave3RuntimeTemperatures;
+    firmwareVersions: Wave3FirmwareVersions;
     diagnostic: Wave3Diagnostic;
   }
   | {
@@ -174,6 +176,7 @@ export function decodeWave3Message(bytes: Uint8Array): DecodedWave3Message {
         kind: 'runtime',
         sequence: header.seq ?? 0,
         temperatures: normalizeRuntimeTemperatures(runtime),
+        firmwareVersions: normalizeFirmwareVersions(runtime),
         diagnostic: withPayloadDiagnostics(
           diagnostic,
           collectUnknownFieldDiagnostics([['payload', runtime]]),
@@ -622,6 +625,46 @@ function normalizeRuntimeTemperatures(
     temperatures.compressorDischargeCelsius = runtime.tempCompressorDischarge;
   }
   return temperatures;
+}
+
+function normalizeFirmwareVersions(
+  runtime: MessageShape<typeof Wave3RuntimePropertyUploadSchema>,
+): Wave3FirmwareVersions {
+  const versions: Wave3FirmwareVersions = {};
+  assignFirmwareVersion(runtime, 'pdFirmVer', versions, 'pd');
+  assignFirmwareVersion(runtime, 'iotFirmVer', versions, 'iot');
+  assignFirmwareVersion(runtime, 'mpptFirmVer', versions, 'mppt');
+  assignFirmwareVersion(runtime, 'llcFirmVer', versions, 'llc');
+  assignFirmwareVersion(runtime, 'bmsFirmVer', versions, 'bms');
+  return versions;
+}
+
+function assignFirmwareVersion(
+  runtime: MessageShape<typeof Wave3RuntimePropertyUploadSchema>,
+  field: 'pdFirmVer' | 'iotFirmVer' | 'mpptFirmVer' | 'llcFirmVer' | 'bmsFirmVer',
+  target: Wave3FirmwareVersions,
+  targetField: keyof Wave3FirmwareVersions,
+): void {
+  if (!has(runtime, Wave3RuntimePropertyUploadSchema, field)) {
+    return;
+  }
+  const packed = runtime[field];
+  if (packed === undefined || packed === 0) {
+    return;
+  }
+  target[targetField] = packedFirmwareVersion(packed);
+}
+
+export function packedFirmwareVersion(value: number): string {
+  if (!Number.isInteger(value) || value < 1 || value > 0xffff_ffff) {
+    throw new TypeError('packed firmware version is unsupported');
+  }
+  return [
+    (value >>> 24) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 8) & 0xff,
+    value & 0xff,
+  ].join('.');
 }
 
 function normalizeAcknowledgement(

@@ -253,6 +253,25 @@ heat saved-mode parameters. The plugin preserves that value as read-only state
 without yet offering it as a command because its user-facing meaning is not
 established.
 
+### Runtime firmware versions
+
+The WAVE 3 runtime upload (`cmd_func=254`, `cmd_id=22`) carries packed unsigned
+firmware versions:
+
+| Component | Protobuf field |
+| --- | ---: |
+| PD / primary appliance | `pd_firm_ver` (176) |
+| IoT | `iot_firm_ver` (177) |
+| MPPT | `mppt_firm_ver` (178) |
+| LLC | `llc_firm_ver` (179) |
+| BMS | `bms_firm_ver` (241) |
+
+Decode a nonzero value as four big-endian version bytes. The household value
+`16842856` is `0x01010068`, therefore `1.1.0.104`. HomeKit's single
+`FirmwareRevision` uses PD first and IoT as a fallback; it does not conflate
+the envelope header's unrelated protocol `version=3` with device firmware.
+[decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
+
 **Inference**
 
 - Household incremental packets reported field 494 falling from about

@@ -22,6 +22,7 @@ import type {
   Wave3ControllerSnapshot,
   Wave3DisplayState,
   Wave3DisplayUpdate,
+  Wave3FirmwareVersions,
   Wave3RuntimeTemperatures,
   Wave3State,
 } from './domain.js';
@@ -73,6 +74,7 @@ const NOOP_LOGGER: CloudSessionLogger = {
 export class Wave3Controller {
   private displayState?: Wave3DisplayState;
   private runtimeTemperatures: Wave3RuntimeTemperatures = {};
+  private firmwareVersions: Wave3FirmwareVersions = {};
   private readonly snapshotListeners = new Set<(snapshot: Wave3ControllerSnapshot) => void>();
   private readonly detachListeners: Array<() => void>;
   private pending?: PendingCommand;
@@ -117,6 +119,7 @@ export class Wave3Controller {
       availability: availabilityForSession(session.state, false),
       state: {},
       runtimeTemperatures: {},
+      firmwareVersions: {},
     });
     this.detachListeners = [
       session.onMessage(message => this.handleMessage(message)),
@@ -297,8 +300,14 @@ export class Wave3Controller {
         ...this.runtimeTemperatures,
         ...decoded.temperatures,
       };
+      this.firmwareVersions = {
+        ...this.firmwareVersions,
+        ...decoded.firmwareVersions,
+      };
       this.logger.info(
-        `EcoFlow diagnostics: controller accepted runtime property sequence=${decoded.sequence} temperatures=${JSON.stringify(decoded.temperatures)}`,
+        `EcoFlow diagnostics: controller accepted runtime property sequence=${decoded.sequence} `
+        + `temperatures=${JSON.stringify(decoded.temperatures)} `
+        + `firmwareVersions=${JSON.stringify(decoded.firmwareVersions)}`,
       );
       this.updateFreshnessForOnlineSession();
       return;
@@ -484,6 +493,7 @@ export class Wave3Controller {
     this.deviceReportedOnline = undefined;
     this.displayState = undefined;
     this.runtimeTemperatures = {};
+    this.firmwareVersions = {};
     this.updatedAt = undefined;
     this.displayRevision = 0;
     this.lastDisplaySequence = undefined;
@@ -533,6 +543,7 @@ export class Wave3Controller {
       availability,
       state: this.displayState?.state ?? {},
       runtimeTemperatures: this.runtimeTemperatures,
+      firmwareVersions: this.firmwareVersions,
       updatedAt: this.updatedAt,
     });
     this.logger.info(
@@ -742,15 +753,17 @@ function availabilityForSession(
 }
 
 function freezeSnapshot(
-  snapshot: Omit<Wave3ControllerSnapshot, 'state' | 'runtimeTemperatures'> & {
+  snapshot: Omit<Wave3ControllerSnapshot, 'state' | 'runtimeTemperatures' | 'firmwareVersions'> & {
     state: Wave3State;
     runtimeTemperatures: Wave3RuntimeTemperatures;
+    firmwareVersions: Wave3FirmwareVersions;
   },
 ): Wave3ControllerSnapshot {
   return Object.freeze({
     ...snapshot,
     state: Object.freeze({ ...snapshot.state }),
     runtimeTemperatures: Object.freeze({ ...snapshot.runtimeTemperatures }),
+    firmwareVersions: Object.freeze({ ...snapshot.firmwareVersions }),
   });
 }
 

@@ -31,6 +31,11 @@ message Wave3DisplayPropertyUpload {
 }
 
 message Wave3RuntimePropertyUpload {
+  optional uint32 pd_firm_ver = 176;
+  optional uint32 iot_firm_ver = 177;
+  optional uint32 mppt_firm_ver = 178;
+  optional uint32 llc_firm_ver = 179;
+  optional uint32 bms_firm_ver = 241;
   optional float temp_indoor_return_air = 493;
   optional float temp_outdoor_ambient = 495;
   optional float temp_condenser = 496;

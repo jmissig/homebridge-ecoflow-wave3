@@ -16,6 +16,7 @@ import {
   decodeWave3QuotaReply,
   encodeWave3Command,
   mergeWave3DisplayUpdate,
+  packedFirmwareVersion,
   transformWave3Payload,
 } from '../src/wave3/codec.js';
 import type { Wave3Command } from '../src/wave3/domain.js';
@@ -193,6 +194,9 @@ describe('WAVE 3 codec', () => {
 
   it('decodes bounded runtime telemetry independently of normalized climate state', () => {
     const runtime = create(Wave3RuntimePropertyUploadSchema, {
+      pdFirmVer: 16_842_856,
+      iotFirmVer: 16_842_856,
+      mpptFirmVer: 0,
       tempIndoorReturnAir: 22.25,
       tempCondenser: 40.5,
     });
@@ -209,7 +213,12 @@ describe('WAVE 3 codec', () => {
         indoorReturnAirCelsius: 22.25,
         condenserCelsius: 40.5,
       });
+      assert.deepEqual(decoded.firmwareVersions, {
+        pd: '1.1.0.104',
+        iot: '1.1.0.104',
+      });
     }
+    assert.equal(packedFirmwareVersion(16_842_856), '1.1.0.104');
   });
 
   it('strictly decodes latest-quota JSON into a merge-safe display update', () => {

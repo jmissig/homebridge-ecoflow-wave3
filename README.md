@@ -9,10 +9,10 @@ trying to support every EcoFlow product or expose every setting in the EcoFlow
 app.
 
 > [!WARNING]
-> This is an unpublished, pre-release project. Its cloud connection and
-> HomeKit behavior are covered by automated tests, but control has not yet been
-> validated against a real WAVE 3. Do not rely on it for unattended climate
-> control.
+> This is an unpublished, pre-release project. Core cloud state, power,
+> temperature, and fan controls have been exercised against one real WAVE 3,
+> but broader mode and long-session acceptance remain incomplete. Do not rely
+> on it for unattended climate control.
 
 ## What it provides
 
@@ -21,6 +21,7 @@ app.
 - Ambient humidity, alongside the ambient current-temperature reading
 - Cooling, heating, and automatic modes
 - Fan speed
+- Device firmware revision in HomeKit accessory information
 - One HomeKit accessory for each explicitly configured WAVE 3
 
 The plugin uses EcoFlow's private, app-facing cloud service. It is not local

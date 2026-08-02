@@ -255,13 +255,34 @@ stable account identifiers.
 
 [Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
 
+## Firmware versions
+
+**Observed**
+
+- A full runtime packet reported fields `176` and `177` as the packed unsigned
+  value `16842856` (`0x01010068`). Fields `178` and `179` were present as zero.
+  [source: Julian's redacted WAVE 3 debug paste · 2026-08-01]
+- The pinned upstream schema identifies fields `176`–`179` as PD, IoT, MPPT,
+  and LLC firmware respectively, with BMS firmware at field `241`.
+
+**Inference and implementation consequence**
+
+- EcoFlow firmware integers are decoded bytewise from most to least
+  significant byte, so `0x01.01.00.68` becomes `1.1.0.104`.
+- HomeKit's singular `FirmwareRevision` reports PD firmware as the primary
+  appliance firmware and falls back to IoT firmware only when PD is absent.
+  All five component versions remain separately normalized internally; zero
+  means absent and is not presented as `0.0.0.0`.
+
+[Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
+
 ## Evidence still missing
 
 - Exact semantics of acknowledgement action IDs beyond the mapped climate
   writes
 - Exact meaning of `cmd_id=20`
 - Long-session command reliability and safe recovery
-- Firmware-version field and command path
+- Apple Home display and restart persistence of the decoded firmware revision
 - Apple Home behavior for the experimental no-temperature HeaterCooler shape
 - Whether account device discovery can be implemented through a stable private
   endpoint

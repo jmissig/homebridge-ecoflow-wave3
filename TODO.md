@@ -228,10 +228,6 @@ Evaluate these only after the primary climate accessory is reliable:
   [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
 - [ ] Decide whether dry mode can be represented honestly with standard
   HomeKit services and characteristics.
-- [ ] Determine whether the WAVE 3 firmware version is available through
-  current device telemetry or the private cloud API, and expose it through
-  Homebridge's standard accessory information when reliable.
-  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
 - [ ] Evaluate battery level and charging state when an add-on battery is
   actually present.
 - [ ] Evaluate condensate-full warning and drainage state.
@@ -247,6 +243,11 @@ HomeKit semantics, hardware evidence, and no conflicting controls.
 
 ## Phase 9: Child-bridge acceptance and release preparation
 
+- [ ] Confirm Apple Home displays the observed PD firmware revision
+  (`1.1.0.104` in the first household packet) in accessory information and
+  retains it across partial updates and restarts.
+  [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533271556359196834)
+  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
 - [ ] Hardware-check all three per-device current-temperature sources:
   `ambient`, provisionally mapped field-494 `outlet`, and experimental `none`.
   Confirm whether Apple Home accepts a `HeaterCooler` with its normally

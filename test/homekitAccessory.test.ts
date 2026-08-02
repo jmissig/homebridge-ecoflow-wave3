@@ -98,6 +98,33 @@ describe('HomeKit climate mapping', () => {
 });
 
 describe('WAVE 3 HomeKit accessory', () => {
+  it('reports observed PD firmware through standard accessory information', () => {
+    const controller = new FakeController({
+      ...snapshot({
+        powered: true,
+        mode: 'cool',
+        ambientTemperatureCelsius: 24,
+        targetTemperatureCelsius: 21,
+      }),
+      firmwareVersions: {
+        pd: '1.1.0.104',
+        iot: '1.1.0.104',
+      },
+    });
+    const accessory = new FakeAccessory('Bedroom WAVE 3', 'uuid-firmware', 'SERIALFIRMWARE');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+
+    assert.equal(
+      accessory.getService(Service.AccessoryInformation)!
+        .getCharacteristic(Characteristic.FirmwareRevision).value,
+      '1.1.0.104',
+    );
+  });
+
   it('reports ambient humidity as a resilient read-only companion sensor', async () => {
     const controller = new FakeController(snapshot({
       powered: true,

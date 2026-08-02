@@ -36,19 +36,33 @@ export function clustersForSnapshot(
     : state.mode === 'heat'
       ? state.targetTemperatureCelsius
       : profiles.heat?.targetTemperatureCelsius;
-  let projectedCoolingSetpoint = coolingSetpoint === undefined
-    ? numberOrUndefined(previousThermostat.occupiedCoolingSetpoint)
-      ?? DEFAULT_TEMPERATURE_CENTIDEGREES
-    : centidegrees(coolingSetpoint);
-  let projectedHeatingSetpoint = heatingSetpoint === undefined
-    ? numberOrUndefined(previousThermostat.occupiedHeatingSetpoint)
-      ?? DEFAULT_TEMPERATURE_CENTIDEGREES
-    : centidegrees(heatingSetpoint);
-  if (projectedHeatingSetpoint > projectedCoolingSetpoint) {
-    if (heatingSetpoint !== undefined && coolingSetpoint === undefined) {
-      projectedCoolingSetpoint = projectedHeatingSetpoint;
-    } else {
-      projectedHeatingSetpoint = projectedCoolingSetpoint;
+  const activeManualSetpoint = (state.mode === 'cool' || state.mode === 'heat')
+    ? state.targetTemperatureCelsius
+    : undefined;
+  let projectedCoolingSetpoint: number;
+  let projectedHeatingSetpoint: number;
+  if (activeManualSetpoint !== undefined) {
+    // The WAVE owns independent Cool and Heat profiles, while Apple Home
+    // presents one active target for this manual-only Matter thermostat.
+    // Mirror the confirmed active profile into both constrained Matter
+    // attributes; never collapse or copy the inactive WAVE profile itself.
+    projectedCoolingSetpoint = centidegrees(activeManualSetpoint);
+    projectedHeatingSetpoint = projectedCoolingSetpoint;
+  } else {
+    projectedCoolingSetpoint = coolingSetpoint === undefined
+      ? numberOrUndefined(previousThermostat.occupiedCoolingSetpoint)
+        ?? DEFAULT_TEMPERATURE_CENTIDEGREES
+      : centidegrees(coolingSetpoint);
+    projectedHeatingSetpoint = heatingSetpoint === undefined
+      ? numberOrUndefined(previousThermostat.occupiedHeatingSetpoint)
+        ?? DEFAULT_TEMPERATURE_CENTIDEGREES
+      : centidegrees(heatingSetpoint);
+    if (projectedHeatingSetpoint > projectedCoolingSetpoint) {
+      if (heatingSetpoint !== undefined && coolingSetpoint === undefined) {
+        projectedCoolingSetpoint = projectedHeatingSetpoint;
+      } else {
+        projectedHeatingSetpoint = projectedCoolingSetpoint;
+      }
     }
   }
   const airflow = normalizedAirflow(state.airflowSpeed)

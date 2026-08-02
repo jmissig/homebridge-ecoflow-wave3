@@ -397,6 +397,20 @@ describe('WAVE 3 Matter accessory', () => {
         };
       }).createMatterControl();
 
+      await waitUntil(
+        () => endpoint.state.bridgedDeviceBasicInformation.softwareVersionString === '1.1.0.104',
+        'initial runtime firmware metadata',
+      );
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        firmwareVersions: { pd: '1.1.0.105' },
+      });
+      await waitUntil(
+        () => endpoint.state.bridgedDeviceBasicInformation.softwareVersionString === '1.1.0.105',
+        'updated runtime firmware metadata',
+      );
+      controller.setSnapshot(onlineSnapshot());
+
       await endpoint.act('turn off', agent => agent.onOff.off());
       await endpoint.act('turn on', agent => agent.onOff.on());
       const powerBeforeRapidToggle = controller.commands.length;
@@ -613,38 +627,44 @@ describe('WAVE 3 Matter accessory', () => {
         { type: 'power', on: true },
       ]);
 
-      const airflowBeforeFanMode = controller.commands.filter(
-        command => command.type === 'airflowSpeed',
-      ).length;
-      await endpoint.set({ fanControl: { fanMode: 1 } });
-      await waitUntil(
-        () => controller.snapshot.state.airflowSpeed === 20,
-        'fan mode command',
-      );
-      assert.equal(
-        controller.commands.filter(command => command.type === 'airflowSpeed').length,
-        airflowBeforeFanMode + 1,
-      );
-      assert.deepEqual(controller.commands.at(-1), { type: 'airflowSpeed', speed: 20 });
+      for (const [fanMode, speed] of [[1, 20], [2, 60], [3, 100]] as const) {
+        const before = controller.commands.filter(command => command.type === 'airflowSpeed').length;
+        await endpoint.set({ fanControl: { fanMode } });
+        await waitUntil(
+          () => controller.snapshot.state.airflowSpeed === speed,
+          `fan mode ${fanMode} command`,
+        );
+        assert.equal(
+          controller.commands.filter(command => command.type === 'airflowSpeed').length,
+          before + 1,
+        );
+        assert.deepEqual(controller.commands.at(-1), { type: 'airflowSpeed', speed });
+      }
 
-      const airflowBeforeSpeedSetting = controller.commands.filter(
-        command => command.type === 'airflowSpeed',
-      ).length;
-      await endpoint.set({ fanControl: { speedSetting: 5 } });
-      await waitUntil(
-        () => controller.snapshot.state.airflowSpeed === 100,
-        'fan speed-setting command',
-      );
-      assert.equal(
-        controller.commands.filter(command => command.type === 'airflowSpeed').length,
-        airflowBeforeSpeedSetting + 1,
-      );
-      assert.deepEqual(controller.commands.at(-1), { type: 'airflowSpeed', speed: 100 });
+      for (const [speedSetting, speed] of [[2, 40], [3, 60], [4, 80]] as const) {
+        const before = controller.commands.filter(command => command.type === 'airflowSpeed').length;
+        await endpoint.set({ fanControl: { speedSetting } });
+        await waitUntil(
+          () => controller.snapshot.state.airflowSpeed === speed,
+          `fan speed-setting ${speedSetting} command`,
+        );
+        assert.equal(
+          controller.commands.filter(command => command.type === 'airflowSpeed').length,
+          before + 1,
+        );
+        assert.deepEqual(controller.commands.at(-1), { type: 'airflowSpeed', speed });
+      }
 
-      await assert.rejects(
-        endpoint.set({ fanControl: { percentSetting: 0 } }),
-        /power control to turn off/,
-      );
+      await assert.rejects(endpoint.set({ fanControl: { percentSetting: 0 } }), error => {
+        assert.ok(error instanceof MatterStatus.InvalidInState);
+        assert.match(error.message, /power control to turn off/);
+        return true;
+      });
+      await assert.rejects(endpoint.set({ fanControl: { fanMode: 4 } }), error => {
+        assert.ok(error instanceof MatterStatus.ConstraintError);
+        assert.match(error.message, /Unsupported Matter fan mode/);
+        return true;
+      });
 
       controller.setSnapshot({
         ...onlineSnapshot(),
@@ -759,6 +779,77 @@ describe('WAVE 3 Matter accessory', () => {
         upperCelsius: 21,
       });
 
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: { ...onlineSnapshot().state, mode: 'heat', targetTemperatureCelsius: 22 },
+      });
+      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat);
+      await endpoint.act('raise active heat target', agent => agent.thermostat.setpointRaiseLower({
+        mode: 0,
+        amount: 10,
+      }));
+      assert.deepEqual(controller.commands.at(-1), { type: 'targetTemperature', celsius: 23 });
+      await assert.rejects(
+        async () => endpoint.act(
+          'reject inactive cooling adjustment',
+          agent => agent.thermostat.setpointRaiseLower({ mode: 1, amount: 10 }),
+        ),
+        error => {
+          assert.ok(error instanceof MatterStatus.InvalidInState);
+          return true;
+        },
+      );
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: { ...onlineSnapshot().state, mode: 'cool', targetTemperatureCelsius: 22 },
+      });
+      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool);
+      await endpoint.act('raise active cool target', agent => agent.thermostat.setpointRaiseLower({
+        mode: 1,
+        amount: 10,
+      }));
+      assert.deepEqual(controller.commands.at(-1), { type: 'targetTemperature', celsius: 23 });
+      await assert.rejects(
+        async () => endpoint.act(
+          'reject inactive heating adjustment',
+          agent => agent.thermostat.setpointRaiseLower({ mode: 0, amount: 10 }),
+        ),
+        error => {
+          assert.ok(error instanceof MatterStatus.InvalidInState);
+          return true;
+        },
+      );
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: { ...onlineSnapshot().state, mode: 'fan' },
+      });
+      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.fan);
+      await assert.rejects(
+        async () => endpoint.act(
+          'reject inactive fan-mode setpoint adjustment',
+          agent => agent.thermostat.setpointRaiseLower({ mode: 0, amount: 10 }),
+        ),
+        error => {
+          assert.ok(error instanceof MatterStatus.InvalidInState);
+          return true;
+        },
+      );
+
+      controller.setSnapshot(onlineSnapshot());
+      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      await assert.rejects(
+        async () => endpoint.act(
+          'reject invalid setpoint-adjustment mode',
+          agent => agent.thermostat.setpointRaiseLower({ mode: 99, amount: 10 }),
+        ),
+        error => {
+          assert.ok(error instanceof MatterStatus.InvalidInState);
+          return true;
+        },
+      );
+
       for (const [reason, StatusType] of [
         ['timeout', MatterStatus.Timeout],
         ['acknowledgementRejected', MatterStatus.Failure],
@@ -776,6 +867,24 @@ describe('WAVE 3 Matter accessory', () => {
           },
         );
       }
+
+      const interruptedSetpoint = controller.deferNextFailure();
+      const setpointDuringReconnect = endpoint.act(
+        'setpoint adjustment interrupted by reconnect',
+        agent => agent.thermostat.setpointRaiseLower({ mode: 2, amount: 10 }),
+      );
+      await interruptedSetpoint.started;
+      controller.setSnapshot({
+        ...controller.snapshot,
+        availability: 'reconnecting',
+      });
+      interruptedSetpoint.fail('disconnected');
+      await assert.rejects(async () => setpointDuringReconnect, error => {
+        assert.ok(error instanceof MatterStatus.InvalidInState);
+        return true;
+      });
+      controller.setSnapshot(onlineSnapshot());
+      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
 
       for (const [reason, StatusType, message] of [
         ['publicationFailed', MatterStatus.Failure, /cloud did not accept/],
@@ -940,7 +1049,27 @@ describe('WAVE 3 Matter accessory', () => {
       await binding?.stop();
       await node.close();
     }
-    assert.equal(errors.length >= 13, true);
+    assert.deepEqual(errors, [
+      ...Array<string>(5).fill(
+        'EcoFlow WAVE 3 Matter state update failed: Matter state update was not confirmed by Homebridge',
+      ),
+      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Cooling setpoint is not active',
+      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
+      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
+      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Requested setpoint adjustment is not active',
+      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: EcoFlow WAVE 3 did not confirm the command',
+      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: EcoFlow WAVE 3 rejected the command',
+      'EcoFlow WAVE 3 Matter setpoint adjustment command failed: EcoFlow WAVE 3 is not currently controllable',
+      'EcoFlow WAVE 3 Matter power command failed: EcoFlow cloud did not accept the command',
+      'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 rejected the command',
+      'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 did not confirm the command',
+      ...Array<string>(5).fill(
+        'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 is not currently controllable',
+      ),
+      'EcoFlow WAVE 3 Matter system mode command failed: EcoFlow WAVE 3 is not currently controllable',
+      'EcoFlow WAVE 3 Matter fan speed command failed: EcoFlow WAVE 3 is not currently controllable',
+      'EcoFlow WAVE 3 Matter system mode command failed: EcoFlow WAVE 3 did not confirm the command',
+    ]);
     assert.equal(errors.some(message => /cloud did not accept the command/.test(message)), true);
     assert.equal(errors.some(message => /rejected the command/.test(message)), true);
     assert.equal(errors.some(message => /did not confirm the command/.test(message)), true);
@@ -1138,7 +1267,7 @@ describe('WAVE 3 Matter accessory', () => {
     assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
   });
 
-  it('projects partial startup telemetry without inventing authoritative climate state', async () => {
+  it('ignores stale partial startup telemetry until authoritative state arrives', async () => {
     const harness = matterHarness();
     const controller = fakeController(offlineSnapshot());
     const accessory = createWave3MatterAccessory(
@@ -1155,25 +1284,12 @@ describe('WAVE 3 Matter accessory', () => {
     );
 
     controller.emit({
-      availability: 'online',
+      availability: 'stale',
       state: { ambientHumidityPercent: 62 },
       runtimeTemperatures: {},
     });
     await drainMicrotasks();
-    assert.equal(
-      harness.stateUpdates.find(update => update.cluster === 'onOff')?.attributes.onOff,
-      false,
-    );
-    assert.equal(
-      harness.stateUpdates.find(update => update.cluster === 'fanControl')?.attributes.percentSetting,
-      0,
-    );
-    assert.equal(
-      harness.stateUpdates.find(
-        update => update.cluster === 'relativeHumidityMeasurement',
-      )?.attributes.measuredValue,
-      6_200,
-    );
+    assert.equal(harness.stateUpdates.length, 0);
 
     controller.emit(onlineSnapshot());
     await drainMicrotasks();

@@ -199,6 +199,45 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(harness.unregistered.length, 1);
     assert.equal(harness.platform.matterAccessories.size, 0);
   });
+
+  it('bounds dropped Matter registration and unregistration dispatches', async () => {
+    const droppedRegistration = deferred();
+    const registering = platformHarness(
+      validConfig(),
+      undefined,
+      true,
+      droppedRegistration,
+      undefined,
+      2,
+    );
+    await registering.signalDidFinishLaunching();
+    await registering.platform.shutdown();
+    assert.equal(registering.sessionStopCount, 1);
+    assert.equal(registering.controllerStopCount, 1);
+    assert.equal(registering.platform.matterAccessories.size, 0);
+    assert.match(registering.logs.error.join('\n'), /registration did not complete/);
+    assert.match(registering.logs.warn.join('\n'), /Stopped waiting.*registration to materialize/);
+
+    const droppedUnregistration = deferred();
+    const unregistering = platformHarness(
+      validConfig(),
+      undefined,
+      true,
+      undefined,
+      droppedUnregistration,
+      2,
+    );
+    unregistering.platform.configureMatterAccessory(cachedMatterAccessory(
+      'Removed WAVE 3',
+      uuidFor('REMOVED9999'),
+      'REMOVED9999',
+      'ambient',
+    ));
+    await unregistering.signalDidFinishLaunching();
+    await unregistering.platform.shutdown();
+    assert.equal(unregistering.sessionCreateCount, 0);
+    assert.match(unregistering.logs.error.join('\n'), /removal did not complete/);
+  });
 });
 
 class FakeCachedAccessory {
@@ -246,6 +285,7 @@ function platformHarness(
   matterEnabled = true,
   registrationGate?: ReturnType<typeof deferred>,
   unregistrationGate?: ReturnType<typeof deferred>,
+  matterOperationPollAttempts = 200,
 ): {
   platform: EcoFlowWave3Platform;
   registered: MatterAccessory[];
@@ -365,6 +405,10 @@ function platformHarness(
     error: (message: string) => logs.error.push(message),
   };
   const dependencies: EcoFlowWave3PlatformDependencies = {
+    matterOperationPollAttempts,
+    waitForMatterOperationPoll: async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+    },
     createSession: () => {
       sessionCreateCount += 1;
       return {

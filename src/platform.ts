@@ -72,6 +72,8 @@ export interface EcoFlowWave3PlatformDependencies {
     device: Wave3DeviceConfig,
     logger: CloudSessionLogger,
   ): MatterAccessoryBinding;
+  matterOperationPollAttempts?: number;
+  waitForMatterOperationPoll?(): Promise<void>;
 }
 
 const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
@@ -356,8 +358,8 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   private async waitForMatterRegistration(
     accessory: MatterAccessory<Wave3MatterAccessoryContext>,
   ): Promise<boolean> {
-    let attempts = 0;
-    while (!this.shutdownStarted) {
+    const maxAttempts = this.dependencies.matterOperationPollAttempts ?? 200;
+    for (let attempts = 0; attempts < maxAttempts && !this.shutdownStarted; attempts += 1) {
       try {
         const onOff = await this.matter!.getAccessoryState(
           accessory.UUID,
@@ -375,18 +377,17 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       } catch {
         // Homebridge reports a missing endpoint while bridged registration is still in flight.
       }
-      attempts += 1;
-      if (attempts === 200) {
+      if (attempts === 199) {
         this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
       }
-      await new Promise<void>(resolve => setTimeout(resolve, 25));
+      await this.waitForMatterOperationPoll();
     }
     return false;
   }
 
   private async waitForMatterUnregistration(uuids: readonly string[]): Promise<boolean> {
-    let attempts = 0;
-    while (true) {
+    const maxAttempts = this.dependencies.matterOperationPollAttempts ?? 200;
+    for (let attempts = 0; attempts < maxAttempts; attempts += 1) {
       const states = await Promise.all(uuids.map(async uuid => {
         try {
           return await this.matter!.getAccessoryState(uuid, this.matter!.clusterNames.OnOff);
@@ -397,19 +398,19 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       if (states.every(state => state === undefined)) {
         return true;
       }
-      attempts += 1;
-      if (attempts === 200) {
+      if (attempts === 199) {
         this.log.warn('Still waiting for Homebridge to finish Matter endpoint removal');
       }
-      await new Promise<void>(resolve => setTimeout(resolve, 25));
+      await this.waitForMatterOperationPoll();
     }
+    return false;
   }
 
   private async cleanupDispatchedRegistration(
     accessory: MatterAccessory<Wave3MatterAccessoryContext>,
   ): Promise<void> {
-    let attempts = 0;
-    while (true) {
+    const maxAttempts = this.dependencies.matterOperationPollAttempts ?? 200;
+    for (let attempts = 0; attempts < maxAttempts; attempts += 1) {
       try {
         if (await this.matter!.getAccessoryState(
           accessory.UUID,
@@ -426,12 +427,20 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       } catch {
         // Keep watching for a dispatched registration that has not materialized yet.
       }
-      attempts += 1;
-      if (attempts === 200) {
+      if (attempts === 199) {
         this.log.warn('Still waiting to clean a dispatched Matter endpoint registration');
       }
-      await new Promise<void>(resolve => setTimeout(resolve, 25));
+      await this.waitForMatterOperationPoll();
     }
+    this.log.warn('Stopped waiting for a dispatched Matter endpoint registration to materialize');
+  }
+
+  private async waitForMatterOperationPoll(): Promise<void> {
+    if (this.dependencies.waitForMatterOperationPoll !== undefined) {
+      await this.dependencies.waitForMatterOperationPoll();
+      return;
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, 25));
   }
 
   private uuidForSerial(serialNumber: string): string {

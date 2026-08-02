@@ -198,6 +198,8 @@ Validate each command in a separate bounded pass. For every item:
 - [ ] Auto / heat-cool mode.
 - [ ] Target temperature in cool mode.
 - [ ] Target temperature in heat mode.
+- [ ] Re-test HomeKit temperature-slider writes after latest-value coalescing;
+  verify rapid movement emits one settled command per threshold.
 - [ ] Automatic lower and upper temperature thresholds.
 - [ ] Fan-only mode.
 - [ ] Five fan-speed levels.

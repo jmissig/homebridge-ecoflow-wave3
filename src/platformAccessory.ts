@@ -52,7 +52,16 @@ interface PendingAirflowWrite {
   }>;
 }
 
-const AIRFLOW_SETTLE_MILLISECONDS = 750;
+type TemperatureThresholdKind = 'cooling' | 'heating';
+
+interface PendingTemperatureWrite {
+  celsius: number;
+  timer?: ReturnType<typeof setTimeout>;
+  waiters: Array<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }>;
+}
 
 /**
  * HomeKit presentation boundary for one EcoFlow WAVE 3.
@@ -64,6 +73,10 @@ export class Wave3PlatformAccessory {
   private readonly detachSnapshot: () => void;
   private writeTail: Promise<void> = Promise.resolve();
   private pendingAirflowWrite?: PendingAirflowWrite;
+  private readonly pendingTemperatureWrites = new Map<
+    TemperatureThresholdKind,
+    PendingTemperatureWrite
+  >();
   private lastTargetState?: number;
   private stopped = false;
 
@@ -127,6 +140,16 @@ export class Wave3PlatformAccessory {
       }
       this.pendingAirflowWrite = undefined;
     }
+    const error = this.communicationError();
+    for (const pending of this.pendingTemperatureWrites.values()) {
+      if (pending.timer !== undefined) {
+        clearTimeout(pending.timer);
+      }
+      for (const waiter of pending.waiters) {
+        waiter.reject(error);
+      }
+    }
+    this.pendingTemperatureWrites.clear();
     this.detachSnapshot();
   }
 
@@ -151,15 +174,15 @@ export class Wave3PlatformAccessory {
       'targetState',
       value => targetStateCommand(Number(value), characteristic.TargetHeaterCoolerState),
     );
-    this.bind(
+    this.bindTemperatureThreshold(
       characteristic.CoolingThresholdTemperature,
       'coolingThreshold',
-      value => thresholdCommand('cooling', Number(value), this.snapshot.state),
+      'cooling',
     );
-    this.bind(
+    this.bindTemperatureThreshold(
       characteristic.HeatingThresholdTemperature,
       'heatingThreshold',
-      value => thresholdCommand('heating', Number(value), this.snapshot.state),
+      'heating',
     );
     this.bindAirflowSpeed(characteristic.RotationSpeed);
     this.bindReadOnly(characteristic.CurrentHeaterCoolerState, 'currentState');
@@ -216,6 +239,93 @@ export class Wave3PlatformAccessory {
       .onSet(value => this.scheduleAirflowWrite(value));
   }
 
+  private bindTemperatureThreshold(
+    characteristicType: CharacteristicType,
+    key: 'coolingThreshold' | 'heatingThreshold',
+    kind: TemperatureThresholdKind,
+  ): void {
+    this.heaterCoolerService
+      .getCharacteristic(characteristicType)
+      .onGet(() => this.readCharacteristic(key))
+      .onSet(value => this.scheduleTemperatureWrite(kind, value));
+  }
+
+  private scheduleTemperatureWrite(
+    kind: TemperatureThresholdKind,
+    value: CharacteristicValue,
+  ): Promise<void> {
+    this.requireOnline();
+    const celsius = Number(value);
+    try {
+      validateTemperature(celsius);
+    } catch {
+      return Promise.reject(this.invalidValueError());
+    }
+
+    let pending = this.pendingTemperatureWrites.get(kind);
+    if (pending !== undefined) {
+      if (pending.timer !== undefined) {
+        clearTimeout(pending.timer);
+      }
+      this.platform.log.info(
+        `EcoFlow diagnostics: coalescing pending HomeKit ${kind} temperature write to ${celsius}°C`,
+      );
+      pending.celsius = celsius;
+    } else {
+      this.platform.log.info(
+        `EcoFlow diagnostics: scheduling HomeKit ${kind} temperature write at ${celsius}°C `
+        + `after ${this.platform.homeKitWriteSettleMilliseconds}ms settle window`,
+      );
+      pending = { celsius, waiters: [] };
+      this.pendingTemperatureWrites.set(kind, pending);
+    }
+
+    pending.timer = setTimeout(() => {
+      this.flushTemperatureWrite(kind, pending);
+    }, this.platform.homeKitWriteSettleMilliseconds);
+    return new Promise<void>((resolve, reject) => {
+      pending.waiters.push({ resolve, reject });
+    });
+  }
+
+  private flushTemperatureWrite(
+    kind: TemperatureThresholdKind,
+    pending: PendingTemperatureWrite,
+  ): void {
+    if (this.pendingTemperatureWrites.get(kind) !== pending) {
+      return;
+    }
+    this.pendingTemperatureWrites.delete(kind);
+
+    const mapped = this.mapSnapshot(this.snapshot);
+    const confirmed = kind === 'cooling'
+      ? mapped.coolingThreshold
+      : mapped.heatingThreshold;
+    const alreadyConfirmed = this.snapshot.availability === 'online'
+      && confirmed === pending.celsius;
+    this.platform.log.info(
+      alreadyConfirmed
+        ? `EcoFlow diagnostics: suppressing HomeKit ${kind} temperature write because ${pending.celsius}°C is already confirmed`
+        : `EcoFlow diagnostics: dispatching settled HomeKit ${kind} temperature write at ${pending.celsius}°C`,
+    );
+    const execution = alreadyConfirmed
+      ? Promise.resolve()
+      : this.enqueueWrite(() => thresholdCommand(kind, pending.celsius, this.snapshot.state));
+    void execution.then(
+      () => {
+        this.reconcileSnapshotAfterWrite();
+        for (const waiter of pending.waiters) {
+          waiter.resolve();
+        }
+      },
+      error => {
+        for (const waiter of pending.waiters) {
+          waiter.reject(error);
+        }
+      },
+    );
+  }
+
   private scheduleAirflowWrite(value: CharacteristicValue): Promise<void> {
     this.requireOnline();
     let speed: PendingAirflowWrite['speed'];
@@ -236,7 +346,7 @@ export class Wave3PlatformAccessory {
     } else {
       this.platform.log.info(
         `EcoFlow diagnostics: scheduling HomeKit airflow write at ${speed}% `
-        + `after ${AIRFLOW_SETTLE_MILLISECONDS}ms settle window`,
+        + `after ${this.platform.homeKitWriteSettleMilliseconds}ms settle window`,
       );
       this.pendingAirflowWrite = {
         speed,
@@ -247,7 +357,7 @@ export class Wave3PlatformAccessory {
     const pending = this.pendingAirflowWrite;
     pending.timer = setTimeout(() => {
       this.flushAirflowWrite(pending);
-    }, AIRFLOW_SETTLE_MILLISECONDS);
+    }, this.platform.homeKitWriteSettleMilliseconds);
 
     return new Promise<void>((resolve, reject) => {
       pending.waiters.push({ resolve, reject });
@@ -272,6 +382,7 @@ export class Wave3PlatformAccessory {
       : this.enqueueWrite(() => ({ type: 'airflowSpeed', speed: pending.speed }));
     void execution.then(
       () => {
+        this.reconcileSnapshotAfterWrite();
         for (const waiter of pending.waiters) {
           waiter.resolve();
         }
@@ -291,6 +402,14 @@ export class Wave3PlatformAccessory {
       throw this.communicationError();
     }
     return value;
+  }
+
+  private reconcileSnapshotAfterWrite(): void {
+    setImmediate(() => {
+      if (!this.stopped) {
+        this.pushSnapshot(this.snapshot);
+      }
+    });
   }
 
   private enqueueWrite(command: () => Wave3Command): Promise<void> {

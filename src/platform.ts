@@ -83,6 +83,7 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
 export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
   public readonly Characteristic: typeof Characteristic;
+  public readonly homeKitWriteSettleMilliseconds = 750;
   public readonly accessories = new Map<string, PlatformAccessory>();
 
   private readonly duplicateAccessories: PlatformAccessory[] = [];

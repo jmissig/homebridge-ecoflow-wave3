@@ -182,13 +182,16 @@ describe('WAVE 3 HomeKit accessory', () => {
       Characteristic.CoolingThresholdTemperature,
       26,
     );
-    await Promise.resolve();
+    await afterTimeout();
+    assert.deepEqual(controller.commands.slice(-1), [
+      { type: 'automaticTemperatureRange', lowerCelsius: 18, upperCelsius: 26 },
+    ]);
     const heating = setCharacteristic(
       service,
       Characteristic.HeatingThresholdTemperature,
       19,
     );
-    await Promise.resolve();
+    await afterTimeout();
     assert.deepEqual(controller.commands.slice(-1), [
       { type: 'automaticTemperatureRange', lowerCelsius: 18, upperCelsius: 26 },
     ]);
@@ -266,6 +269,40 @@ describe('WAVE 3 HomeKit accessory', () => {
     assert.equal(controller.commands.length, 1);
   });
 
+  it('coalesces rapid temperature slider writes and suppresses confirmed duplicates', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      targetTemperatureCelsius: 20,
+    }));
+    const accessory = new FakeAccessory('Office WAVE 3', 'uuid-temperature', 'SERIALTEMP');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+    const service = accessory.heaterCooler!;
+
+    const writes = [21, 22, 21].map(celsius => setCharacteristic(
+      service,
+      Characteristic.CoolingThresholdTemperature,
+      celsius,
+      true,
+    ));
+    await Promise.all(writes);
+    assert.deepEqual(controller.commands, [
+      { type: 'targetTemperature', celsius: 21 },
+    ]);
+
+    await setCharacteristic(
+      service,
+      Characteristic.CoolingThresholdTemperature,
+      21,
+      true,
+    );
+    assert.equal(controller.commands.length, 1);
+  });
+
   it('advertises upstream-backed WAVE temperature and airflow constraints', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
@@ -332,8 +369,7 @@ describe('WAVE 3 HomeKit accessory', () => {
       true,
     );
     assert.equal(invalidAirflow, HAPStatus.INVALID_VALUE_IN_REQUEST);
-    assert.deepEqual(controller.commands.slice(-2), [
-      { type: 'targetTemperature', celsius: 30 },
+    assert.deepEqual(controller.commands.slice(-1), [
       { type: 'targetTemperature', celsius: 20.8 },
     ]);
   });
@@ -708,6 +744,7 @@ function platformForAccessoryTests(): EcoFlowWave3Platform {
   return {
     Service,
     Characteristic,
+    homeKitWriteSettleMilliseconds: 1,
     log: {
       info: () => undefined,
     },
@@ -808,5 +845,11 @@ function deferred(): {
 async function afterImmediate(): Promise<void> {
   await new Promise<void>(resolve => {
     setImmediate(resolve);
+  });
+}
+
+async function afterTimeout(): Promise<void> {
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, 5);
   });
 }

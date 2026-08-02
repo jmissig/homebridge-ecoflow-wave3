@@ -280,6 +280,32 @@ and confirm Matter state does not rubber-band.
 **Phase M7 exit:** every exposed Matter control has repeatable household-device
 evidence and stable Apple Home behavior.
 
+## Phase M7.5: Architecture hardening
+
+Implement the five bounded refactors in the
+[architecture hardening plan](docs/architecture-refactor-plan.md). Preserve the
+confirmed product architecture and land every step independently green.
+
+- [ ] Move controller-session and Matter-context contracts inward; remove the
+  type-only reverse dependencies.
+- [ ] Extract a pure WAVE semantic intent planner while keeping Apple Home
+  staging and transaction timing in the Matter adapter.
+- [ ] Decode each routed inbound payload once and pass typed normalized events
+  to the controller.
+- [ ] Track field/category-scoped control authority so sensor/runtime deltas do
+  not renew power/mode freshness.
+- [ ] Decompose the Matter adapter into behavior construction, registry,
+  projection, write coordination, cache policy, and binding seams without
+  changing endpoint identity or behavior.
+- [ ] Run the full automated/package gates after every step and repeat the
+  documented Home/app hardware smoke path after the freshness change and at
+  tranche completion.
+  [told: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533552019430965520)
+
+**Phase M7.5 exit:** the five ownership/dependency improvements are complete,
+all verification remains green, and hardware evidence confirms that the
+field-scoped freshness policy introduces no Home availability regression.
+
 ## Phase M8: Matter-only release preparation
 
 - [x] Update the supported-controls list to distinguish tested, partially

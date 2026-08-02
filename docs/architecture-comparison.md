@@ -306,6 +306,9 @@ replace the state model.
 
 ## Recommended follow-ups
 
+The ordered implementation and verification sequence is tracked in the
+[architecture hardening plan](architecture-refactor-plan.md).
+
 ### Before first release
 
 1. **Separate control-authority freshness from sensor/runtime freshness.** A

@@ -131,6 +131,33 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     );
   });
 
+  it('waits for same-UUID removal before registering a changed endpoint shape', async () => {
+    const config = validConfig();
+    config.devices = [{
+      name: 'Bedroom WAVE 3',
+      serialNumber: 'FIRST1234',
+      currentTemperatureSource: 'outlet',
+    }];
+    const unregistrationGate = deferred();
+    const harness = platformHarness(config, undefined, true, undefined, unregistrationGate);
+    const cached = cachedMatterAccessory(
+      'Bedroom WAVE 3',
+      uuidFor('FIRST1234'),
+      'FIRST1234',
+      'ambient',
+    );
+    harness.platform.configureMatterAccessory(cached);
+
+    const launch = harness.signalDidFinishLaunching();
+    await waitUntil(() => harness.events.includes('unregister'));
+    assert.deepEqual(harness.events, ['unregister']);
+
+    unregistrationGate.resolve();
+    await launch;
+    assert.deepEqual(harness.events, ['unregister', 'register', 'session:start']);
+    assert.equal(harness.registered.length, 1);
+  });
+
   it('makes shutdown terminal and joins launch work already in progress', async () => {
     const gate = deferred();
     const harness = platformHarness(validConfig(), gate);
@@ -168,6 +195,9 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(harness.controllerStopCount, 1);
     assert.equal(harness.bindingStopCount, 0);
     assert.doesNotMatch(harness.events.join(','), /session:start/);
+    assert.deepEqual(harness.events, ['register', 'session:stop', 'unregister']);
+    assert.equal(harness.unregistered.length, 1);
+    assert.equal(harness.platform.matterAccessories.size, 0);
   });
 });
 
@@ -215,6 +245,7 @@ function platformHarness(
   startGate?: ReturnType<typeof deferred>,
   matterEnabled = true,
   registrationGate?: ReturnType<typeof deferred>,
+  unregistrationGate?: ReturnType<typeof deferred>,
 ): {
   platform: EcoFlowWave3Platform;
   registered: MatterAccessory[];
@@ -280,6 +311,7 @@ function platformHarness(
           events.push('register');
           if (registrationGate === undefined) {
             registered.push(...accessories);
+            registrationReady = true;
           } else {
             void registrationGate.promise.then(() => {
               registered.push(...accessories);
@@ -297,7 +329,15 @@ function platformHarness(
           accessories: MatterAccessory[],
         ) => {
           events.push('unregister');
-          unregistered.push(...accessories);
+          const applyUnregistration = () => {
+            unregistered.push(...accessories);
+            registrationReady = false;
+          };
+          if (unregistrationGate === undefined) {
+            applyUnregistration();
+          } else {
+            void unregistrationGate.promise.then(applyUnregistration);
+          }
         },
         updateAccessoryState: async () => undefined,
         getAccessoryState: async () => registrationReady ? { onOff: false } : undefined,

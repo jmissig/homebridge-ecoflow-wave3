@@ -86,6 +86,10 @@ dispatch acknowledgements only: it polls `getAccessoryState` for endpoint
 readiness after registration and reads every emitted attribute set back before
 considering a snapshot update complete. Shutdown stops launch from creating
 additional bindings and drains this confirmed-update chain before returning.
+Same-UUID shape changes also wait for confirmed endpoint disappearance before
+dispatching their replacement registration. Registration readiness has no
+success timeout: the cloud session remains stopped until the endpoint exists,
+while shutdown performs bounded cleanup for a registration already dispatched.
 
 Homebridge 2.2.1 also caches `MatterAccessory.firmwareRevision` without mapping
 it onto the live `BridgedDeviceBasicInformation` server. The plugin therefore

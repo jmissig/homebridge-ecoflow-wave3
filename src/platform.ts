@@ -227,6 +227,15 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         PLATFORM_NAME,
         staleMatterAccessories,
       );
+      const removed = await this.waitForMatterUnregistration(
+        staleMatterAccessories.map(accessory => accessory.UUID),
+      );
+      if (!removed) {
+        if (!this.shutdownStarted) {
+          this.log.error('EcoFlow WAVE 3 stale Matter endpoint removal did not complete');
+        }
+        return;
+      }
       for (const accessory of staleMatterAccessories) {
         if (this.matterAccessories.get(accessory.UUID) === accessory) {
           this.matterAccessories.delete(accessory.UUID);
@@ -258,6 +267,13 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
           [cachedAccessory],
         );
         this.matterAccessories.delete(uuid);
+        const removed = await this.waitForMatterUnregistration([uuid]);
+        if (!removed) {
+          if (!this.shutdownStarted) {
+            this.log.error('EcoFlow WAVE 3 Matter endpoint replacement could not remove the old shape');
+          }
+          break;
+        }
         if (this.shutdownStarted) {
           break;
         }
@@ -273,13 +289,15 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       );
       this.matterAccessories.set(uuid, accessory);
       await this.matter!.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-      const registered = await this.waitForMatterRegistration(uuid);
+      const registered = await this.waitForMatterRegistration(accessory);
       if (this.shutdownStarted || !registered) {
         controller.stop();
+        this.matterAccessories.delete(uuid);
+        await this.cleanupDispatchedRegistration(accessory);
         if (!this.shutdownStarted) {
           this.log.error('EcoFlow WAVE 3 Matter endpoint registration did not complete');
         }
-        continue;
+        break;
       }
       if (cachedAccessory === undefined || sourceChanged) {
         this.log.info('Registered a configured Matter WAVE 3 accessory');
@@ -335,18 +353,81 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     await this.sessionStopPromise;
   }
 
-  private async waitForMatterRegistration(uuid: string): Promise<boolean> {
-    for (let attempt = 0; attempt < 200 && !this.shutdownStarted; attempt += 1) {
+  private async waitForMatterRegistration(
+    accessory: MatterAccessory<Wave3MatterAccessoryContext>,
+  ): Promise<boolean> {
+    let attempts = 0;
+    while (!this.shutdownStarted) {
       try {
-        if (await this.matter!.getAccessoryState(uuid, this.matter!.clusterNames.OnOff) !== undefined) {
+        const onOff = await this.matter!.getAccessoryState(
+          accessory.UUID,
+          this.matter!.clusterNames.OnOff,
+        );
+        const humidity = accessory.context.currentTemperatureSource === 'ambient'
+          ? await this.matter!.getAccessoryState(
+            accessory.UUID,
+            this.matter!.clusterNames.RelativeHumidityMeasurement,
+          )
+          : {};
+        if (onOff !== undefined && humidity !== undefined) {
           return true;
         }
       } catch {
         // Homebridge reports a missing endpoint while bridged registration is still in flight.
       }
+      attempts += 1;
+      if (attempts === 200) {
+        this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
+      }
       await new Promise<void>(resolve => setTimeout(resolve, 25));
     }
     return false;
+  }
+
+  private async waitForMatterUnregistration(uuids: readonly string[]): Promise<boolean> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const states = await Promise.all(uuids.map(async uuid => {
+        try {
+          return await this.matter!.getAccessoryState(uuid, this.matter!.clusterNames.OnOff);
+        } catch {
+          return undefined;
+        }
+      }));
+      if (states.every(state => state === undefined)) {
+        return true;
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, 25));
+    }
+    return false;
+  }
+
+  private async cleanupDispatchedRegistration(
+    accessory: MatterAccessory<Wave3MatterAccessoryContext>,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      try {
+        if (await this.matter!.getAccessoryState(
+          accessory.UUID,
+          this.matter!.clusterNames.OnOff,
+        ) !== undefined) {
+          await this.matter!.unregisterPlatformAccessories(
+            PLUGIN_NAME,
+            PLATFORM_NAME,
+            [accessory],
+          );
+          await this.waitForMatterUnregistration([accessory.UUID]);
+          return;
+        }
+      } catch {
+        // Keep watching for a dispatched registration that has not materialized yet.
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, 25));
+    }
+    await this.matter!.unregisterPlatformAccessories(
+      PLUGIN_NAME,
+      PLATFORM_NAME,
+      [accessory],
+    );
   }
 
   private uuidForSerial(serialNumber: string): string {

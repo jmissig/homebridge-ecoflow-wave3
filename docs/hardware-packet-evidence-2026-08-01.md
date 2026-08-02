@@ -129,6 +129,10 @@ stable account identifiers.
   climate slice, including payload field numbers `5`, `17`, `18`, `53`, `61`,
   `96`, `126`, `133`, `134`, `135`, `158`, `195`, `242`, `248`, `254`, and
   `255`.
+- Later sparse display packets repeatedly carried field `504` alone as
+  fixed32 float `0` or `33`. Other sparse packets carried field `270` alone as
+  varint `0` or `100`. Neither field correlated reliably enough with a
+  narrated climate action to assign a meaning.
 
 **Inference**
 
@@ -138,6 +142,12 @@ stable account identifiers.
   pinned upstream schema and the stable value `50`.
 - These fields are useful diagnostics but are not required for the first
   HomeKit climate surface.
+- Fields `270` and `504` are device activity, not authoritative climate-state
+  evidence. Until their meanings are established, they must not establish a
+  new connection generation, refresh freshness, or confirm a command merely
+  because their packets arrived.
+
+[Source: household Homebridge diagnostics at `/Users/julian/.homebridge/homebridge.log` · observed 2026-08-02]
 
 ## Runtime packets — `cmd_func=254`, `cmd_id=22`
 
@@ -170,14 +180,26 @@ stable account identifiers.
   acknowledgements and later matching display state.
 - HomeKit-originated power-on traffic received a positive action-ID `4`
   acknowledgement with `mainPower=true`.
-- Other official-app traffic produced action IDs `6`, `7`, `135`, `136`, and
-  `172`. Several positive replies shared the same envelope sequence while
-  acknowledging different action IDs/fields. Their exact semantics are not
-  established, but the traffic proves that one logical compound operation can
-  yield acknowledgement fragments rather than one all-fields reply.
+- Home-originated power-off traffic received a positive action-ID `172`
+  acknowledgement with `systemPaused=true`, followed by `dev_sleep_state=1`.
+- Other official-app traffic produced action IDs `6`, `7`, `135`, and `136`.
+  Action `6` repeatedly carried a five-byte varint equal to the current Unix
+  timestamp. Action `7` repeatedly carried unsigned
+  `18446744073709550916`, whose signed 64-bit interpretation is `-700` and
+  matches the household's PDT UTC-offset notation. Actions `135` and `136`
+  carried no decoded values. Together these look like an official-app
+  clock/time-zone synchronization bundle, but the exact field names and the
+  roles of `135` and `136` remain unverified.
+- Several positive replies shared the same envelope sequence while
+  acknowledging different action IDs/fields. Their exact transaction
+  grouping is not established, but the traffic proves that one logical
+  compound operation can yield acknowledgement fragments rather than one
+  all-fields reply.
 - A `set_reply` with `cmd_id=20` was observed during official-app activity. It
   is not the `cmd_id=18` configuration acknowledgement implemented by the
   plugin and was safely ignored.
+
+[Source: household Homebridge diagnostics at `/Users/julian/.homebridge/homebridge.log` · observed 2026-08-02]
 
 ## HomeKit command behavior
 
@@ -234,6 +256,10 @@ stable account identifiers.
   initial refresh; explicit mode `0` is sufficient to establish off.
 - Randomize the first command sequence in the evidenced `10–999` range after
   each plugin restart, then advance sequentially.
+- Household traffic showed plugin command sequences `149–153` interleaved with
+  official-app sequences `20–40`. Sequence equality is therefore useful only
+  inside the pending command window and is never sufficient by itself;
+  acknowledgement values must also relate to the command.
 - Ignore a same-sequence acknowledgement when its echoed fields conflict with
   or are unrelated to the plugin's pending command. Accumulate positive
   matching fragments for composite commands, then require a later matching

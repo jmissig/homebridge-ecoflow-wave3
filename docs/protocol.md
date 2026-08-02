@@ -360,6 +360,13 @@ publishing a command.
   acknowledgement packets. Matching fragments are accumulated; at least one
   positive, command-related fragment is required, but a later authoritative
   display upload may confirm composite fields omitted from acknowledgements.
+- Household traffic mapped acknowledgement action IDs `4`, `155`, `156`, and
+  `172` to main power, airflow, target temperature, and system pause
+  respectively. Official-app action IDs `6`, `7`, `135`, and `136` appear to
+  form a separate clock/time-zone synchronization bundle: `6` carried the
+  current Unix time and `7` carried a signed-PDT-looking `-700`, while `135`
+  and `136` remain unknown. They are foreign configuration evidence, not
+  climate-command confirmation.
 - When Apple Home stages thermostat values while the appliance is off, the
   subsequent power-on write may combine `cfg_main_power`, mode, and either the
   single-mode target or both automatic thresholds. The controller must confirm
@@ -530,7 +537,12 @@ publishing a command.
 
 - No private device-list endpoint is evidenced by the pinned upstream code.
 - The exact semantics of `actionId`, `configOk`, and acknowledgement sequence
-  correlation remain unverified.
+  correlation remain unverified beyond the mapped climate fields. The
+  official-app time/config action IDs `6`, `7`, `135`, and `136` remain partly
+  inferred.
+- Sparse display fields `270` (observed `0`/`100`) and `504` (observed
+  `0`/`33`) remain unidentified and deliberately do not count as climate
+  state, freshness, or command-confirmation evidence.
 - Upstream discussion reports that some WAVE 3 installations stop accepting
   commands after an extended session. The cause and safe recovery behavior
   remain unverified.

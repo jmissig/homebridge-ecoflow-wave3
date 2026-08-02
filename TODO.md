@@ -146,9 +146,18 @@ state, and temperature-source variants.
   coalesce a Matter thermostat transaction's companion setpoint changes into
   one confirmed range command, and invalidate queued fan work immediately when
   power-off is requested even if a Homebridge state update is still pending.
-- [x] Stage Apple Home mode and setpoint writes made while the WAVE is off, then
-  apply power, mode, and the selected target/range in one confirmed startup
-  command instead of starting with the WAVE's saved target.
+- [x] Stage Apple Home mode and setpoint writes made while the WAVE is off,
+  wake and confirm power first, then apply the destination mode's complete
+  saved or staged target/range profile in a second confirmed command. A single
+  composite wake write still allowed hardware to resume Heat at its saved
+  `26 °C` target.
+- [x] Retain authoritative saved parameters per WAVE mode and use the
+  destination profile—not Matter's inactive companion setpoint—when planning
+  Cool, Heat, and Auto transitions.
+- [x] Enforce the EcoFlow app's observed `4 °C` minimum Auto range in the WAVE
+  intent planner. Keep Matter's global deadband disabled because it also
+  constrains inactive companion setpoints and would narrow the real `16–30 °C`
+  single-mode range.
 - [x] Translate controller outcomes into standard Matter interaction errors
   for awaited Matter commands (`OnOff` and `SetpointRaiseLower`). Reject
   invalid or unavailable thermostat/fan attribute writes synchronously. The
@@ -246,7 +255,8 @@ and confirm Matter state does not rubber-band.
 - [x] Power on and power off.
 - [ ] Cool mode and cooling setpoint.
 - [ ] Heat mode and heating setpoint.
-- [ ] Auto mode and both thresholds.
+- [ ] Repeat Auto mode and both-threshold acceptance after the saved-profile
+  and `4 °C` range planner changes.
 - [ ] Five fan speeds and rapid-slider coalescing.
 - [ ] Fan Only mode.
 - [ ] Dry mode.

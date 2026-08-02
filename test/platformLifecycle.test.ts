@@ -539,6 +539,7 @@ function platformHarness(
         snapshot: {
           availability: 'offline',
           state: {},
+          modeProfiles: {},
           runtimeTemperatures: {},
         } satisfies Wave3ControllerSnapshot,
         onSnapshot: () => () => undefined,

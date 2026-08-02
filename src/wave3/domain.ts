@@ -34,6 +34,11 @@ export interface Wave3ModeParameters {
   targetTemperatureUpperCelsius?: number;
 }
 
+export type Wave3ModeProfiles = Readonly<Partial<Record<
+  Wave3ControllableMode,
+  Readonly<Wave3ModeParameters>
+>>>;
+
 export interface Wave3DisplayUpdate {
   sleepState?: number;
   operatingModeId?: number;
@@ -110,6 +115,7 @@ export type Wave3Availability =
 export interface Wave3ControllerSnapshot {
   availability: Wave3Availability;
   state: Readonly<Wave3State>;
+  modeProfiles: Wave3ModeProfiles;
   runtimeTemperatures: Readonly<Wave3RuntimeTemperatures>;
   firmwareVersions?: Readonly<Wave3FirmwareVersions>;
   updatedAt?: number;

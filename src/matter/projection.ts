@@ -18,6 +18,7 @@ export function clustersForSnapshot(
   const state = snapshot.state;
   const previousThermostat = previous?.thermostat ?? {};
   const previousFan = previous?.fanControl ?? {};
+  const profiles = snapshot.modeProfiles;
   const temperature = currentTemperatureSource === 'ambient'
     ? state.ambientTemperatureCelsius
     : currentTemperatureSource === 'outlet'
@@ -27,12 +28,12 @@ export function clustersForSnapshot(
     ? state.targetTemperatureUpperCelsius
     : state.mode === 'cool'
       ? state.targetTemperatureCelsius
-      : undefined;
+      : profiles.cool?.targetTemperatureCelsius;
   const heatingSetpoint = state.mode === 'auto'
     ? state.targetTemperatureLowerCelsius
     : state.mode === 'heat'
       ? state.targetTemperatureCelsius
-      : undefined;
+      : profiles.heat?.targetTemperatureCelsius;
   let projectedCoolingSetpoint = coolingSetpoint === undefined
     ? numberOrUndefined(previousThermostat.occupiedCoolingSetpoint)
       ?? DEFAULT_TEMPERATURE_CENTIDEGREES
@@ -54,6 +55,7 @@ export function clustersForSnapshot(
   const powered = state.powered
     ?? booleanOrUndefined(previous?.onOff?.onOff)
     ?? false;
+  const projectedSystemMode = context.lastSystemMode ?? MATTER_SYSTEM_MODE.cool;
 
   const clusters: NonNullable<MatterAccessory['clusters']> = {
     ...previous,
@@ -75,9 +77,13 @@ export function clustersForSnapshot(
       minCoolSetpointLimit: 1_600,
       maxCoolSetpointLimit: 3_000,
       absMaxCoolSetpointLimit: 3_000,
+      // Matter applies its deadband globally to inactive companion setpoints,
+      // which would incorrectly narrow WAVE's 16–30 C single-mode range.
+      // Keep the cluster constraint disabled and enforce WAVE's observed 4 C
+      // automatic-mode minimum in the semantic command planner instead.
       minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
-      systemMode: context.lastSystemMode ?? MATTER_SYSTEM_MODE.cool,
+      systemMode: projectedSystemMode,
     },
     fanControl: {
       ...previousFan,

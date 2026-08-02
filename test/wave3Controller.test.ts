@@ -152,6 +152,20 @@ describe('WAVE 3 controller', () => {
       indoorReturnAir: 21,
     }));
     assert.equal(controller.snapshot.state.targetTemperatureCelsius, 23);
+    assert.deepEqual(controller.snapshot.modeProfiles.cool, {
+      targetTemperatureCelsius: 23,
+    });
+    session.emitPacket('property', displayPacket(3, {
+      modeParametersOnly: true,
+      mode: 2,
+      targetTemperature: 26,
+      airflowSpeed: 40,
+    }));
+    assert.deepEqual(controller.snapshot.modeProfiles.heat, {
+      targetTemperatureCelsius: 26,
+      airflowSpeed: 40,
+    });
+    assert.equal(controller.snapshot.state.mode, 'cool');
     assert.equal(controller.snapshot.runtimeTemperatures.indoorReturnAirCelsius, 21);
 
     clock.advance(9);
@@ -159,7 +173,7 @@ describe('WAVE 3 controller', () => {
     clock.advance(1);
     assert.equal(controller.snapshot.availability, 'stale');
 
-    session.emitPacket('property', displayPacket(3, {
+    session.emitPacket('property', displayPacket(4, {
       mode: 1,
       sleepState: 0,
     }));

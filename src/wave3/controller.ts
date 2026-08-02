@@ -18,6 +18,8 @@ import {
   type Wave3DisplayState,
   type Wave3DisplayUpdate,
   type Wave3FirmwareVersions,
+  type Wave3ModeParameters,
+  type Wave3ModeProfiles,
   type Wave3RuntimeTemperatures,
   type Wave3State,
 } from './domain.js';
@@ -118,6 +120,7 @@ export class Wave3Controller {
     this.snapshot = freezeSnapshot({
       availability: availabilityForSession(session.state, false),
       state: {},
+      modeProfiles: {},
       runtimeTemperatures: {},
       firmwareVersions: {},
     });
@@ -574,6 +577,7 @@ export class Wave3Controller {
     this.snapshot = freezeSnapshot({
       availability,
       state: this.displayState?.state ?? {},
+      modeProfiles: modeProfilesForDisplayState(this.displayState),
       runtimeTemperatures: this.runtimeTemperatures,
       firmwareVersions: this.firmwareVersions,
       updatedAt: this.updatedAt,
@@ -928,18 +932,48 @@ function availabilityForSession(
 }
 
 function freezeSnapshot(
-  snapshot: Omit<Wave3ControllerSnapshot, 'state' | 'runtimeTemperatures' | 'firmwareVersions'> & {
+  snapshot: Omit<
+    Wave3ControllerSnapshot,
+    'state' | 'modeProfiles' | 'runtimeTemperatures' | 'firmwareVersions'
+  > & {
     state: Wave3State;
+    modeProfiles: Partial<Record<Exclude<keyof typeof WAVE3_MODE_IDS, 'off'>, Wave3ModeParameters>>;
     runtimeTemperatures: Wave3RuntimeTemperatures;
     firmwareVersions: Wave3FirmwareVersions;
   },
 ): Wave3ControllerSnapshot {
+  const modeProfiles = Object.fromEntries(
+    Object.entries(snapshot.modeProfiles).map(([mode, profile]) => [
+      mode,
+      Object.freeze({ ...profile }),
+    ]),
+  ) as Wave3ModeProfiles;
   return Object.freeze({
     ...snapshot,
     state: Object.freeze({ ...snapshot.state }),
+    modeProfiles: Object.freeze(modeProfiles),
     runtimeTemperatures: Object.freeze({ ...snapshot.runtimeTemperatures }),
     firmwareVersions: Object.freeze({ ...snapshot.firmwareVersions }),
   });
+}
+
+function modeProfilesForDisplayState(
+  displayState: Wave3DisplayState | undefined,
+): Partial<Record<Exclude<keyof typeof WAVE3_MODE_IDS, 'off'>, Wave3ModeParameters>> {
+  if (displayState === undefined) {
+    return {};
+  }
+  const profiles: Partial<Record<
+    Exclude<keyof typeof WAVE3_MODE_IDS, 'off'>,
+    Wave3ModeParameters
+  >> = {};
+  for (const mode of ['cool', 'heat', 'fan', 'dry', 'auto'] as const) {
+    const profile = displayState.modeParameters[WAVE3_MODE_IDS[mode]];
+    if (profile !== undefined) {
+      profiles[mode] = profile;
+    }
+  }
+  return profiles;
 }
 
 function defaultSchedule(callback: () => void, delayMilliseconds: number): () => void {

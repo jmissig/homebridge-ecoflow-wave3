@@ -47,7 +47,10 @@ by Matter.js before a cloud round trip can finish; invalid writes reject
 immediately, while later EcoFlow failures are logged and the accessory returns
 to its last confirmed device state. When Apple Home selects a mode or target
 while the WAVE is off, the plugin stages that thermostat intent and applies
-power, mode, and target together when Home subsequently turns the accessory on.
+it when Home subsequently turns the accessory on. Startup is deliberately
+two-step: first wake and confirm power, then apply and confirm the destination
+mode's saved target or Auto range. Auto ranges are normalized to the WAVE app's
+observed 4°C minimum without narrowing the 16–30°C Cool/Heat range in Matter.
 
 The plugin uses EcoFlow's private, app-facing cloud service. It is not local
 control, requires an internet connection, and may stop working if EcoFlow
@@ -66,8 +69,10 @@ This project distinguishes code coverage from household-device acceptance:
   target, plus switching into Heat with a selected target. The appliance
   obeyed the underlying commands, while acceptance exposed and fixed split
   acknowledgement and delayed-mode-write behavior.
-- **Implemented; Matter hardware acceptance pending:** Auto with both
-  thresholds, all five fan speeds, `outlet` and `none` temperature-source
+- **Observed on hardware; current fixes need a repeat run:** Auto with both
+  thresholds and its 4°C minimum range.
+- **Implemented; Matter hardware acceptance pending:** all five fan speeds,
+  `outlet` and `none` temperature-source
   variants, reconnect/power-cycle recovery, and stale-cache action-71 startup
   acquisition.
 - **Protocol-mapped but hidden by tested controllers:** Fan Only, Dry, and

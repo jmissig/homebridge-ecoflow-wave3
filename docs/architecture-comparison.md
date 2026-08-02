@@ -129,9 +129,11 @@ platform cleanup without live hardware.
 ### WAVE-aware Matter behavior
 
 The Matter adapter preserves staged off-state thermostat intent, carries
-target/range with mode transitions, coalesces slider writes, suppresses
-duplicates, preserves fractional Celsius, and distinguishes Sleep/Night from a
-timer. These are the same semantic behaviors the blinded design requires.
+the authoritative destination profile with mode transitions, wakes an off
+appliance before applying that profile, coalesces slider writes, suppresses
+duplicates, preserves fractional Celsius, enforces the observed four-degree
+Auto range, and distinguishes Sleep/Night from a timer. These are the same
+semantic behaviors the blinded design requires.
 
 ## Differences and their disposition
 

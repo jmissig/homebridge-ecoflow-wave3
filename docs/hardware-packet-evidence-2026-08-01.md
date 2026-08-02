@@ -302,6 +302,30 @@ stable account identifiers.
 
 [Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
 
+## 2026-08-02 mode-profile and Auto follow-up
+
+**Observed**
+
+- Full display uploads carry distinct saved parameter records for every WAVE
+  operating mode. Cool and Heat retained different targets, and Auto retained
+  its own lower/upper range.
+- Off-to-Heat resumed at the saved Heat target of `26 °C` even when Apple Home
+  presented `21 °C` and the attempted composite startup included a target.
+- The official EcoFlow UI would not accept an Auto range narrower than
+  `4 °C`; accepted household examples included `20–24 °C` and `26–30 °C`.
+
+**Implementation consequence**
+
+- Keep per-mode parameters in the authoritative controller snapshot. Do not
+  infer a destination profile from Matter's inactive companion setpoint.
+- Power-on is a two-command transaction: wake and confirm power, then apply
+  and confirm the destination mode with its full target/range profile.
+- Normalize all Auto commands to at least a four-degree range within
+  `16–30 °C`. Enforce this in the WAVE planner rather than Matter's global
+  deadband, which also constrains inactive single-mode companion values.
+
+[Source: Julian's narrated Apple Home/EcoFlow/WAVE tests · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533563322539049151)
+
 ## Evidence still missing
 
 - Exact semantics of acknowledgement action IDs beyond the mapped climate

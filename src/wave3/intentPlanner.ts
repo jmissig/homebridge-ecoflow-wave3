@@ -2,10 +2,14 @@ import type {
   Wave3Command,
   Wave3ControllableMode,
   Wave3ModeCommand,
+  Wave3ModeParameters,
   Wave3State,
 } from './domain.js';
 
+export const WAVE3_AUTO_MIN_DEADBAND_CELSIUS = 4;
+
 export interface Wave3ModeTargetIntent {
+  profile?: Readonly<Wave3ModeParameters>;
   presentedHeatingCelsius?: number;
   presentedCoolingCelsius?: number;
   stagedHeatingCelsius?: number;
@@ -37,6 +41,7 @@ export function planWave3ModeTransition(
       type: 'mode',
       mode,
       targetTemperatureCelsius: intent.stagedCoolingCelsius
+        ?? intent.profile?.targetTemperatureCelsius
         ?? intent.presentedCoolingCelsius,
     };
   }
@@ -45,23 +50,29 @@ export function planWave3ModeTransition(
       type: 'mode',
       mode,
       targetTemperatureCelsius: intent.stagedHeatingCelsius
+        ?? intent.profile?.targetTemperatureCelsius
         ?? intent.presentedHeatingCelsius,
     };
   }
   if (mode === 'auto') {
-    let lower = intent.stagedHeatingCelsius ?? intent.presentedHeatingCelsius;
-    let upper = intent.stagedCoolingCelsius ?? intent.presentedCoolingCelsius;
+    let lower = intent.stagedHeatingCelsius
+      ?? intent.profile?.targetTemperatureLowerCelsius
+      ?? intent.presentedHeatingCelsius;
+    let upper = intent.stagedCoolingCelsius
+      ?? intent.profile?.targetTemperatureUpperCelsius
+      ?? intent.presentedCoolingCelsius;
     if (lower === undefined || upper === undefined) {
       return { type: 'mode', mode };
     }
-    if (lower > upper) {
-      if (intent.stagedHeatingCelsius !== undefined
-        && intent.stagedCoolingCelsius === undefined) {
-        upper = lower;
-      } else {
-        lower = upper;
-      }
-    }
+    [lower, upper] = constrainWave3AutomaticRange(
+      lower,
+      upper,
+      intent.stagedHeatingCelsius !== undefined && intent.stagedCoolingCelsius === undefined
+        ? 'lower'
+        : intent.stagedCoolingCelsius !== undefined && intent.stagedHeatingCelsius === undefined
+          ? 'upper'
+          : 'both',
+    );
     return {
       type: 'mode',
       mode,
@@ -83,13 +94,15 @@ export function planWave3TemperatureIntent(
     if (lowerCelsius === undefined || upperCelsius === undefined) {
       return { status: 'missingAutomaticRange' };
     }
-    if (lowerCelsius > upperCelsius) {
-      if (intent.heatingCelsius !== undefined && intent.coolingCelsius === undefined) {
-        upperCelsius = lowerCelsius;
-      } else {
-        lowerCelsius = upperCelsius;
-      }
-    }
+    [lowerCelsius, upperCelsius] = constrainWave3AutomaticRange(
+      lowerCelsius,
+      upperCelsius,
+      intent.heatingCelsius !== undefined && intent.coolingCelsius === undefined
+        ? 'lower'
+        : intent.coolingCelsius !== undefined && intent.heatingCelsius === undefined
+          ? 'upper'
+          : 'both',
+    );
     if (state.targetTemperatureLowerCelsius === lowerCelsius
       && state.targetTemperatureUpperCelsius === upperCelsius) {
       return { status: 'noop' };
@@ -125,4 +138,42 @@ export function planWave3TemperatureIntent(
     return { status: 'noop' };
   }
   return { status: 'inactive' };
+}
+
+/**
+ * Preserve the WAVE app's observed four-degree automatic-mode range. Matter
+ * controllers may transiently stage crossing or collapsed companion values,
+ * so normalize them before they reach the appliance.
+ */
+export function constrainWave3AutomaticRange(
+  requestedLower: number,
+  requestedUpper: number,
+  preferredEdge: 'lower' | 'upper' | 'both' = 'both',
+): readonly [number, number] {
+  let lower = clampTemperature(requestedLower);
+  let upper = clampTemperature(requestedUpper);
+  if (upper - lower >= WAVE3_AUTO_MIN_DEADBAND_CELSIUS) {
+    return [roundedTenth(lower), roundedTenth(upper)];
+  }
+
+  if (preferredEdge === 'lower') {
+    lower = Math.min(lower, 30 - WAVE3_AUTO_MIN_DEADBAND_CELSIUS);
+    upper = Math.max(upper, lower + WAVE3_AUTO_MIN_DEADBAND_CELSIUS);
+  } else if (preferredEdge === 'upper') {
+    upper = Math.max(upper, 16 + WAVE3_AUTO_MIN_DEADBAND_CELSIUS);
+    lower = Math.min(lower, upper - WAVE3_AUTO_MIN_DEADBAND_CELSIUS);
+  } else {
+    const midpoint = Math.max(18, Math.min(28, (lower + upper) / 2));
+    lower = midpoint - WAVE3_AUTO_MIN_DEADBAND_CELSIUS / 2;
+    upper = midpoint + WAVE3_AUTO_MIN_DEADBAND_CELSIUS / 2;
+  }
+  return [roundedTenth(lower), roundedTenth(upper)];
+}
+
+function clampTemperature(value: number): number {
+  return Math.max(16, Math.min(30, value));
+}
+
+function roundedTenth(value: number): number {
+  return Math.round(value * 10) / 10;
 }

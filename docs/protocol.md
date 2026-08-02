@@ -367,11 +367,12 @@ publishing a command.
   current Unix time and `7` carried a signed-PDT-looking `-700`, while `135`
   and `136` remain unknown. They are foreign configuration evidence, not
   climate-command confirmation.
-- When Apple Home stages thermostat values while the appliance is off, the
-  subsequent power-on write may combine `cfg_main_power`, mode, and either the
-  single-mode target or both automatic thresholds. The controller must confirm
-  every included field from the combined acknowledgement and later observed
-  state evidence.
+- When Apple Home stages thermostat values while the appliance is off, wake
+  the WAVE with a confirmed `cfg_main_power = true` command first. Only after
+  the appliance is awake should a second confirmed command select the staged
+  mode and its complete saved target/range profile. Hardware showed that an
+  asleep WAVE may accept a composite wake command yet resume the destination
+  mode's older saved target.
 
 ## Household hardware observations
 
@@ -438,6 +439,29 @@ publishing a command.
 
 [Source: household Apple Home/Matter diagnostic log and narrated target selection shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533524342313451610)
 
+**Hardware — 2026-08-02 saved profiles, wake sequencing, and Auto range**
+
+- A later Off-to-Heat test still resumed Heat at `26 °C` although Apple Home
+  presented `21 °C` and the attempted startup payload carried a target. This
+  disproves the assumption that one composite wake/profile write is reliable
+  while the appliance is asleep.
+- The safe startup transaction is two confirmed commands: wake with power,
+  then select the destination mode with its complete target/range profile.
+- Full display uploads expose separate saved parameter records for Cool, Heat,
+  Fan, Dry, and Auto. These records are authoritative WAVE profiles. Matter's
+  inactive heating/cooling companion setpoint is a controller presentation
+  value and must not overwrite or stand in for another WAVE mode's target.
+- The official EcoFlow UI refuses an Auto range narrower than `4 °C`.
+  Household tests exercised `20–24 °C` and `26–30 °C`; the protocol continues
+  to preserve fractional `0.1 °C` values.
+- Matter's `minSetpointDeadBand` applies globally, including inactive
+  companion setpoints, so advertising `4 °C` there would incorrectly narrow
+  WAVE's `16–30 °C` Cool/Heat range. The Matter attribute remains zero and the
+  semantic WAVE planner enforces the four-degree Auto minimum before publish.
+
+[Source: household Apple Home, EcoFlow app, and WAVE 3 observations shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533563322539049151)
+[Auto-range observation: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533565811455692810)
+
 **Hardware — 2026-08-01 HomeKit command validation**
 
 - HomeKit target-temperature and power writes worked end to end.
@@ -490,10 +514,10 @@ publishing a command.
   configuration write appeared in the EcoFlow diagnostics. Repeating the Home
   interaction with Auto produced the same sequencing failure.
 - Matter mode and setpoint attributes selected while off must therefore be
-  staged locally. The later authoritative OnOff command sends one composite
-  configuration write containing main power, the staged mode, and its staged
-  target or automatic range. The controller still requires matching positive
-  acknowledgement fragments and later observed state for every included field.
+  staged locally. Later testing refined the transaction boundary: the
+  authoritative OnOff command first wakes the WAVE, then a second confirmed
+  mode command applies the staged or authoritative destination profile. Each
+  command retains the normal acknowledgement and observed-state policy.
 
 [Source: household Matter/Homebridge diagnostic log and narrated Apple Home actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533508417145147622)
 

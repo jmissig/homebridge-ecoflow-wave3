@@ -51,6 +51,7 @@ describe('WAVE 3 Matter accessory', () => {
               ? { targetTemperatureCelsius: 22 }
               : {}),
         },
+        modeProfiles: {},
         runtimeTemperatures: {},
       };
       const accessory = createWave3MatterAccessory(
@@ -73,6 +74,7 @@ describe('WAVE 3 Matter accessory', () => {
     const partial: Wave3ControllerSnapshot = {
       availability: 'online',
       state: { ambientHumidityPercent: 61 },
+      modeProfiles: {},
       runtimeTemperatures: {},
     };
 
@@ -336,6 +338,7 @@ describe('WAVE 3 Matter accessory', () => {
   it('routes Matter controls through confirmed WAVE commands', async () => {
     const baseMatter = matterHarness().matter;
     const controller = recordingController(onlineSnapshot());
+    const diagnostics: string[] = [];
     const errors: string[] = [];
     const accessory = createWave3MatterAccessory(
       baseMatter,
@@ -413,7 +416,10 @@ describe('WAVE 3 Matter accessory', () => {
         accessory,
         controller,
         'ambient',
-        { error: message => errors.push(message) },
+        {
+          debug: message => diagnostics.push(message),
+          error: message => errors.push(message),
+        },
       );
       const directControl = (binding as unknown as {
         createMatterControl(): {
@@ -459,11 +465,14 @@ describe('WAVE 3 Matter accessory', () => {
         'staged off-state thermostat intent survives telemetry',
       );
       await endpoint.act('turn on', agent => agent.onOff.on());
-      assert.deepEqual(controller.commands.slice(commandsBeforeModeWhileOff), [{
-        type: 'mode',
-        mode: 'heat',
-        targetTemperatureCelsius: 20,
-      }]);
+      assert.deepEqual(controller.commands.slice(commandsBeforeModeWhileOff), [
+        { type: 'power', on: true },
+        {
+          type: 'mode',
+          mode: 'heat',
+          targetTemperatureCelsius: 20,
+        },
+      ]);
       assert.equal(controller.snapshot.state.powered, true);
       assert.equal(controller.snapshot.state.mode, 'heat');
       assert.equal(controller.snapshot.state.targetTemperatureCelsius, 20);
@@ -479,10 +488,11 @@ describe('WAVE 3 Matter accessory', () => {
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } });
       await waitUntil(
         () => controller.snapshot.state.mode === 'heat'
-          && controller.snapshot.state.targetTemperatureCelsius === 20,
-        'delayed Heat write carries its presented target',
+          && controller.snapshot.state.targetTemperatureCelsius === 26,
+        'delayed Heat write restores its authoritative saved profile',
       );
       assert.deepEqual(controller.commands.slice(commandsBeforeDelayedModeReplay), [
+        { type: 'power', on: true },
         {
           type: 'mode',
           mode: 'cool',
@@ -491,7 +501,7 @@ describe('WAVE 3 Matter accessory', () => {
         {
           type: 'mode',
           mode: 'heat',
-          targetTemperatureCelsius: 20,
+          targetTemperatureCelsius: 26,
         },
       ]);
 
@@ -503,12 +513,15 @@ describe('WAVE 3 Matter accessory', () => {
         occupiedCoolingSetpoint: 2_300,
       } });
       await endpoint.act('turn on in automatic mode', agent => agent.onOff.on());
-      assert.deepEqual(controller.commands.slice(commandsBeforeAutoStartup), [{
-        type: 'mode',
-        mode: 'auto',
-        targetTemperatureLowerCelsius: 18,
-        targetTemperatureUpperCelsius: 23,
-      }]);
+      assert.deepEqual(controller.commands.slice(commandsBeforeAutoStartup), [
+        { type: 'power', on: true },
+        {
+          type: 'mode',
+          mode: 'auto',
+          targetTemperatureLowerCelsius: 18,
+          targetTemperatureUpperCelsius: 23,
+        },
+      ]);
 
       const powerBeforeRapidToggle = controller.commands.length;
       await Promise.all([
@@ -517,29 +530,30 @@ describe('WAVE 3 Matter accessory', () => {
       ]);
       assert.deepEqual(controller.commands.slice(powerBeforeRapidToggle), [
         { type: 'power', on: false },
+        { type: 'power', on: true },
         {
           type: 'mode',
           mode: 'auto',
-          targetTemperatureLowerCelsius: 18,
-          targetTemperatureUpperCelsius: 23,
+          targetTemperatureLowerCelsius: 19,
+          targetTemperatureUpperCelsius: 24,
         },
       ]);
       for (const [systemMode, expected] of [
         [MATTER_SYSTEM_MODE.cool, {
           type: 'mode',
           mode: 'cool',
-          targetTemperatureCelsius: 23,
+          targetTemperatureCelsius: 22,
         }],
         [MATTER_SYSTEM_MODE.heat, {
           type: 'mode',
           mode: 'heat',
-          targetTemperatureCelsius: 18,
+          targetTemperatureCelsius: 26,
         }],
         [MATTER_SYSTEM_MODE.auto, {
           type: 'mode',
           mode: 'auto',
-          targetTemperatureLowerCelsius: 18,
-          targetTemperatureUpperCelsius: 23,
+          targetTemperatureLowerCelsius: 19,
+          targetTemperatureUpperCelsius: 24,
         }],
         [MATTER_SYSTEM_MODE.fan, { type: 'mode', mode: 'fan' }],
         [MATTER_SYSTEM_MODE.dry, { type: 'mode', mode: 'dry' }],
@@ -552,11 +566,17 @@ describe('WAVE 3 Matter accessory', () => {
           `Matter system mode ${systemMode} command`,
         );
         assert.deepEqual(controller.commands.slice(before), [expected]);
-        await waitUntil(() => endpoint.state.thermostat.systemMode === systemMode);
+        await waitUntil(
+          () => endpoint.state.thermostat.systemMode === systemMode,
+          `projected Matter system mode ${systemMode}`,
+        );
       }
 
       controller.setSnapshot(onlineSnapshot());
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'initial automatic mode projection',
+      );
       dropNextThermostatStateUpdate = true;
       controller.setSnapshot({
         ...onlineSnapshot(),
@@ -582,42 +602,59 @@ describe('WAVE 3 Matter accessory', () => {
         'legitimate cool write after stale projection',
       );
       assert.deepEqual(controller.commands.slice(commandsBeforeFormerlyStaleMode), [
-        { type: 'mode', mode: 'cool', targetTemperatureCelsius: 23 },
+        { type: 'mode', mode: 'cool', targetTemperatureCelsius: 22 },
       ]);
 
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto
+          && endpoint.state.thermostat.minSetpointDeadBand === 0
+          && endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
           && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
         'baseline automatic range',
       );
       const heatingCrossingBefore = controller.commands.length;
-      await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_500 } });
+      await endpoint.set({ thermostat: {
+        occupiedHeatingSetpoint: 2_500,
+        occupiedCoolingSetpoint: 2_900,
+      } });
       await waitUntil(
         () => controller.snapshot.state.targetTemperatureLowerCelsius === 25
-          && controller.snapshot.state.targetTemperatureUpperCelsius === 25
-          && endpoint.state.thermostat.occupiedHeatingSetpoint === 2_500
-          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_500,
-        'crossing heating setpoint and companion cooling setpoint',
+          && controller.snapshot.state.targetTemperatureUpperCelsius === 29,
+        'crossing heating WAVE range command',
+      );
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 2_500
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_900,
+        'crossing heating Matter range projection',
       );
       assert.deepEqual(controller.commands.slice(heatingCrossingBefore), [{
         type: 'automaticTemperatureRange',
         lowerCelsius: 25,
-        upperCelsius: 25,
+        upperCelsius: 29,
       }]);
-      const coolingCrossingBefore = controller.commands.length;
-      await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 1_800 } });
+      controller.setSnapshot(onlineSnapshot());
       await waitUntil(
-        () => controller.snapshot.state.targetTemperatureLowerCelsius === 18
-          && controller.snapshot.state.targetTemperatureUpperCelsius === 18
-          && endpoint.state.thermostat.occupiedHeatingSetpoint === 1_800
-          && endpoint.state.thermostat.occupiedCoolingSetpoint === 1_800,
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'restored range before lowering cooling threshold',
+      );
+      const coolingCrossingBefore = controller.commands.length;
+      await endpoint.set({ thermostat: {
+        occupiedHeatingSetpoint: 1_600,
+        occupiedCoolingSetpoint: 2_000,
+      } });
+      await waitUntil(
+        () => controller.snapshot.state.targetTemperatureLowerCelsius === 16
+          && controller.snapshot.state.targetTemperatureUpperCelsius === 20
+          && endpoint.state.thermostat.occupiedHeatingSetpoint === 1_600
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_000,
         'crossing cooling setpoint and companion heating setpoint',
       );
       assert.deepEqual(controller.commands.slice(coolingCrossingBefore), [{
         type: 'automaticTemperatureRange',
-        lowerCelsius: 18,
-        upperCelsius: 18,
+        lowerCelsius: 16,
+        upperCelsius: 20,
       }]);
 
       controller.setSnapshot(onlineSnapshot());
@@ -627,10 +664,16 @@ describe('WAVE 3 Matter accessory', () => {
         'restored automatic range',
       );
       await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_000 } });
-      await waitUntil(() => controller.commands.at(-1)?.type === 'automaticTemperatureRange'
-        && controller.snapshot.state.targetTemperatureLowerCelsius === 20);
+      await waitUntil(
+        () => controller.commands.at(-1)?.type === 'automaticTemperatureRange'
+          && controller.snapshot.state.targetTemperatureLowerCelsius === 20,
+        'active automatic lower-setpoint command',
+      );
       await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 2_500 } });
-      await waitUntil(() => controller.snapshot.state.targetTemperatureUpperCelsius === 25);
+      await waitUntil(
+        () => controller.snapshot.state.targetTemperatureUpperCelsius === 25,
+        'active automatic upper-setpoint projection',
+      );
       assert.deepEqual(controller.commands.slice(-2), [
         {
           type: 'automaticTemperatureRange',
@@ -674,7 +717,11 @@ describe('WAVE 3 Matter accessory', () => {
           targetTemperatureCelsius: 22,
         },
       });
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool
+          && endpoint.state.thermostat.minSetpointDeadBand === 0,
+        'cool projection before direct setpoint writes',
+      );
       const coolTargetBefore = controller.commands.length;
       await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 2_300 } });
       await waitUntil(
@@ -689,7 +736,11 @@ describe('WAVE 3 Matter accessory', () => {
       const inactiveHeatBefore = controller.commands.length;
       await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_100 } });
       await drainMicrotasks();
-      assert.equal(controller.commands.length, inactiveHeatBefore);
+      assert.deepEqual(
+        controller.commands.slice(inactiveHeatBefore),
+        [],
+        'inactive Heat companion must not command the active Cool profile',
+      );
 
       controller.setSnapshot({
         ...onlineSnapshot(),
@@ -699,7 +750,10 @@ describe('WAVE 3 Matter accessory', () => {
           targetTemperatureCelsius: 22,
         },
       });
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat,
+        'active Heat raise/lower mode projection',
+      );
       const heatTargetBefore = controller.commands.length;
       await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_300 } });
       await waitUntil(
@@ -714,10 +768,17 @@ describe('WAVE 3 Matter accessory', () => {
       const inactiveCoolBefore = controller.commands.length;
       await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 2_500 } });
       await drainMicrotasks();
-      assert.equal(controller.commands.length, inactiveCoolBefore);
+      assert.equal(
+        controller.commands.length,
+        inactiveCoolBefore,
+        'inactive Cool companion must not command the active Heat profile',
+      );
 
       controller.setSnapshot(onlineSnapshot());
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'automatic projection before fan controls',
+      );
 
       const airflowBeforeSlider = controller.commands.filter(
         command => command.type === 'airflowSpeed',
@@ -767,8 +828,9 @@ describe('WAVE 3 Matter accessory', () => {
         controller.commands.filter(command => command.type === 'airflowSpeed').length,
         airflowBeforeReturnToConfirmed,
       );
-      assert.deepEqual(controller.commands.slice(0, 2), [
+      assert.deepEqual(controller.commands.slice(0, 3), [
         { type: 'power', on: false },
+        { type: 'power', on: true },
         { type: 'mode', mode: 'heat', targetTemperatureCelsius: 20 },
       ]);
 
@@ -831,10 +893,13 @@ describe('WAVE 3 Matter accessory', () => {
       assert.deepEqual(controller.commands.at(-1), {
         type: 'automaticTemperatureRange',
         lowerCelsius: 25,
-        upperCelsius: 25,
+        upperCelsius: 29,
       });
-      assert.equal(endpoint.state.thermostat.occupiedHeatingSetpoint, 2_500);
-      assert.equal(endpoint.state.thermostat.occupiedCoolingSetpoint, 2_500);
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 2_500
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_900,
+        'raised automatic range projection',
+      );
 
       controller.setSnapshot({
         ...onlineSnapshot(),
@@ -855,11 +920,14 @@ describe('WAVE 3 Matter accessory', () => {
       }));
       assert.deepEqual(controller.commands.at(-1), {
         type: 'automaticTemperatureRange',
-        lowerCelsius: 18,
-        upperCelsius: 18,
+        lowerCelsius: 16,
+        upperCelsius: 20,
       });
-      assert.equal(endpoint.state.thermostat.occupiedHeatingSetpoint, 1_800);
-      assert.equal(endpoint.state.thermostat.occupiedCoolingSetpoint, 1_800);
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_600
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_000,
+        'lowered automatic range projection',
+      );
 
       controller.setSnapshot({
         ...onlineSnapshot(),
@@ -888,7 +956,7 @@ describe('WAVE 3 Matter accessory', () => {
         {
           type: 'automaticTemperatureRange',
           lowerCelsius: 21,
-          upperCelsius: 24,
+          upperCelsius: 25,
         },
       ]);
 
@@ -928,7 +996,10 @@ describe('WAVE 3 Matter accessory', () => {
         ...onlineSnapshot(),
         state: { ...onlineSnapshot().state, mode: 'heat', targetTemperatureCelsius: 22 },
       });
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat,
+        'active heat projection before raise/lower',
+      );
       await endpoint.act('raise active heat target', agent => agent.thermostat.setpointRaiseLower({
         mode: 0,
         amount: 10,
@@ -949,7 +1020,10 @@ describe('WAVE 3 Matter accessory', () => {
         ...onlineSnapshot(),
         state: { ...onlineSnapshot().state, mode: 'cool', targetTemperatureCelsius: 22 },
       });
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
+        'active Cool raise/lower mode projection',
+      );
       await endpoint.act('raise active cool target', agent => agent.thermostat.setpointRaiseLower({
         mode: 1,
         amount: 10,
@@ -970,7 +1044,10 @@ describe('WAVE 3 Matter accessory', () => {
         ...onlineSnapshot(),
         state: { ...onlineSnapshot().state, mode: 'fan' },
       });
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.fan);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.fan,
+        'Fan mode projection',
+      );
       await assert.rejects(
         async () => endpoint.act(
           'reject inactive fan-mode setpoint adjustment',
@@ -983,7 +1060,10 @@ describe('WAVE 3 Matter accessory', () => {
       );
 
       controller.setSnapshot(onlineSnapshot());
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'Auto mode projection before invalid raise/lower',
+      );
       await assert.rejects(
         async () => endpoint.act(
           'reject invalid setpoint-adjustment mode',
@@ -1029,7 +1109,10 @@ describe('WAVE 3 Matter accessory', () => {
         return true;
       });
       controller.setSnapshot(onlineSnapshot());
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'automatic projection before deferred setpoint failure',
+      );
 
       for (const [reason, StatusType, message] of [
         ['publicationFailed', MatterStatus.Failure, /cloud did not accept/],
@@ -1086,7 +1169,10 @@ describe('WAVE 3 Matter accessory', () => {
         );
       }
       controller.setSnapshot(onlineSnapshot());
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'automatic projection after command failure matrix',
+      );
 
       let errorCount = errors.length;
       const interruptedModeCommand = controller.deferNextFailure();
@@ -1107,7 +1193,10 @@ describe('WAVE 3 Matter accessory', () => {
       );
 
       controller.setSnapshot(onlineSnapshot());
-      await waitUntil(() => endpoint.state.fanControl.speedSetting === 3);
+      await waitUntil(
+        () => endpoint.state.fanControl.speedSetting === 3,
+        'fan projection before deferred fan failure',
+      );
       errorCount = errors.length;
       const interruptedFanCommand = controller.deferNextFailure();
       await endpoint.set({ fanControl: { speedSetting: 1 } });
@@ -1127,7 +1216,10 @@ describe('WAVE 3 Matter accessory', () => {
         'confirmed fan restoration during account error',
       );
       controller.setSnapshot(onlineSnapshot());
-      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
+      await waitUntil(
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
+        'automatic projection before pending fan cancellation',
+      );
 
       const airflowBeforePowerOff = controller.commands.filter(
         command => command.type === 'airflowSpeed',
@@ -1220,6 +1312,12 @@ describe('WAVE 3 Matter accessory', () => {
       errors.some(message => /system mode command confirmation timed out/.test(message)),
       true,
     );
+    assert.equal(diagnostics.some(message => /Matter write power=/.test(message)), true);
+    assert.equal(diagnostics.some(message => /Matter write systemMode=/.test(message)), true);
+    assert.equal(diagnostics.some(message => /Matter write heatingSetpointCelsius=/.test(message)), true);
+    assert.equal(diagnostics.some(message => /Matter write setpointRaiseLower/.test(message)), true);
+    assert.equal(diagnostics.some(message => /Matter write fan(Mode|Percent|Speed)=/.test(message)), true);
+    assert.equal(diagnostics.some(message => /redacted-controls|TEST-SERIAL/.test(message)), false);
   });
 
   it('builds a customized room air conditioner with auto, fan, humidity, and complete state', () => {
@@ -1435,6 +1533,7 @@ describe('WAVE 3 Matter accessory', () => {
     controller.emit({
       availability: 'reconnecting',
       state: { powered: false },
+      modeProfiles: {},
       runtimeTemperatures: {},
     });
     await drainMicrotasks();
@@ -1443,6 +1542,7 @@ describe('WAVE 3 Matter accessory', () => {
     controller.emit({
       availability: 'accountError',
       state: { powered: false },
+      modeProfiles: {},
       runtimeTemperatures: {},
     });
     await drainMicrotasks();
@@ -1538,6 +1638,7 @@ describe('WAVE 3 Matter accessory', () => {
     controller.emit({
       availability: 'stale',
       state: { ambientHumidityPercent: 62 },
+      modeProfiles: {},
       runtimeTemperatures: {},
     });
     await drainMicrotasks();
@@ -1778,6 +1879,7 @@ function offlineSnapshot(): Wave3ControllerSnapshot {
   return {
     availability: 'offline',
     state: {},
+    modeProfiles: {},
     runtimeTemperatures: {},
   };
 }
@@ -1794,6 +1896,15 @@ function onlineSnapshot(): Wave3ControllerSnapshot {
       targetTemperatureLowerCelsius: 19,
       targetTemperatureUpperCelsius: 24,
       airflowSpeed: 60,
+    },
+    modeProfiles: {
+      cool: { targetTemperatureCelsius: 22, airflowSpeed: 20 },
+      heat: { targetTemperatureCelsius: 26, airflowSpeed: 40 },
+      auto: {
+        targetTemperatureLowerCelsius: 19,
+        targetTemperatureUpperCelsius: 24,
+        airflowSpeed: 60,
+      },
     },
     runtimeTemperatures: {},
     firmwareVersions: { pd: '1.1.0.104' },
@@ -1818,6 +1929,9 @@ function runtimeSnapshot(
       targetTemperatureCelsius,
       airflowSpeed,
     },
+    modeProfiles: {
+      [mode]: { targetTemperatureCelsius, airflowSpeed },
+    },
     runtimeTemperatures: {},
     updatedAt: mode === 'cool' ? 1 : 2,
   };
@@ -1828,7 +1942,7 @@ async function drainMicrotasks(): Promise<void> {
 }
 
 async function waitUntil(predicate: () => boolean, description = 'Matter runtime state'): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
     if (predicate()) {
       return;
     }

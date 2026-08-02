@@ -294,6 +294,22 @@ publication remains a separate explicit decision.
   - test units, nullable/unavailable state, counter reset/wrap behavior,
     restart persistence, Apple Home presentation, and EcoFlow-app coexistence.
   [told: Julian relaying Homebridge 2.2.0/2.2.1 API guidance · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533385294978486272)
+- [ ] Add optional, per-device **Night Mode** and **Eco Mode** composed switch
+  endpoints, disabled by default in the UniFi Protect style:
+  - Night Mode reflects and selects the household-evidenced Sleep submode;
+    keep it synchronized with standard `Thermostat.systemMode = Sleep` rather
+    than creating a competing mode state;
+  - Eco Mode reflects and selects the WAVE Eco submode, returning to the last
+    confirmed normal base mode when switched off;
+  - keep Night, Eco, and any future Boost switch mutually exclusive and derive
+    every switch state from confirmed device telemetry;
+  - reject changes while the appliance is off or unavailable, await EcoFlow
+    acknowledgement plus observed state, and never make a companion switch a
+    second power authority;
+  - preserve stable endpoint identities/names across cache restoration and
+    verify the optional tiles, automations, multi-device behavior, and switch
+    removal in Apple Home.
+  [told: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533388767870845001)
 - [ ] Battery and charging state when an add-on battery is present.
 - [ ] Condensate-full warning, drainage state, and auto drainage.
 - [ ] Beeper, display brightness, timers, Pet Care, and charge limits only when

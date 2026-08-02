@@ -52,6 +52,11 @@ order:
 Partial temperature or humidity packets prove the device is publishing but do
 not make control safe by themselves.
 
+After authoritative startup state arrives, the plugin allows five minutes
+without another recognized state update before setting reachability false.
+This covers one missed WAVE full-display upload plus normal timing jitter;
+command confirmation still uses its separate ten-second deadline.
+
 ## Authentication or regional API failure
 
 Use the API host associated with the EcoFlow account:

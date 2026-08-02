@@ -101,6 +101,26 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.runtimeTemperatures.condenserCelsius, 41);
   });
 
+  it('allows five minutes of live-state silence before becoming stale', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+    });
+
+    session.emitPacket('property', displayPacket(1, {
+      mode: 1,
+      sleepState: 0,
+    }));
+    assert.equal(controller.snapshot.availability, 'online');
+
+    clock.advance(299_999);
+    assert.equal(controller.snapshot.availability, 'online');
+    clock.advance(1);
+    assert.equal(controller.snapshot.availability, 'stale');
+  });
+
   it('requires current-generation climate evidence and honors quota availability', async () => {
     const session = new FakeControllerSession();
     const controller = new Wave3Controller(TEST_SERIAL, session, {

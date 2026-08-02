@@ -71,7 +71,7 @@ interface PendingCommand {
 }
 
 const DEFAULT_COMMAND_TIMEOUT_MILLISECONDS = 10_000;
-const DEFAULT_STALE_AFTER_MILLISECONDS = 120_000;
+const DEFAULT_STALE_AFTER_MILLISECONDS = 300_000;
 const NOOP_LOGGER: CloudSessionLogger = {
   debug: () => undefined,
   info: () => undefined,

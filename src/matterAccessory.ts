@@ -304,8 +304,18 @@ interface Wave3MatterControl {
 }
 
 interface PendingFanWrite {
+  generation: number;
   speed: Wave3AirflowSpeed;
   timer?: ReturnType<typeof setTimeout>;
+  waiters: Array<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }>;
+}
+
+interface PendingTemperatureWrite {
+  coolingCelsius?: number;
+  heatingCelsius?: number;
   waiters: Array<{
     resolve: () => void;
     reject: (error: unknown) => void;
@@ -376,13 +386,16 @@ export function createWave3MatterAccessory(
 
 export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private readonly activeCommands = new Set<Promise<void>>();
+  private commandTail: Promise<void> = Promise.resolve();
   private readonly detachSnapshot: () => void;
   private deferredSnapshot?: Wave3ControllerSnapshot;
   private interactiveCommandDepth = 0;
+  private fanWriteGeneration = 0;
   private updateTail: Promise<void> = Promise.resolve();
   private presentedFirmwareRevision?: string;
   private snapshot: Wave3ControllerSnapshot;
   private pendingFanWrite?: PendingFanWrite;
+  private pendingTemperatureWrite?: PendingTemperatureWrite;
   private stopped = false;
 
   constructor(
@@ -433,6 +446,13 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       }
       this.pendingFanWrite = undefined;
     }
+    if (this.pendingTemperatureWrite !== undefined) {
+      const error = new MatterStatus.InvalidInState('Matter accessory stopped');
+      for (const waiter of this.pendingTemperatureWrite.waiters) {
+        waiter.reject(error);
+      }
+      this.pendingTemperatureWrite = undefined;
+    }
     await Promise.allSettled([...this.activeCommands]);
     matterControls.delete(this.accessory.UUID);
     forgetDesiredState(this.accessory.UUID);
@@ -442,10 +462,15 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
 
   private createMatterControl(): Wave3MatterControl {
     return {
-      setPower: (on, applyMatter) => this.runInteractiveCommand(
-        'power',
-        () => this.setPower(on, applyMatter),
-      ),
+      setPower: (on, applyMatter) => {
+        if (!on) {
+          this.cancelPendingFan();
+        }
+        return this.runInteractiveCommand(
+          'power',
+          () => this.setPower(on, applyMatter),
+        );
+      },
       setSystemMode: systemMode => this.setSystemMode(systemMode),
       setHeatingSetpoint: value => this.setTemperatureSetpoint('heating', value),
       setCoolingSetpoint: value => this.setTemperatureSetpoint('cooling', value),
@@ -453,7 +478,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
         'setpoint adjustment',
         async () => {
           await this.raiseLowerSetpoint(mode, amount);
-          await applyMatter();
+          await this.applyConfirmedThermostatMutation(applyMatter);
         },
       ),
       setFanMode: fanMode => this.setFanMode(fanMode),
@@ -481,27 +506,49 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
 
   private async setPower(on: boolean, applyMatter: () => Promise<void>): Promise<void> {
     this.requireControllable();
-    if (!on) {
-      this.cancelPendingFan();
-    }
     if (this.snapshot.state.powered !== on) {
       await this.execute({ type: 'power', on });
     }
     await applyMatter();
   }
 
+  private async applyConfirmedThermostatMutation(
+    applyMatter: () => Promise<void>,
+  ): Promise<void> {
+    const thermostat = clustersForSnapshot(
+      this.snapshot,
+      this.currentTemperatureSource,
+      this.accessory.context,
+      this.accessory.clusters,
+    ).thermostat ?? {};
+    const desired = {
+      occupiedHeatingSetpoint: thermostat.occupiedHeatingSetpoint,
+      occupiedCoolingSetpoint: thermostat.occupiedCoolingSetpoint,
+    };
+    rememberDesiredCluster(this.accessory.UUID, 'thermostat', desired);
+    try {
+      await applyMatter();
+    } finally {
+      setImmediate(() => {
+        forgetDesiredCluster(this.accessory.UUID, 'thermostat', desired);
+      });
+    }
+  }
+
   private setSystemMode(systemMode: number): void {
     this.requireControllable();
-    const state = this.snapshot.state;
     if (systemMode === MATTER_SYSTEM_MODE.sleep) {
-      if (!state.powered || state.mode === 'off') {
-        throw new MatterStatus.InvalidInState('Sleep mode requires the WAVE 3 to be on');
-      }
-      if (state.submode === 3) {
-        return;
-      }
       this.trackAttributeCommand(
-        this.execute({ type: 'submode', submode: 3 }),
+        this.enqueueControllerOperation(async () => {
+          this.requireControllable();
+          const state = this.snapshot.state;
+          if (!state.powered || state.mode === 'off') {
+            throw new MatterStatus.InvalidInState('Sleep mode requires the WAVE 3 to be on');
+          }
+          if (state.submode !== 3) {
+            await this.execute({ type: 'submode', submode: 3 });
+          }
+        }),
         'system mode',
       );
       return;
@@ -511,11 +558,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (mode === undefined) {
       throw new MatterStatus.ConstraintError(`Unsupported Matter system mode ${systemMode}`);
     }
-    if (state.mode === mode && state.powered
-      && state.submode !== 3 && state.submode !== 2 && state.submode !== 4) {
-      return;
-    }
-    this.trackAttributeCommand(this.applySystemMode(mode), 'system mode');
+    this.trackAttributeCommand(
+      this.enqueueControllerOperation(() => this.applySystemMode(mode)),
+      'system mode',
+    );
   }
 
   private async applySystemMode(mode: Exclude<Wave3Mode, 'off'>): Promise<void> {
@@ -534,50 +580,102 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   ): void {
     this.requireControllable();
     const celsius = matterTemperature(value);
+    this.trackAttributeCommand(
+      this.scheduleTemperatureSetpoint(kind, celsius),
+      `${kind} setpoint`,
+    );
+  }
+
+  private async applyTemperatureSetpoints(
+    heatingCelsius?: number,
+    coolingCelsius?: number,
+  ): Promise<void> {
+    this.requireControllable();
     const state = this.snapshot.state;
     if (state.mode === 'auto') {
-      let lowerCelsius = kind === 'heating'
-        ? celsius
-        : state.targetTemperatureLowerCelsius;
-      let upperCelsius = kind === 'cooling'
-        ? celsius
-        : state.targetTemperatureUpperCelsius;
+      let lowerCelsius = heatingCelsius ?? state.targetTemperatureLowerCelsius;
+      let upperCelsius = coolingCelsius ?? state.targetTemperatureUpperCelsius;
       if (lowerCelsius === undefined || upperCelsius === undefined) {
         throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
       }
       if (lowerCelsius > upperCelsius) {
-        if (kind === 'heating') {
+        if (heatingCelsius !== undefined && coolingCelsius === undefined) {
           upperCelsius = lowerCelsius;
         } else {
           lowerCelsius = upperCelsius;
         }
       }
-      this.trackAttributeCommand(
-        this.execute({
+      if (state.targetTemperatureLowerCelsius !== lowerCelsius
+        || state.targetTemperatureUpperCelsius !== upperCelsius) {
+        await this.execute({
           type: 'automaticTemperatureRange',
           lowerCelsius,
           upperCelsius,
-        }),
-        `${kind} setpoint`,
-      );
+        });
+      }
       return;
     }
-    if ((kind === 'heating' && state.mode === 'heat')
-      || (kind === 'cooling' && state.mode === 'cool')) {
-      this.trackAttributeCommand(
-        this.execute({ type: 'targetTemperature', celsius }),
-        `${kind} setpoint`,
-      );
+    const activeCelsius = state.mode === 'heat'
+      ? heatingCelsius
+      : state.mode === 'cool'
+        ? coolingCelsius
+        : undefined;
+    if (activeCelsius !== undefined) {
+      if (state.targetTemperatureCelsius !== activeCelsius) {
+        await this.execute({ type: 'targetTemperature', celsius: activeCelsius });
+      }
       return;
     }
 
     // Matter may move the inactive companion setpoint to preserve its
     // thermostat constraints. That value is not a second WAVE target.
-    if ((kind === 'heating' && state.mode === 'cool')
-      || (kind === 'cooling' && state.mode === 'heat')) {
+    if ((heatingCelsius !== undefined && state.mode === 'cool')
+      || (coolingCelsius !== undefined && state.mode === 'heat')) {
       return;
     }
-    throw new MatterStatus.InvalidInState(`The ${kind} setpoint is inactive in the current mode`);
+    throw new MatterStatus.InvalidInState('The requested setpoint is inactive in the current mode');
+  }
+
+  private scheduleTemperatureSetpoint(
+    kind: 'heating' | 'cooling',
+    celsius: number,
+  ): Promise<void> {
+    if (this.pendingTemperatureWrite === undefined) {
+      this.pendingTemperatureWrite = { waiters: [] };
+      const pending = this.pendingTemperatureWrite;
+      setImmediate(() => {
+        void this.flushTemperatureSetpoints(pending);
+      });
+    }
+    const pending = this.pendingTemperatureWrite;
+    if (kind === 'heating') {
+      pending.heatingCelsius = celsius;
+    } else {
+      pending.coolingCelsius = celsius;
+    }
+    return new Promise<void>((resolve, reject) => {
+      pending.waiters.push({ resolve, reject });
+    });
+  }
+
+  private async flushTemperatureSetpoints(pending: PendingTemperatureWrite): Promise<void> {
+    if (this.pendingTemperatureWrite !== pending) {
+      return;
+    }
+    this.pendingTemperatureWrite = undefined;
+    try {
+      await this.enqueueControllerOperation(() => this.applyTemperatureSetpoints(
+        pending.heatingCelsius,
+        pending.coolingCelsius,
+      ));
+      for (const waiter of pending.waiters) {
+        waiter.resolve();
+      }
+    } catch (error) {
+      for (const waiter of pending.waiters) {
+        waiter.reject(error);
+      }
+    }
   }
 
   private async raiseLowerSetpoint(mode: number, amount: number): Promise<void> {
@@ -722,12 +820,13 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     operation: () => Promise<void>,
   ): Promise<void> {
     this.interactiveCommandDepth += 1;
-    const reported = Promise.resolve()
+    const reported = this.enqueueControllerOperation(async () => {
       // Homebridge 2.2 dispatches snapshot writes asynchronously. Let an
       // already-dispatched projection release its cluster lock before this
       // command asks Matter.js to mutate the same state transactionally.
-      .then(() => this.updateTail)
-      .then(operation)
+      await this.updateTail;
+      await operation();
+    })
       .catch(error => {
         this.logger.error(
           `EcoFlow WAVE 3 Matter ${description} command failed: ${errorMessage(error)}`,
@@ -758,6 +857,17 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     return tracked;
   }
 
+  private enqueueControllerOperation(operation: () => Promise<void>): Promise<void> {
+    const queued = this.commandTail.then(async () => {
+      if (this.stopped) {
+        throw new MatterStatus.InvalidInState('Matter accessory stopped');
+      }
+      await operation();
+    });
+    this.commandTail = queued.catch(() => undefined);
+    return queued;
+  }
+
   private enqueueSnapshot(snapshot: Wave3ControllerSnapshot): void {
     this.updateTail = this.updateTail
       .then(() => this.pushSnapshot(snapshot))
@@ -777,7 +887,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return Promise.resolve();
     }
     if (this.pendingFanWrite === undefined) {
-      this.pendingFanWrite = { speed, waiters: [] };
+      this.pendingFanWrite = {
+        generation: this.fanWriteGeneration,
+        speed,
+        waiters: [],
+      };
     } else {
       this.pendingFanWrite.speed = speed;
       if (this.pendingFanWrite.timer !== undefined) {
@@ -800,19 +914,20 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     }
     this.pendingFanWrite = undefined;
     try {
-      this.requireControllable();
-      if (!this.snapshot.state.powered) {
-        throw new MatterStatus.InvalidInState(
-          'Use the Room Air Conditioner power control to turn on',
-        );
-      }
-      if (normalizedAirflow(this.snapshot.state.airflowSpeed) === pending.speed) {
-        for (const waiter of pending.waiters) {
-          waiter.resolve();
+      await this.enqueueControllerOperation(async () => {
+        if (pending.generation !== this.fanWriteGeneration) {
+          return;
         }
-        return;
-      }
-      await this.execute({ type: 'airflowSpeed', speed: pending.speed });
+        this.requireControllable();
+        if (!this.snapshot.state.powered) {
+          throw new MatterStatus.InvalidInState(
+            'Use the Room Air Conditioner power control to turn on',
+          );
+        }
+        if (normalizedAirflow(this.snapshot.state.airflowSpeed) !== pending.speed) {
+          await this.execute({ type: 'airflowSpeed', speed: pending.speed });
+        }
+      });
       for (const waiter of pending.waiters) {
         waiter.resolve();
       }
@@ -824,6 +939,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private cancelPendingFan(): void {
+    this.fanWriteGeneration += 1;
     const pending = this.pendingFanWrite;
     if (pending === undefined) {
       return;

@@ -140,6 +140,10 @@ state, and temperature-source variants.
 - [x] Keep `FanMode`, `PercentSetting`, and five-level `SpeedSetting` coherent;
   accept Matter's nullable no-change writes, cancel queued airflow when power
   turns off, and suppress a coalesced write that returns to confirmed speed.
+- [x] Linearize Matter commands before deriving state-dependent WAVE payloads,
+  coalesce a Matter thermostat transaction's companion setpoint changes into
+  one confirmed range command, and invalidate queued fan work immediately when
+  power-off is requested even if a Homebridge state update is still pending.
 - [x] Translate controller outcomes into standard Matter interaction errors
   for awaited Matter commands (`OnOff` and `SetpointRaiseLower`). Reject
   invalid or unavailable thermostat/fan attribute writes synchronously. The

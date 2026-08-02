@@ -254,6 +254,7 @@ describe('WAVE 3 Matter accessory', () => {
         } as never,
       );
       await aggregator.add(endpoint);
+      let stateUpdateGate: ReturnType<typeof deferred> | undefined;
       const runtimeMatter = {
         ...baseMatter,
         updateAccessoryState: async (
@@ -261,6 +262,7 @@ describe('WAVE 3 Matter accessory', () => {
           cluster: string,
           attributes: Record<string, unknown>,
         ) => {
+          await stateUpdateGate?.promise;
           void endpoint.set({ [cluster]: attributes } as never);
         },
         getAccessoryState: async (_uuid: string, cluster: string) => {
@@ -275,9 +277,30 @@ describe('WAVE 3 Matter accessory', () => {
         'ambient',
         { error: message => errors.push(message) },
       );
+      const directControl = (binding as unknown as {
+        createMatterControl(): {
+          setPower(on: boolean, applyMatter: () => Promise<void>): Promise<void>;
+          setHeatingSetpoint(value: number): void;
+          setCoolingSetpoint(value: number): void;
+          raiseLowerSetpoint(
+            mode: number,
+            amount: number,
+            applyMatter: () => Promise<void>,
+          ): Promise<void>;
+        };
+      }).createMatterControl();
 
       await endpoint.act('turn off', agent => agent.onOff.off());
       await endpoint.act('turn on', agent => agent.onOff.on());
+      const powerBeforeRapidToggle = controller.commands.length;
+      await Promise.all([
+        directControl.setPower(false, async () => undefined),
+        directControl.setPower(true, async () => undefined),
+      ]);
+      assert.deepEqual(controller.commands.slice(powerBeforeRapidToggle), [
+        { type: 'power', on: false },
+        { type: 'power', on: true },
+      ]);
       for (const [systemMode, expected] of [
         [MATTER_SYSTEM_MODE.cool, { type: 'mode', mode: 'cool' }],
         [MATTER_SYSTEM_MODE.heat, { type: 'mode', mode: 'heat' }],
@@ -302,6 +325,7 @@ describe('WAVE 3 Matter accessory', () => {
           && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
         'baseline automatic range',
       );
+      const heatingCrossingBefore = controller.commands.length;
       await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_500 } });
       await waitUntil(
         () => controller.snapshot.state.targetTemperatureLowerCelsius === 25
@@ -310,6 +334,12 @@ describe('WAVE 3 Matter accessory', () => {
           && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_500,
         'crossing heating setpoint and companion cooling setpoint',
       );
+      assert.deepEqual(controller.commands.slice(heatingCrossingBefore), [{
+        type: 'automaticTemperatureRange',
+        lowerCelsius: 25,
+        upperCelsius: 25,
+      }]);
+      const coolingCrossingBefore = controller.commands.length;
       await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 1_800 } });
       await waitUntil(
         () => controller.snapshot.state.targetTemperatureLowerCelsius === 18
@@ -318,6 +348,11 @@ describe('WAVE 3 Matter accessory', () => {
           && endpoint.state.thermostat.occupiedCoolingSetpoint === 1_800,
         'crossing cooling setpoint and companion heating setpoint',
       );
+      assert.deepEqual(controller.commands.slice(coolingCrossingBefore), [{
+        type: 'automaticTemperatureRange',
+        lowerCelsius: 18,
+        upperCelsius: 18,
+      }]);
 
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
@@ -342,6 +377,28 @@ describe('WAVE 3 Matter accessory', () => {
           upperCelsius: 25,
         },
       ]);
+
+      controller.setSnapshot(onlineSnapshot());
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'rapid direct setpoint baseline',
+      );
+      const rapidDirectBefore = controller.commands.length;
+      directControl.setHeatingSetpoint(2_000);
+      directControl.setCoolingSetpoint(2_500);
+      await waitUntil(
+        () => controller.snapshot.state.targetTemperatureLowerCelsius === 20
+          && controller.snapshot.state.targetTemperatureUpperCelsius === 25,
+        'rapid direct setpoints',
+      );
+      const rapidDirectCommands = controller.commands.slice(rapidDirectBefore);
+      assert.equal(rapidDirectCommands.length >= 1, true);
+      assert.deepEqual(rapidDirectCommands.at(-1), {
+        type: 'automaticTemperatureRange',
+        lowerCelsius: 20,
+        upperCelsius: 25,
+      });
 
       const airflowBeforeSlider = controller.commands.filter(
         command => command.type === 'airflowSpeed',
@@ -456,6 +513,37 @@ describe('WAVE 3 Matter accessory', () => {
       await waitUntil(
         () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
           && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'rapid raise/lower baseline range',
+      );
+      const rapidRaiseBefore = controller.commands.length;
+      await Promise.all([
+        directControl.raiseLowerSetpoint(0, 10, async () => undefined),
+        directControl.raiseLowerSetpoint(0, 10, async () => undefined),
+      ]);
+      assert.deepEqual(controller.commands.slice(rapidRaiseBefore), [
+        {
+          type: 'automaticTemperatureRange',
+          lowerCelsius: 20,
+          upperCelsius: 24,
+        },
+        {
+          type: 'automaticTemperatureRange',
+          lowerCelsius: 21,
+          upperCelsius: 24,
+        },
+      ]);
+
+      controller.setSnapshot({
+        ...onlineSnapshot(),
+        state: {
+          ...onlineSnapshot().state,
+          targetTemperatureLowerCelsius: 19,
+          targetTemperatureUpperCelsius: 24,
+        },
+      });
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
         'both-setpoint baseline range',
       );
       await endpoint.act('raise both to upper limit', agent => agent.thermostat.setpointRaiseLower({
@@ -495,6 +583,33 @@ describe('WAVE 3 Matter accessory', () => {
         airflowBeforePowerOff,
       );
       await endpoint.act('turn back on after fan cancellation', agent => agent.onOff.on());
+
+      stateUpdateGate = deferred();
+      controller.setSnapshot({
+        ...controller.snapshot,
+        state: {
+          ...controller.snapshot.state,
+          ambientHumidityPercent: 51,
+        },
+      });
+      await new Promise<void>(resolve => setTimeout(resolve, 20));
+      const airflowBeforeStalledPowerOff = controller.commands.filter(
+        command => command.type === 'airflowSpeed',
+      ).length;
+      await endpoint.set({ fanControl: { percentSetting: 40 } });
+      const stalledPowerOff = endpoint.act(
+        'turn off behind stalled update',
+        agent => agent.onOff.off(),
+      );
+      await new Promise<void>(resolve => setTimeout(resolve, 800));
+      assert.equal(
+        controller.commands.filter(command => command.type === 'airflowSpeed').length,
+        airflowBeforeStalledPowerOff,
+      );
+      stateUpdateGate.resolve();
+      stateUpdateGate = undefined;
+      await stalledPowerOff;
+      await endpoint.act('turn back on after stalled cancellation', agent => agent.onOff.on());
 
       controller.failNext('timeout');
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });

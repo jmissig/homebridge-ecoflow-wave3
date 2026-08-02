@@ -127,6 +127,15 @@ buckets, while every accepted setting write updates `FanMode`,
 change. Power-off cancels a pending airflow write, and coalescing back to the
 confirmed speed emits no cloud command.
 
+All Matter command work enters one adapter-level queue before it reads the
+latest confirmed WAVE snapshot and derives a command payload. This makes rapid
+power, mode, and setpoint requests linearizable rather than merely serializing
+already-stale command objects in the controller. Direct thermostat writes are
+coalesced for one Matter transaction so a crossing write and its automatically
+adjusted companion become one confirmed WAVE range command. A power-off
+request invalidates pending and already-queued fan work immediately, before it
+waits for Homebridge's deferred state-update chain.
+
 Sleep is represented by the standard Matter Sleep system mode. Eco and Boost
 remain unexposed: Homebridge 2.2.1's Room Air Conditioner endpoint does not
 offer a stable standard preset/economy surface that preserves the required

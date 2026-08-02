@@ -382,6 +382,21 @@ function clustersForSnapshot(
     : state.mode === 'heat'
       ? state.targetTemperatureCelsius
       : undefined;
+  let projectedCoolingSetpoint = coolingSetpoint === undefined
+    ? numberOrUndefined(previousThermostat.occupiedCoolingSetpoint)
+      ?? DEFAULT_TEMPERATURE_CENTIDEGREES
+    : centidegrees(coolingSetpoint);
+  let projectedHeatingSetpoint = heatingSetpoint === undefined
+    ? numberOrUndefined(previousThermostat.occupiedHeatingSetpoint)
+      ?? DEFAULT_TEMPERATURE_CENTIDEGREES
+    : centidegrees(heatingSetpoint);
+  if (projectedHeatingSetpoint > projectedCoolingSetpoint) {
+    if (heatingSetpoint !== undefined && coolingSetpoint === undefined) {
+      projectedCoolingSetpoint = projectedHeatingSetpoint;
+    } else {
+      projectedHeatingSetpoint = projectedCoolingSetpoint;
+    }
+  }
   const airflow = normalizedAirflow(state.airflowSpeed)
     ?? numberOrUndefined(previousFan.percentSetting)
     ?? 20;
@@ -399,14 +414,8 @@ function clustersForSnapshot(
         : temperature === undefined
           ? nullableNumber(previousThermostat.localTemperature)
           : centidegrees(temperature),
-      occupiedCoolingSetpoint: coolingSetpoint === undefined
-        ? numberOrUndefined(previousThermostat.occupiedCoolingSetpoint)
-          ?? DEFAULT_TEMPERATURE_CENTIDEGREES
-        : centidegrees(coolingSetpoint),
-      occupiedHeatingSetpoint: heatingSetpoint === undefined
-        ? numberOrUndefined(previousThermostat.occupiedHeatingSetpoint)
-          ?? DEFAULT_TEMPERATURE_CENTIDEGREES
-        : centidegrees(heatingSetpoint),
+      occupiedCoolingSetpoint: projectedCoolingSetpoint,
+      occupiedHeatingSetpoint: projectedHeatingSetpoint,
       minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
       systemMode: context.lastSystemMode ?? MATTER_SYSTEM_MODE.cool,

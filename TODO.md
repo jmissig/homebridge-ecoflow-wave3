@@ -87,6 +87,9 @@ and no implicit HAP fallback.
 - [x] Set the standard Matter thermostat minimum setpoint deadband to zero so
   snapshot updates do not invent or transactionally reject a companion
   heat/cool setpoint that the WAVE is not currently controlling.
+- [x] Keep the inactive companion heat/cool setpoint transactionally valid when
+  a real WAVE target crosses it; verify cool-low and heat-high transitions in
+  the installed Matter runtime for ambient, outlet, and no-temperature shapes.
 
 **Phase M2 exit:** fake controller snapshots produce a complete Matter
 accessory with stable identity, cache behavior, metadata, climate state, fan

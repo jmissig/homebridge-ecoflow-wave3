@@ -368,6 +368,7 @@ describe('WAVE 3 codec', () => {
       { command: { type: 'mode', mode: 'cool' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 1 } },
       { command: { type: 'mode', mode: 'heat' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 2 } },
       { command: { type: 'mode', mode: 'fan' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 3 } },
+      { command: { type: 'mode', mode: 'dry' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 4 } },
       { command: { type: 'mode', mode: 'auto' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 5 } },
       { command: { type: 'targetTemperature', celsius: 22 }, expected: { cfgTempSet: 22 } },
       {

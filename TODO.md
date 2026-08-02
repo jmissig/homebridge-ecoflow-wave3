@@ -97,18 +97,18 @@ state, and temperature-source variants.
 
 ## Phase M3: Matter command and error mapping
 
-- [ ] Treat `OnOff.onOff` as the sole authoritative Matter power surface:
+- [x] Treat `OnOff.onOff` as the sole authoritative Matter power surface:
   - `false` -> WAVE power off
   - `true` -> WAVE power on while retaining the last confirmed active mode
-- [ ] Translate Matter thermostat handlers into existing typed WAVE commands:
+- [x] Translate Matter thermostat handlers into existing typed WAVE commands:
   - Cool
   - Heat
   - Auto
   - cooling and heating setpoints
   - setpoint raise/lower when Apple Home uses it
-- [ ] Translate Matter fan handlers into settled/coalesced WAVE fan-speed
+- [x] Translate Matter fan handlers into settled/coalesced WAVE fan-speed
   commands without creating a second power or mode authority.
-- [ ] Implement the verified Matter system-mode values through
+- [x] Implement the verified Matter system-mode values through
   `Thermostat.systemMode`:
   - Auto = `0x01`
   - Cool = `0x03`
@@ -116,29 +116,29 @@ state, and temperature-source variants.
   - Fan Only = `0x07`
   - Dry = `0x08`
   - Sleep = `0x09`
-- [ ] Do not use `Thermostat.systemMode = Off` as the canonical power control;
+- [x] Do not use `Thermostat.systemMode = Off` as the canonical power control;
   Room Air Conditioner power belongs to `OnOff.onOff`.
-- [ ] Use direct Matter cluster/type access when Homebridge's friendly device
+- [x] Use direct Matter cluster/type access when Homebridge's friendly device
   wrapper omits one of these standard enums or the AutoMode feature.
-- [ ] Map Eco, Normal, Sleep, and Boost submodes into standard Matter concepts
+- [x] Map Eco, Normal, Sleep, and Boost submodes into standard Matter concepts
   where possible:
   - Sleep -> Matter Sleep system mode
   - Eco -> Matter economy programming flag or named preset
   - Normal -> clear the active special preset/programming mode
   - Boost -> a named preset only if the standard preset surface supports it
-- [ ] Do not add manufacturer-specific clusters merely to expose Eco or Boost;
+- [x] Do not add manufacturer-specific clusters merely to expose Eco or Boost;
   leave a mode unexposed when no standard Matter representation works.
-- [ ] Preserve existing controller safety:
+- [x] Preserve existing controller safety:
   - 750 ms slider settling and latest-value coalescing
   - serialized commands
   - duplicate suppression
   - acknowledgement accumulation
   - observed-state confirmation
   - unrelated EcoFlow-app traffic filtering
-- [ ] Translate controller outcomes into standard Matter interaction errors
+- [x] Translate controller outcomes into standard Matter interaction errors
   such as constraint, invalid-in-state, busy, timeout, unavailable, and
   generic failure without poisoning cached read state.
-- [ ] Retain last confirmed Matter attributes through ordinary EcoFlow cloud
+- [x] Retain last confirmed Matter attributes through ordinary EcoFlow cloud
   and device gaps; use explicit reachability/account-failure state only where
   Homebridge's Matter bridge supports it without making Apple Home twitchy.
 

@@ -8,7 +8,7 @@ export const WAVE3_MODE_IDS = {
 } as const;
 
 export type Wave3Mode = keyof typeof WAVE3_MODE_IDS;
-export type Wave3ControllableMode = Exclude<Wave3Mode, 'dry' | 'off'>;
+export type Wave3ControllableMode = Exclude<Wave3Mode, 'off'>;
 export type Wave3AirflowSpeed = 20 | 40 | 60 | 80 | 100;
 export type Wave3Submode = 0 | 2 | 3 | 4;
 

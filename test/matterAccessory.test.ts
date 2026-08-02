@@ -13,7 +13,7 @@ import {
   Wave3MatterAccessory,
 } from '../src/matterAccessory.js';
 import type { Wave3AccessoryController } from '../src/platformAccessory.js';
-import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
+import type { Wave3Command, Wave3ControllerSnapshot } from '../src/wave3/domain.js';
 
 describe('WAVE 3 Matter accessory', () => {
   it('constructs a conformant endpoint with the installed Matter runtime', async () => {
@@ -73,14 +73,6 @@ describe('WAVE 3 Matter accessory', () => {
       assert.equal(supported.fanControl?.features.multiSpeed, true);
       await assert.rejects(
         async () => endpoint.act('reject unbound power command', agent => agent.onOff.on()),
-        /unavailable until command mapping/,
-      );
-      await assert.rejects(
-        endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } }),
-        /unavailable until command mapping/,
-      );
-      await assert.rejects(
-        endpoint.set({ fanControl: { percentSetting: 80 } }),
         /unavailable until command mapping/,
       );
       assert.equal(endpoint.state.onOff.onOff, true);
@@ -204,6 +196,127 @@ describe('WAVE 3 Matter accessory', () => {
         );
       }
     } finally {
+      await node.close();
+    }
+  });
+
+  it('routes Matter controls through confirmed WAVE commands', async () => {
+    const baseMatter = matterHarness().matter;
+    const controller = recordingController(onlineSnapshot());
+    const accessory = createWave3MatterAccessory(
+      baseMatter,
+      'matter-runtime-controls',
+      device('ambient'),
+      controller.snapshot,
+    );
+    const environment = new Environment('wave3-matter-controls-test', Environment.default);
+    new MockStorageService(environment);
+    const node = await ServerNode.create({
+      id: 'wave3-controls-node',
+      environment,
+      network: { port: 0 },
+      productDescription: { name: 'WAVE controls test', deviceType: 0x000e },
+      basicInformation: {
+        vendorName: 'Test',
+        vendorId: 0xfff1,
+        productName: 'WAVE controls test',
+        productId: 0x8000,
+        nodeLabel: 'WAVE controls test',
+        serialNumber: 'wave3-controls-test',
+        hardwareVersion: 1,
+        hardwareVersionString: '1',
+        softwareVersion: 1,
+        softwareVersionString: '1',
+      },
+    } as never);
+    let binding: Wave3MatterAccessory | undefined;
+    try {
+      const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-controls-aggregator' });
+      await node.add(aggregator);
+      const endpoint = new Endpoint(
+        wave3RoomAirConditionerDeviceType('ambient').with(BridgedDeviceBasicInformationServer),
+        {
+          id: accessory.UUID,
+          ...accessory.clusters,
+          bridgedDeviceBasicInformation: {
+            vendorName: 'EcoFlow',
+            nodeLabel: accessory.displayName,
+            productName: 'WAVE 3',
+            productLabel: 'WAVE 3',
+            serialNumber: 'redacted-controls',
+            reachable: true,
+          },
+        } as never,
+      );
+      await aggregator.add(endpoint);
+      const runtimeMatter = {
+        ...baseMatter,
+        updateAccessoryState: async (
+          _uuid: string,
+          cluster: string,
+          attributes: Record<string, unknown>,
+        ) => {
+          void endpoint.set({ [cluster]: attributes } as never);
+        },
+        getAccessoryState: async (_uuid: string, cluster: string) => {
+          const state = endpoint.state as unknown as Record<string, Record<string, unknown>>;
+          return state[cluster];
+        },
+      } as MatterAPI;
+      binding = new Wave3MatterAccessory(
+        runtimeMatter,
+        accessory,
+        controller,
+        'ambient',
+      );
+
+      await endpoint.act('turn off', agent => agent.onOff.off());
+      await endpoint.act('turn on', agent => agent.onOff.on());
+      for (const [systemMode, expected] of [
+        [MATTER_SYSTEM_MODE.cool, { type: 'mode', mode: 'cool' }],
+        [MATTER_SYSTEM_MODE.heat, { type: 'mode', mode: 'heat' }],
+        [MATTER_SYSTEM_MODE.auto, { type: 'mode', mode: 'auto' }],
+        [MATTER_SYSTEM_MODE.fan, { type: 'mode', mode: 'fan' }],
+        [MATTER_SYSTEM_MODE.dry, { type: 'mode', mode: 'dry' }],
+        [MATTER_SYSTEM_MODE.sleep, { type: 'submode', submode: 3 }],
+      ] as const) {
+        const before = controller.commands.length;
+        await endpoint.set({ thermostat: { systemMode } });
+        assert.deepEqual(controller.commands.slice(before), [expected]);
+      }
+
+      controller.setSnapshot(onlineSnapshot());
+      await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_000 } });
+      await endpoint.set({ thermostat: { occupiedCoolingSetpoint: 2_500 } });
+      assert.deepEqual(controller.commands.slice(-2), [
+        {
+          type: 'automaticTemperatureRange',
+          lowerCelsius: 20,
+          upperCelsius: 24,
+        },
+        {
+          type: 'automaticTemperatureRange',
+          lowerCelsius: 20,
+          upperCelsius: 25,
+        },
+      ]);
+
+      await endpoint.set({ fanControl: { percentSetting: 78 } });
+      await waitUntil(
+        () => controller.commands.some(command => command.type === 'airflowSpeed'),
+      );
+      await waitUntil(
+        () => endpoint.state.fanControl.percentSetting === 80
+          && endpoint.state.fanControl.speedSetting === 4,
+      );
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
+      assert.deepEqual(controller.commands.at(-1), { type: 'airflowSpeed', speed: 80 });
+      assert.deepEqual(controller.commands.slice(0, 2), [
+        { type: 'power', on: false },
+        { type: 'power', on: true },
+      ]);
+    } finally {
+      await binding?.stop();
       await node.close();
     }
   });
@@ -447,6 +560,62 @@ function fakeController(initial: Wave3ControllerSnapshot): Wave3AccessoryControl
     execute: async () => ({ status: 'failed', sequence: 1, reason: 'disconnected' }),
     stop: () => undefined,
     emit: snapshot => listener?.(snapshot),
+  };
+}
+
+function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryController & {
+  commands: Wave3Command[];
+  setSnapshot(snapshot: Wave3ControllerSnapshot): void;
+} {
+  let snapshot = initial;
+  let listener: ((snapshot: Wave3ControllerSnapshot) => void) | undefined;
+  const commands: Wave3Command[] = [];
+  return {
+    get snapshot() {
+      return snapshot;
+    },
+    commands,
+    setSnapshot(value) {
+      snapshot = value;
+      listener?.(value);
+    },
+    onSnapshot: value => {
+      listener = value;
+      return () => {
+        listener = undefined;
+      };
+    },
+    execute: async command => {
+      commands.push(command);
+      const state = { ...snapshot.state };
+      switch (command.type) {
+      case 'power':
+        state.powered = command.on;
+        break;
+      case 'mode':
+        state.mode = command.mode;
+        state.powered = true;
+        state.submode = 0;
+        break;
+      case 'targetTemperature':
+        state.targetTemperatureCelsius = command.celsius;
+        break;
+      case 'automaticTemperatureRange':
+        state.targetTemperatureLowerCelsius = command.lowerCelsius;
+        state.targetTemperatureUpperCelsius = command.upperCelsius;
+        break;
+      case 'airflowSpeed':
+        state.airflowSpeed = command.speed;
+        break;
+      case 'submode':
+        state.submode = command.submode;
+        break;
+      }
+      snapshot = { ...snapshot, state };
+      listener?.(snapshot);
+      return { status: 'confirmed', sequence: commands.length };
+    },
+    stop: () => undefined,
   };
 }
 

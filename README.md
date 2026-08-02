@@ -3,10 +3,10 @@
 Bring an EcoFlow WAVE 3 portable air conditioner into Apple Home through
 Homebridge.
 
-This plugin is deliberately small and device-specific. It presents each
-configured WAVE 3 as a standard HomeKit `HeaterCooler` accessory instead of
-trying to support every EcoFlow product or expose every setting in the EcoFlow
-app.
+This plugin is deliberately small and device-specific. The 0.2 development
+line presents each configured WAVE 3 as a Matter Room Air Conditioner instead
+of trying to support every EcoFlow product or expose every setting in the
+EcoFlow app.
 
 > [!WARNING]
 > This is an unpublished, pre-release project. Core cloud state, power,
@@ -15,11 +15,9 @@ app.
 > on it for unattended climate control.
 
 > [!NOTE]
-> The checked-in implementation still uses HAP `HeaterCooler`, but the accepted
-> pre-release direction is a Matter-only replacement. The migration sequence is
-> tracked in [`TODO.md`](TODO.md) and
-> [Decision 0003](docs/decisions/0003-matter-only.md). There will not be a
-> permanently supported dual HAP/Matter mode.
+> The 0.2 development line publishes Matter accessories only. Legacy HAP source
+> and tests remain temporarily for migration comparison and will be deleted in
+> Phase M5. There will not be a permanently supported dual HAP/Matter mode.
 
 ## What it provides
 
@@ -27,15 +25,16 @@ app.
 - Current and target temperature
 - Ambient humidity, alongside the ambient current-temperature reading
 - Cooling, heating, and automatic modes
+- Fan Only, Dry, and Sleep modes through the standard Matter system-mode enum
 - Fan speed
-- Device firmware revision in HomeKit accessory information
-- One HomeKit accessory for each explicitly configured WAVE 3
+- Device firmware revision in Matter bridged-device information
+- One Matter accessory for each explicitly configured WAVE 3
 
 The plugin uses EcoFlow's private, app-facing cloud service. It is not local
 control, requires an internet connection, and may stop working if EcoFlow
-changes that service. Dry mode, fan-only mode, drainage, battery information,
-display settings, and other secondary features are intentionally not presented
-as finished HomeKit features yet.
+changes that service. Eco, Boost, drainage, battery information, display
+settings, and other secondary features remain unexposed where Matter has no
+honest standard representation.
 
 ## Before you start
 
@@ -66,7 +65,7 @@ Add the **EcoFlow WAVE 3** platform in Homebridge UI and enter:
 
 1. Your EcoFlow account email and password.
 2. The EcoFlow API region used by your account.
-3. A HomeKit display name and serial number for each WAVE 3.
+3. A Matter display name and serial number for each WAVE 3.
 
 If you edit `config.json` directly, the equivalent configuration is:
 

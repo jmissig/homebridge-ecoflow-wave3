@@ -1,5 +1,6 @@
 import {
   devices,
+  MatterStatus,
   type MatterAccessory,
   type MatterAPI,
 } from 'homebridge';
@@ -7,7 +8,13 @@ import {
 import type { CurrentTemperatureSource, Wave3DeviceConfig } from './ecoflow/config.js';
 import type { Wave3AccessoryController } from './platformAccessory.js';
 import type { Wave3MatterAccessoryContext } from './platform.js';
-import type { Wave3ControllerSnapshot, Wave3Mode } from './wave3/domain.js';
+import type {
+  Wave3AirflowSpeed,
+  Wave3Command,
+  Wave3CommandFailure,
+  Wave3ControllerSnapshot,
+  Wave3Mode,
+} from './wave3/domain.js';
 
 const DEFAULT_TEMPERATURE_CENTIDEGREES = 2_000;
 
@@ -34,6 +41,7 @@ const MATTER_FAN_MODE = {
 } as const;
 
 const desiredMatterState = new Map<string, unknown>();
+const matterControls = new Map<string, Wave3MatterControl>();
 const Wave3OnOffBase = devices.RoomAirConditionerRequirements.OnOffServer;
 const Wave3ThermostatBase = devices.RoomAirConditionerRequirements.ThermostatServer.with(
   'Heating',
@@ -51,37 +59,58 @@ const MultiSpeedFanControlServer = devices.RoomAirConditionerRequirements.FanCon
 );
 
 class Wave3OnOffServer extends Wave3OnOffBase {
-  override on(): never {
-    throw controlsUnavailable();
+  override async on(): Promise<void> {
+    await requireMatterControl(this.endpoint.id).setPower(true);
+    await super.on();
   }
 
-  override off(): never {
-    throw controlsUnavailable();
+  override async off(): Promise<void> {
+    await requireMatterControl(this.endpoint.id).setPower(false);
+    await super.off();
   }
 
-  override toggle(): never {
-    throw controlsUnavailable();
+  override async toggle(): Promise<void> {
+    await requireMatterControl(this.endpoint.id).setPower(!this.state.onOff);
+    await super.toggle();
   }
 }
 
 class Wave3FanControlServer extends MultiSpeedFanControlServer {
   override initialize(): void {
     super.initialize();
-    this.reactTo(this.events.fanMode$Changing, this.validateFanMode);
-    this.reactTo(this.events.percentSetting$Changing, this.validatePercentSetting);
-    this.reactTo(this.events.speedSetting$Changing, this.validateSpeedSetting);
+    this.reactTo(this.events.fanMode$Changing, this.validateFanMode, { offline: true });
+    this.reactTo(this.events.percentSetting$Changing, this.validatePercentSetting, { offline: true });
+    this.reactTo(this.events.speedSetting$Changing, this.validateSpeedSetting, { offline: true });
   }
 
-  private validateFanMode(value: number): void {
-    requireDesiredValue(this.endpoint.id, 'fanControl', 'fanMode', value);
+  private async validateFanMode(value: number): Promise<void> {
+    await requireDesiredValueOrControl(
+      this.endpoint.id,
+      'fanControl',
+      'fanMode',
+      value,
+      control => control.setFanMode(value),
+    );
   }
 
-  private validatePercentSetting(value: number | null): void {
-    requireDesiredValue(this.endpoint.id, 'fanControl', 'percentSetting', value);
+  private async validatePercentSetting(value: number | null): Promise<void> {
+    await requireDesiredValueOrControl(
+      this.endpoint.id,
+      'fanControl',
+      'percentSetting',
+      value,
+      control => control.setFanPercent(value),
+    );
   }
 
-  private validateSpeedSetting(value: number | null): void {
-    requireDesiredValue(this.endpoint.id, 'fanControl', 'speedSetting', value);
+  private async validateSpeedSetting(value: number | null): Promise<void> {
+    await requireDesiredValueOrControl(
+      this.endpoint.id,
+      'fanControl',
+      'speedSetting',
+      value,
+      control => control.setFanSpeed(value),
+    );
   }
 }
 
@@ -90,30 +119,41 @@ class Wave3ThermostatServer extends Wave3ThermostatBase {
     super.initialize();
     this.reactTo(
       this.events.systemMode$Changing,
-      value => requireDesiredValue(this.endpoint.id, 'thermostat', 'systemMode', value),
+      value => requireDesiredValueOrControl(
+        this.endpoint.id,
+        'thermostat',
+        'systemMode',
+        value,
+        control => control.setSystemMode(value),
+      ),
+      { offline: true },
     );
     this.reactTo(
       this.events.occupiedHeatingSetpoint$Changing,
-      value => requireDesiredValue(
+      value => requireDesiredValueOrControl(
         this.endpoint.id,
         'thermostat',
         'occupiedHeatingSetpoint',
         value,
+        control => control.setHeatingSetpoint(value),
       ),
+      { offline: true },
     );
     this.reactTo(
       this.events.occupiedCoolingSetpoint$Changing,
-      value => requireDesiredValue(
+      value => requireDesiredValueOrControl(
         this.endpoint.id,
         'thermostat',
         'occupiedCoolingSetpoint',
         value,
+        control => control.setCoolingSetpoint(value),
       ),
+      { offline: true },
     );
   }
 
-  override setpointRaiseLower(): never {
-    throw controlsUnavailable();
+  override async setpointRaiseLower(request: { mode: number; amount: number }): Promise<void> {
+    await requireMatterControl(this.endpoint.id).raiseLowerSetpoint(request.mode, request.amount);
   }
 }
 
@@ -122,30 +162,41 @@ class Wave3NoTemperatureThermostatServer extends Wave3NoTemperatureThermostatBas
     super.initialize();
     this.reactTo(
       this.events.systemMode$Changing,
-      value => requireDesiredValue(this.endpoint.id, 'thermostat', 'systemMode', value),
+      value => requireDesiredValueOrControl(
+        this.endpoint.id,
+        'thermostat',
+        'systemMode',
+        value,
+        control => control.setSystemMode(value),
+      ),
+      { offline: true },
     );
     this.reactTo(
       this.events.occupiedHeatingSetpoint$Changing,
-      value => requireDesiredValue(
+      value => requireDesiredValueOrControl(
         this.endpoint.id,
         'thermostat',
         'occupiedHeatingSetpoint',
         value,
+        control => control.setHeatingSetpoint(value),
       ),
+      { offline: true },
     );
     this.reactTo(
       this.events.occupiedCoolingSetpoint$Changing,
-      value => requireDesiredValue(
+      value => requireDesiredValueOrControl(
         this.endpoint.id,
         'thermostat',
         'occupiedCoolingSetpoint',
         value,
+        control => control.setCoolingSetpoint(value),
       ),
+      { offline: true },
     );
   }
 
-  override setpointRaiseLower(): never {
-    throw controlsUnavailable();
+  override async setpointRaiseLower(request: { mode: number; amount: number }): Promise<void> {
+    await requireMatterControl(this.endpoint.id).raiseLowerSetpoint(request.mode, request.amount);
   }
 }
 
@@ -155,6 +206,27 @@ export interface MatterAccessoryBinding {
 
 export interface MatterAccessoryLogger {
   error(message: string): void;
+}
+
+interface Wave3MatterControl {
+  restoreConfirmedState(): void;
+  setPower(on: boolean): Promise<void>;
+  setSystemMode(systemMode: number): Promise<void>;
+  setHeatingSetpoint(centidegrees: number): Promise<void>;
+  setCoolingSetpoint(centidegrees: number): Promise<void>;
+  raiseLowerSetpoint(mode: number, amount: number): Promise<void>;
+  setFanMode(fanMode: number): Promise<void>;
+  setFanPercent(percent: number | null): Promise<void>;
+  setFanSpeed(speed: number | null): Promise<void>;
+}
+
+interface PendingFanWrite {
+  speed: Wave3AirflowSpeed;
+  timer?: ReturnType<typeof setTimeout>;
+  waiters: Array<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }>;
 }
 
 export function wave3RoomAirConditionerDeviceType(
@@ -223,15 +295,19 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private readonly detachSnapshot: () => void;
   private updateTail: Promise<void> = Promise.resolve();
   private presentedFirmwareRevision?: string;
+  private snapshot: Wave3ControllerSnapshot;
+  private pendingFanWrite?: PendingFanWrite;
   private stopped = false;
 
   constructor(
     private readonly matter: MatterAPI,
     private readonly accessory: MatterAccessory<Wave3MatterAccessoryContext>,
-    controller: Wave3AccessoryController,
+    private readonly controller: Wave3AccessoryController,
     private readonly currentTemperatureSource: CurrentTemperatureSource,
     private readonly logger: MatterAccessoryLogger = { error: () => undefined },
   ) {
+    this.snapshot = controller.snapshot;
+    matterControls.set(accessory.UUID, this.createMatterControl());
     this.updateTail = this.pushFirmware(
       controller.snapshot.firmwareVersions?.pd
       ?? controller.snapshot.firmwareVersions?.iot
@@ -241,6 +317,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       this.logger.error('EcoFlow WAVE 3 Matter firmware update failed');
     });
     this.detachSnapshot = controller.onSnapshot(snapshot => {
+      this.snapshot = snapshot;
       this.updateTail = this.updateTail
         .then(() => this.pushSnapshot(snapshot))
         .catch(() => {
@@ -255,10 +332,275 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
     this.stopped = true;
+    matterControls.delete(this.accessory.UUID);
+    if (this.pendingFanWrite !== undefined) {
+      if (this.pendingFanWrite.timer !== undefined) {
+        clearTimeout(this.pendingFanWrite.timer);
+      }
+      const error = new MatterStatus.InvalidInState('Matter accessory stopped');
+      for (const waiter of this.pendingFanWrite.waiters) {
+        waiter.reject(error);
+      }
+      this.pendingFanWrite = undefined;
+    }
     this.detachSnapshot();
     forgetDesiredState(this.accessory.UUID);
     await this.updateTail;
     forgetDesiredState(this.accessory.UUID);
+  }
+
+  private createMatterControl(): Wave3MatterControl {
+    return {
+      restoreConfirmedState: () => this.restoreConfirmedState(),
+      setPower: on => this.setPower(on),
+      setSystemMode: systemMode => this.setSystemMode(systemMode),
+      setHeatingSetpoint: value => this.setTemperatureSetpoint('heating', value),
+      setCoolingSetpoint: value => this.setTemperatureSetpoint('cooling', value),
+      raiseLowerSetpoint: (mode, amount) => this.raiseLowerSetpoint(mode, amount),
+      setFanMode: fanMode => this.setFanMode(fanMode),
+      setFanPercent: percent => this.setFanPercent(percent),
+      setFanSpeed: speed => this.setFanSpeed(speed),
+    };
+  }
+
+  private restoreConfirmedState(): void {
+    if (this.stopped) {
+      return;
+    }
+    const snapshot = this.snapshot;
+    queueMicrotask(() => {
+      if (this.stopped) {
+        return;
+      }
+      this.updateTail = this.updateTail
+        .then(() => this.pushSnapshot(snapshot))
+        .catch(() => {
+          this.logger.error('EcoFlow WAVE 3 Matter state restoration failed');
+        });
+    });
+  }
+
+  private async setPower(on: boolean): Promise<void> {
+    this.requireControllable();
+    if (this.snapshot.state.powered === on) {
+      return;
+    }
+    await this.execute({ type: 'power', on });
+  }
+
+  private async setSystemMode(systemMode: number): Promise<void> {
+    this.requireControllable();
+    const state = this.snapshot.state;
+    if (systemMode === MATTER_SYSTEM_MODE.sleep) {
+      if (!state.powered || state.mode === 'off') {
+        throw new MatterStatus.InvalidInState('Sleep mode requires the WAVE 3 to be on');
+      }
+      if (state.submode === 3) {
+        return;
+      }
+      await this.execute({ type: 'submode', submode: 3 });
+      return;
+    }
+
+    const mode = waveModeForSystemMode(systemMode);
+    if (mode === undefined) {
+      throw new MatterStatus.ConstraintError(`Unsupported Matter system mode ${systemMode}`);
+    }
+    if (state.submode === 3 || state.submode === 2 || state.submode === 4) {
+      await this.execute({ type: 'submode', submode: 0 });
+    }
+    if (this.snapshot.state.mode !== mode || !this.snapshot.state.powered) {
+      await this.execute({ type: 'mode', mode });
+    }
+  }
+
+  private async setTemperatureSetpoint(
+    kind: 'heating' | 'cooling',
+    value: number,
+  ): Promise<void> {
+    this.requireControllable();
+    const celsius = matterTemperature(value);
+    const state = this.snapshot.state;
+    if (state.mode === 'auto') {
+      const lowerCelsius = kind === 'heating'
+        ? celsius
+        : state.targetTemperatureLowerCelsius;
+      const upperCelsius = kind === 'cooling'
+        ? celsius
+        : state.targetTemperatureUpperCelsius;
+      if (lowerCelsius === undefined || upperCelsius === undefined) {
+        throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
+      }
+      if (lowerCelsius > upperCelsius) {
+        throw new MatterStatus.ConstraintError('Heating setpoint must not exceed cooling setpoint');
+      }
+      await this.execute({
+        type: 'automaticTemperatureRange',
+        lowerCelsius,
+        upperCelsius,
+      });
+      return;
+    }
+    if ((kind === 'heating' && state.mode === 'heat')
+      || (kind === 'cooling' && state.mode === 'cool')) {
+      await this.execute({ type: 'targetTemperature', celsius });
+      return;
+    }
+
+    // Matter may move the inactive companion setpoint to preserve its
+    // thermostat constraints. That value is not a second WAVE target.
+    if ((kind === 'heating' && state.mode === 'cool')
+      || (kind === 'cooling' && state.mode === 'heat')) {
+      return;
+    }
+    throw new MatterStatus.InvalidInState(`The ${kind} setpoint is inactive in the current mode`);
+  }
+
+  private async raiseLowerSetpoint(mode: number, amount: number): Promise<void> {
+    this.requireControllable();
+    if (!Number.isInteger(amount)) {
+      throw new MatterStatus.ConstraintError('Setpoint adjustment must use 0.1 degree steps');
+    }
+    const delta = amount / 10;
+    const state = this.snapshot.state;
+    if (mode === 0) {
+      const current = state.mode === 'auto'
+        ? state.targetTemperatureLowerCelsius
+        : state.mode === 'heat'
+          ? state.targetTemperatureCelsius
+          : undefined;
+      if (current === undefined) {
+        throw new MatterStatus.InvalidInState('Heating setpoint is not active');
+      }
+      await this.setTemperatureSetpoint('heating', centidegrees(current + delta));
+      return;
+    }
+    if (mode === 1) {
+      const current = state.mode === 'auto'
+        ? state.targetTemperatureUpperCelsius
+        : state.mode === 'cool'
+          ? state.targetTemperatureCelsius
+          : undefined;
+      if (current === undefined) {
+        throw new MatterStatus.InvalidInState('Cooling setpoint is not active');
+      }
+      await this.setTemperatureSetpoint('cooling', centidegrees(current + delta));
+      return;
+    }
+    if (mode === 2 && state.mode === 'auto') {
+      const lower = state.targetTemperatureLowerCelsius;
+      const upper = state.targetTemperatureUpperCelsius;
+      if (lower === undefined || upper === undefined) {
+        throw new MatterStatus.InvalidInState('Automatic temperature range is not yet known');
+      }
+      await this.execute({
+        type: 'automaticTemperatureRange',
+        lowerCelsius: roundedTenth(lower + delta),
+        upperCelsius: roundedTenth(upper + delta),
+      });
+      return;
+    }
+    throw new MatterStatus.InvalidInState('Requested setpoint adjustment is not active');
+  }
+
+  private async setFanMode(fanMode: number): Promise<void> {
+    if (fanMode === MATTER_FAN_MODE.off) {
+      this.restoreConfirmedState();
+      return;
+    }
+    const speed = fanMode === MATTER_FAN_MODE.low
+      ? 20
+      : fanMode === MATTER_FAN_MODE.medium
+        ? 60
+        : fanMode === MATTER_FAN_MODE.high
+          ? 100
+          : undefined;
+    if (speed === undefined) {
+      throw new MatterStatus.ConstraintError(`Unsupported Matter fan mode ${fanMode}`);
+    }
+    await this.scheduleFan(speed);
+  }
+
+  private async setFanPercent(percent: number | null): Promise<void> {
+    if (percent === 0) {
+      this.restoreConfirmedState();
+      return;
+    }
+    if (percent === null || percent < 0 || percent > 100) {
+      throw new MatterStatus.ConstraintError('Fan percentage must be between 1 and 100');
+    }
+    await this.scheduleFan(normalizedAirflow(percent) as Wave3AirflowSpeed);
+  }
+
+  private async setFanSpeed(speed: number | null): Promise<void> {
+    if (speed === 0) {
+      this.restoreConfirmedState();
+      return;
+    }
+    if (speed === null || !Number.isInteger(speed) || speed < 0 || speed > 5) {
+      throw new MatterStatus.ConstraintError('Fan speed must be between 1 and 5');
+    }
+    await this.scheduleFan((speed * 20) as Wave3AirflowSpeed);
+  }
+
+  private scheduleFan(speed: Wave3AirflowSpeed): Promise<void> {
+    this.requireControllable();
+    if (!this.snapshot.state.powered) {
+      throw new MatterStatus.InvalidInState('Use the Room Air Conditioner power control to turn on');
+    }
+    if (this.snapshot.state.airflowSpeed === speed && this.pendingFanWrite === undefined) {
+      return Promise.resolve();
+    }
+    if (this.pendingFanWrite === undefined) {
+      this.pendingFanWrite = { speed, waiters: [] };
+    } else {
+      this.pendingFanWrite.speed = speed;
+      if (this.pendingFanWrite.timer !== undefined) {
+        clearTimeout(this.pendingFanWrite.timer);
+      }
+    }
+    const pending = this.pendingFanWrite;
+    const result = new Promise<void>((resolve, reject) => {
+      pending.waiters.push({ resolve, reject });
+    });
+    pending.timer = setTimeout(() => {
+      void this.flushFan(pending);
+    }, 750);
+    return result;
+  }
+
+  private async flushFan(pending: PendingFanWrite): Promise<void> {
+    if (this.pendingFanWrite !== pending) {
+      return;
+    }
+    this.pendingFanWrite = undefined;
+    try {
+      await this.execute({ type: 'airflowSpeed', speed: pending.speed });
+      for (const waiter of pending.waiters) {
+        waiter.resolve();
+      }
+    } catch (error) {
+      for (const waiter of pending.waiters) {
+        waiter.reject(error);
+      }
+    }
+  }
+
+  private requireControllable(): void {
+    if (this.stopped) {
+      throw new MatterStatus.InvalidInState('Matter accessory stopped');
+    }
+    if (this.snapshot.availability !== 'online') {
+      throw new MatterStatus.InvalidInState('EcoFlow WAVE 3 is not currently controllable');
+    }
+  }
+
+  private async execute(command: Wave3Command): Promise<void> {
+    const result = await this.controller.execute(command);
+    if (result.status === 'confirmed') {
+      return;
+    }
+    throw matterErrorForFailure(result.reason);
   }
 
   private async pushSnapshot(snapshot: Wave3ControllerSnapshot): Promise<void> {
@@ -476,15 +818,24 @@ function rememberDesiredCluster(
   }
 }
 
-function requireDesiredValue(
+async function requireDesiredValueOrControl(
   uuid: string,
   cluster: string,
   attribute: string,
   value: unknown,
-): void {
-  if (!Object.is(desiredMatterState.get(desiredStateKey(uuid, cluster, attribute)), value)) {
-    throw controlsUnavailable();
+  control: (control: Wave3MatterControl) => Promise<void>,
+): Promise<void> {
+  if (Object.is(desiredMatterState.get(desiredStateKey(uuid, cluster, attribute)), value)) {
+    return;
   }
+  const matterControl = requireMatterControl(uuid);
+  try {
+    await control(matterControl);
+  } catch (error) {
+    matterControl.restoreConfirmedState();
+    throw error;
+  }
+  desiredMatterState.set(desiredStateKey(uuid, cluster, attribute), value);
 }
 
 function desiredStateKey(uuid: string, cluster: string, attribute: string): string {
@@ -493,6 +844,60 @@ function desiredStateKey(uuid: string, cluster: string, attribute: string): stri
 
 function controlsUnavailable(): Error {
   return new Error('Matter controls are unavailable until command mapping is initialized');
+}
+
+function requireMatterControl(uuid: string): Wave3MatterControl {
+  const control = matterControls.get(uuid);
+  if (control === undefined) {
+    throw controlsUnavailable();
+  }
+  return control;
+}
+
+function waveModeForSystemMode(systemMode: number): Exclude<Wave3Mode, 'off'> | undefined {
+  switch (systemMode) {
+  case MATTER_SYSTEM_MODE.auto:
+    return 'auto';
+  case MATTER_SYSTEM_MODE.cool:
+    return 'cool';
+  case MATTER_SYSTEM_MODE.heat:
+    return 'heat';
+  case MATTER_SYSTEM_MODE.fan:
+    return 'fan';
+  case MATTER_SYSTEM_MODE.dry:
+    return 'dry';
+  default:
+    return undefined;
+  }
+}
+
+function matterTemperature(value: number): number {
+  if (!Number.isInteger(value)) {
+    throw new MatterStatus.ConstraintError('Temperature must be an integer number of centidegrees');
+  }
+  const celsius = value / 100;
+  if (celsius < 16 || celsius > 30 || Math.abs(celsius * 10 - Math.round(celsius * 10)) > 0.0001) {
+    throw new MatterStatus.ConstraintError('Temperature must be 16–30°C in 0.1°C steps');
+  }
+  return roundedTenth(celsius);
+}
+
+function roundedTenth(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function matterErrorForFailure(reason: Wave3CommandFailure): Error {
+  switch (reason) {
+  case 'timeout':
+    return new MatterStatus.Timeout('EcoFlow WAVE 3 did not confirm the command');
+  case 'disconnected':
+  case 'stopped':
+    return new MatterStatus.InvalidInState('EcoFlow WAVE 3 is not currently controllable');
+  case 'acknowledgementRejected':
+    return new MatterStatus.Failure('EcoFlow WAVE 3 rejected the command');
+  case 'publicationFailed':
+    return new MatterStatus.Failure('EcoFlow cloud did not accept the command');
+  }
 }
 
 async function waitForCluster(

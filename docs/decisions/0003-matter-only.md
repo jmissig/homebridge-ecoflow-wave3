@@ -101,10 +101,19 @@ the asynchronously registered endpoint is available.
 
 Homebridge's generic handler wrappers replace required Room Air Conditioner
 behavior features, including OnOff Dead Front Behavior and Fan Control Multi
-Speed. The plugin therefore composes its own feature-preserving Matter
-behaviors. Before command mapping is installed, those behaviors accept only
-the exact desired values supplied by controller snapshots and transactionally
-reject controller-originated changes.
+Speed. The plugin therefore binds its feature-preserving behaviors directly to
+the existing WAVE controller. OnOff commands, thermostat modes and setpoints,
+setpoint raise/lower, and settled fan writes all wait for the controller's
+acknowledgement-plus-observed-state confirmation. Controller failures use
+standard Matter status errors, and failed asynchronous attribute writes queue a
+restoration of the last confirmed snapshot.
+
+Sleep is represented by the standard Matter Sleep system mode. Eco and Boost
+remain unexposed: Homebridge 2.2.1's Room Air Conditioner endpoint does not
+offer a stable standard preset/economy surface that preserves the required
+features, and this project will not add manufacturer-specific clusters merely
+to create those controls. Selecting a normal active system mode clears an
+observed Sleep, Eco, or Boost submode before changing the WAVE operating mode.
 
 ## Alternatives rejected
 

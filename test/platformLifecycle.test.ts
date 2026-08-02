@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import type {
   API,
   Logging,
-  PlatformAccessory,
+  MatterAccessory,
   PlatformConfig,
 } from 'homebridge';
 
@@ -12,11 +12,12 @@ import {
   EcoFlowWave3Platform,
   type EcoFlowWave3PlatformDependencies,
   type PlatformCloudSession,
+  type Wave3MatterAccessoryContext,
 } from '../src/platform.js';
 import type {
   Wave3AccessoryController,
-  Wave3PlatformAccessory,
 } from '../src/platformAccessory.js';
+import { wave3RoomAirConditionerDeviceType } from '../src/matterAccessory.js';
 import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
 
 describe('EcoFlow WAVE 3 platform lifecycle', () => {
@@ -43,35 +44,40 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const harness = platformHarness(validConfig());
     const expectedFirstUuid = uuidFor('FIRST1234');
     const expectedSecondUuid = uuidFor('SECOND5678');
-    const first = new FakeCachedAccessory('Old Bedroom Name', expectedFirstUuid);
-    first.context.lastTargetMode = 'heat';
-    const duplicate = new FakeCachedAccessory('Duplicate', expectedFirstUuid);
-    const stale = new FakeCachedAccessory('Old Unit', uuidFor('REMOVED9999'));
-    harness.platform.configureAccessory(first as unknown as PlatformAccessory);
-    harness.platform.configureAccessory(duplicate as unknown as PlatformAccessory);
-    harness.platform.configureAccessory(stale as unknown as PlatformAccessory);
+    const first = cachedMatterAccessory('Old Bedroom Name', expectedFirstUuid, 'FIRST1234', 'ambient');
+    first.context.lastSystemMode = 0x04;
+    const duplicate = cachedMatterAccessory('Duplicate', expectedFirstUuid, 'FIRST1234', 'ambient');
+    const stale = cachedMatterAccessory('Old Unit', uuidFor('REMOVED9999'), 'REMOVED9999', 'ambient');
+    harness.platform.configureMatterAccessory(first);
+    harness.platform.configureMatterAccessory(duplicate);
+    harness.platform.configureMatterAccessory(stale);
 
     assert.equal(harness.sessionCreateCount, 0);
     await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 1);
     assert.deepEqual(harness.events.slice(-1), ['session:start']);
     assert.deepEqual(harness.unregistered, [duplicate, stale]);
-    assert.equal(harness.registered.length, 1);
-    assert.equal(harness.registered[0]?.UUID, expectedSecondUuid);
-    assert.equal(first.displayName, 'Bedroom WAVE 3');
-    assert.deepEqual(first.context, {
+    assert.equal(harness.registered.length, 2);
+    assert.deepEqual(
+      harness.registered.map(accessory => accessory.UUID),
+      [expectedFirstUuid, expectedSecondUuid],
+    );
+    const restored = harness.platform.matterAccessories.get(expectedFirstUuid)!;
+    assert.equal(restored.displayName, 'Bedroom WAVE 3');
+    assert.deepEqual(restored.context, {
       schemaVersion: 1,
       serialNumber: 'FIRST1234',
-      lastTargetMode: 'heat',
+      currentTemperatureSource: 'ambient',
+      lastSystemMode: 0x04,
     });
-    assert.equal(harness.updated.length, 2);
+    assert.equal(harness.updated.length, 1);
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
     assert.deepEqual(harness.boundTemperatureSources, ['ambient', 'none']);
-    assert.equal(harness.platform.accessories.size, 2);
+    assert.equal(harness.platform.matterAccessories.size, 2);
 
     await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 1);
-    assert.equal(harness.registered.length, 1);
+    assert.equal(harness.registered.length, 2);
 
     await Promise.all([
       harness.platform.shutdown(),
@@ -94,6 +100,35 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const logs = Object.values(first.logs).flat().join('\n');
     assert.doesNotMatch(logs, /FIRST1234|SECOND5678/);
     assert.doesNotMatch(logs, /token|password|authorization/i);
+  });
+
+  it('re-registers a cached Matter endpoint when its temperature-source shape changes', async () => {
+    const config = validConfig();
+    config.devices = [{
+      name: 'Bedroom WAVE 3',
+      serialNumber: 'FIRST1234',
+      currentTemperatureSource: 'outlet',
+    }];
+    const harness = platformHarness(config);
+    const cached = cachedMatterAccessory(
+      'Bedroom WAVE 3',
+      uuidFor('FIRST1234'),
+      'FIRST1234',
+      'ambient',
+    );
+    harness.platform.configureMatterAccessory(cached);
+
+    await harness.signalDidFinishLaunching();
+    assert.deepEqual(harness.unregistered, [cached]);
+    assert.equal(harness.registered.length, 1);
+    assert.equal(
+      harness.registered[0]?.context.currentTemperatureSource,
+      'outlet',
+    );
+    assert.equal(
+      harness.registered[0]?.clusters?.relativeHumidityMeasurement,
+      undefined,
+    );
   });
 
   it('makes shutdown terminal and joins launch work already in progress', async () => {
@@ -131,15 +166,41 @@ class FakeCachedAccessory {
   }
 }
 
+function cachedMatterAccessory(
+  displayName: string,
+  UUID: string,
+  serialNumber: string,
+  currentTemperatureSource: 'ambient' | 'outlet' | 'none',
+): MatterAccessory<Wave3MatterAccessoryContext> {
+  return {
+    UUID,
+    displayName,
+    serialNumber,
+    manufacturer: 'EcoFlow',
+    model: 'WAVE 3',
+    deviceType: wave3RoomAirConditionerDeviceType(currentTemperatureSource),
+    context: {
+      schemaVersion: 1,
+      serialNumber,
+      currentTemperatureSource,
+    },
+    clusters: {
+      onOff: { onOff: false },
+      thermostat: { systemMode: 0x03 },
+      fanControl: { percentSetting: 20 },
+    },
+  };
+}
+
 function platformHarness(
   config: PlatformConfig,
   startGate?: ReturnType<typeof deferred>,
   matterEnabled = true,
 ): {
   platform: EcoFlowWave3Platform;
-  registered: FakeCachedAccessory[];
-  updated: FakeCachedAccessory[];
-  unregistered: FakeCachedAccessory[];
+  registered: MatterAccessory[];
+  updated: MatterAccessory[];
+  unregistered: MatterAccessory[];
   boundSerials: string[];
   boundTemperatureSources: string[];
   events: string[];
@@ -150,9 +211,9 @@ function platformHarness(
   readonly bindingStopCount: number;
   readonly controllerStopCount: number;
 } {
-  const registered: FakeCachedAccessory[] = [];
-  const updated: FakeCachedAccessory[] = [];
-  const unregistered: FakeCachedAccessory[] = [];
+  const registered: MatterAccessory[] = [];
+  const updated: MatterAccessory[] = [];
+  const unregistered: MatterAccessory[] = [];
   const boundSerials: string[] = [];
   const boundTemperatureSources: string[] = [];
   const events: string[] = [];
@@ -185,28 +246,44 @@ function platformHarness(
         uuid: {
           generate: matterUuidForSeed,
         },
+        clusterNames: {
+          OnOff: 'onOff',
+          Thermostat: 'thermostat',
+          FanControl: 'fanControl',
+          RelativeHumidityMeasurement: 'relativeHumidityMeasurement',
+        },
+        registerPlatformAccessories: async (
+          _plugin: string,
+          _platform: string,
+          accessories: MatterAccessory[],
+        ) => {
+          events.push('register');
+          registered.push(...accessories);
+        },
+        updatePlatformAccessories: async (accessories: MatterAccessory[]) => {
+          events.push('update');
+          updated.push(...accessories);
+        },
+        unregisterPlatformAccessories: async (
+          _plugin: string,
+          _platform: string,
+          accessories: MatterAccessory[],
+        ) => {
+          events.push('unregister');
+          unregistered.push(...accessories);
+        },
+        updateAccessoryState: async () => undefined,
       }
       : undefined,
     isMatterEnabled: () => matterEnabled,
-    registerPlatformAccessories: (
-      _plugin: string,
-      _platform: string,
-      accessories: FakeCachedAccessory[],
-    ) => {
-      events.push('register');
-      registered.push(...accessories);
+    registerPlatformAccessories: () => {
+      throw new Error('HAP registration must not be used');
     },
-    updatePlatformAccessories: (accessories: FakeCachedAccessory[]) => {
-      events.push('update');
-      updated.push(...accessories);
+    updatePlatformAccessories: () => {
+      throw new Error('HAP update must not be used');
     },
-    unregisterPlatformAccessories: (
-      _plugin: string,
-      _platform: string,
-      accessories: FakeCachedAccessory[],
-    ) => {
-      events.push('unregister');
-      unregistered.push(...accessories);
+    unregisterPlatformAccessories: () => {
+      throw new Error('HAP unregistration must not be used');
     },
     on: (event: string, listener: () => void) => {
       eventListeners.set(event, listener);
@@ -258,13 +335,13 @@ function platformHarness(
         },
       } satisfies Wave3AccessoryController;
     },
-    bindAccessory: (_platform, _accessory, _controller, device) => {
+    bindMatterAccessory: (_matter, _accessory, _controller, device) => {
       boundTemperatureSources.push(device.currentTemperatureSource);
       return {
         stop: () => {
           bindingStopCount += 1;
         },
-      } as Wave3PlatformAccessory;
+      };
     },
   };
   const platform = new EcoFlowWave3Platform(

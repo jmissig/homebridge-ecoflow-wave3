@@ -100,9 +100,9 @@ Available API regions are:
 - `api-a.ecoflow.com` — Americas
 - `api-e.ecoflow.com` — Europe
 
-Run early tests in an isolated Homebridge child bridge. Matter accessory
-registration and pairing are implemented in the following 0.2 migration phase;
-this phase establishes the required bridge contract first.
+Run early tests in an isolated Homebridge child bridge. After restart,
+Homebridge registers one Matter Room Air Conditioner per configured WAVE 3;
+pair the EcoFlow child bridge with Apple Home using its Matter QR code.
 
 The Matter-only 0.2 development line requires Matter on this child bridge and
 does not fall back to HAP. Configure the EcoFlow platform's `_bridge` block as:

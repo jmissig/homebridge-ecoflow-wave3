@@ -4,6 +4,7 @@ import type {
   DynamicPlatformPlugin,
   Logging,
   MatterAPI,
+  MatterAccessory,
   PlatformAccessory,
   PlatformConfig,
   Service,
@@ -22,9 +23,13 @@ import {
   type CloudSessionLogger,
 } from './ecoflow/session.js';
 import {
-  Wave3PlatformAccessory,
   type Wave3AccessoryController,
 } from './platformAccessory.js';
+import {
+  createWave3MatterAccessory,
+  Wave3MatterAccessory,
+  type MatterAccessoryBinding,
+} from './matterAccessory.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import {
   Wave3Controller,
@@ -41,7 +46,7 @@ export interface Wave3MatterAccessoryContext {
   schemaVersion: 1;
   serialNumber: string;
   currentTemperatureSource: Wave3DeviceConfig['currentTemperatureSource'];
-  lastTargetMode?: 'auto' | 'cool' | 'heat';
+  lastSystemMode?: number;
 }
 
 export interface PlatformCloudSession extends Wave3ControllerSession {
@@ -59,12 +64,13 @@ export interface EcoFlowWave3PlatformDependencies {
     session: PlatformCloudSession,
     logger: CloudSessionLogger,
   ): Wave3AccessoryController;
-  bindAccessory(
-    platform: EcoFlowWave3Platform,
-    accessory: PlatformAccessory<Wave3AccessoryContext>,
+  bindMatterAccessory(
+    matter: MatterAPI,
+    accessory: MatterAccessory<Wave3MatterAccessoryContext>,
     controller: Wave3AccessoryController,
     device: Wave3DeviceConfig,
-  ): Wave3PlatformAccessory;
+    logger: CloudSessionLogger,
+  ): MatterAccessoryBinding;
 }
 
 const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
@@ -79,11 +85,12 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
     session,
     { logger },
   ),
-  bindAccessory: (platform, accessory, controller, device) => new Wave3PlatformAccessory(
-    platform,
+  bindMatterAccessory: (matter, accessory, controller, device, logger) => new Wave3MatterAccessory(
+    matter,
     accessory,
     controller,
     device.currentTemperatureSource,
+    logger,
   ),
 };
 
@@ -96,10 +103,15 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   public readonly Characteristic: typeof Characteristic;
   public readonly homeKitWriteSettleMilliseconds = 750;
   public readonly accessories = new Map<string, PlatformAccessory>();
+  public readonly matterAccessories = new Map<
+    string,
+    MatterAccessory<Wave3MatterAccessoryContext>
+  >();
   public readonly matter?: MatterAPI;
 
   private readonly duplicateAccessories: PlatformAccessory[] = [];
-  private readonly bindings = new Map<string, Wave3PlatformAccessory>();
+  private readonly duplicateMatterAccessories: MatterAccessory<Wave3MatterAccessoryContext>[] = [];
+  private readonly bindings = new Map<string, MatterAccessoryBinding>();
   private readonly controllers = new Map<string, Wave3AccessoryController>();
   private readonly parsedConfig?: EcoFlowWave3Config;
   private session?: PlatformCloudSession;
@@ -159,6 +171,22 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     this.log.debug('Recorded a cached WAVE 3 accessory');
   }
 
+  /** Record Matter cache entries before launch for reconciliation by UUID. */
+  configureMatterAccessory(accessory: MatterAccessory): void {
+    const typedAccessory = accessory as MatterAccessory<Wave3MatterAccessoryContext>;
+    const existing = this.matterAccessories.get(accessory.UUID);
+    if (existing === accessory) {
+      return;
+    }
+    if (existing !== undefined) {
+      this.duplicateMatterAccessories.push(typedAccessory);
+      this.log.warn('Ignoring a duplicate cached Matter WAVE 3 accessory');
+      return;
+    }
+    this.matterAccessories.set(accessory.UUID, typedAccessory);
+    this.log.debug('Recorded a cached Matter WAVE 3 accessory');
+  }
+
   async launch(): Promise<void> {
     if (this.shutdownStarted) {
       return;
@@ -187,22 +215,22 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     const desiredUuids = new Set(
       this.parsedConfig.devices.map(device => this.uuidForSerial(device.serialNumber)),
     );
-    const staleAccessories = [
-      ...this.duplicateAccessories,
-      ...[...this.accessories.values()].filter(accessory => !desiredUuids.has(accessory.UUID)),
+    const staleMatterAccessories = [
+      ...this.duplicateMatterAccessories,
+      ...[...this.matterAccessories.values()].filter(accessory => !desiredUuids.has(accessory.UUID)),
     ];
-    if (staleAccessories.length > 0) {
-      this.api.unregisterPlatformAccessories(
+    if (staleMatterAccessories.length > 0) {
+      await this.matter!.unregisterPlatformAccessories(
         PLUGIN_NAME,
         PLATFORM_NAME,
-        staleAccessories,
+        staleMatterAccessories,
       );
-      for (const accessory of staleAccessories) {
-        if (this.accessories.get(accessory.UUID) === accessory) {
-          this.accessories.delete(accessory.UUID);
+      for (const accessory of staleMatterAccessories) {
+        if (this.matterAccessories.get(accessory.UUID) === accessory) {
+          this.matterAccessories.delete(accessory.UUID);
         }
       }
-      this.log.info(`Removed ${staleAccessories.length} stale WAVE 3 accessory record(s)`);
+      this.log.info(`Removed ${staleMatterAccessories.length} stale Matter WAVE 3 accessory record(s)`);
     }
 
     const logger = cloudLogger(this.log);
@@ -211,32 +239,42 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
 
     for (const device of this.parsedConfig.devices) {
       const uuid = this.uuidForSerial(device.serialNumber);
-      let accessory = this.accessories.get(uuid) as PlatformAccessory<Wave3AccessoryContext> | undefined;
-      if (accessory === undefined) {
-        accessory = new this.api.platformAccessory<Wave3AccessoryContext>(
-          device.name,
-          uuid,
+      const cachedAccessory = this.matterAccessories.get(uuid);
+      const sourceChanged = cachedAccessory !== undefined
+        && cachedAccessory.context.currentTemperatureSource !== device.currentTemperatureSource;
+      if (sourceChanged) {
+        await this.matter!.unregisterPlatformAccessories(
+          PLUGIN_NAME,
+          PLATFORM_NAME,
+          [cachedAccessory],
         );
-        this.accessories.set(uuid, accessory);
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-        this.log.info('Registered a configured WAVE 3 accessory');
-      } else {
-        accessory.updateDisplayName(device.name);
-        this.log.info('Restored a configured WAVE 3 accessory from cache');
+        this.matterAccessories.delete(uuid);
       }
 
-      const lastTargetMode = accessory.context.lastTargetMode;
-      accessory.context = {
-        schemaVersion: 1,
-        serialNumber: device.serialNumber,
-        ...(lastTargetMode === 'auto' || lastTargetMode === 'cool' || lastTargetMode === 'heat'
-          ? { lastTargetMode }
-          : {}),
-      };
-      this.api.updatePlatformAccessories([accessory]);
-
       const controller = this.dependencies.createController(device.serialNumber, session, logger);
-      const binding = this.dependencies.bindAccessory(this, accessory, controller, device);
+      const accessory = createWave3MatterAccessory(
+        this.matter!,
+        uuid,
+        device,
+        controller.snapshot,
+        sourceChanged ? undefined : cachedAccessory,
+      );
+      this.matterAccessories.set(uuid, accessory);
+      await this.matter!.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      if (cachedAccessory === undefined || sourceChanged) {
+        this.log.info('Registered a configured Matter WAVE 3 accessory');
+      } else {
+        await this.matter!.updatePlatformAccessories([accessory]);
+        this.log.info('Restored a configured Matter WAVE 3 accessory from cache');
+      }
+
+      const binding = this.dependencies.bindMatterAccessory(
+        this.matter!,
+        accessory,
+        controller,
+        device,
+        logger,
+      );
       this.controllers.set(uuid, controller);
       this.bindings.set(uuid, binding);
     }

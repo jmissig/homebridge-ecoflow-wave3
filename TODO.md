@@ -43,20 +43,20 @@ and no implicit HAP fallback.
 
 ## Phase M2: Matter accessory and cluster mapping
 
-- [ ] Replace `Wave3PlatformAccessory` with a Matter presentation adapter that
+- [x] Replace `Wave3PlatformAccessory` with a Matter presentation adapter that
   consumes only `Wave3Controller` snapshots and commands.
-- [ ] Register one Matter accessory per configured WAVE 3 through
+- [x] Register one Matter accessory per configured WAVE 3 through
   `api.matter.registerPlatformAccessories`.
-- [ ] Build one customized Matter `RoomAirConditioner` endpoint from
+- [x] Build one customized Matter `RoomAirConditioner` endpoint from
   Homebridge's exported `devices.RoomAirConditionerDevice` and
   `devices.RoomAirConditionerRequirements`.
-- [ ] Enable Heating, Cooling, and AutoMode on its Thermostat server rather
+- [x] Enable Heating, Cooling, and AutoMode on its Thermostat server rather
   than using Homebridge's narrower convenience `RoomAirConditioner` type
   unchanged.
-- [ ] Add the Room Air Conditioner's optional Fan Control server to the same
+- [x] Add the Room Air Conditioner's optional Fan Control server to the same
   endpoint. Do not create a separate Fan tile unless the standard optional
   cluster cannot be made to work through Homebridge's Matter API.
-- [ ] Initialize and update standard Matter state:
+- [x] Initialize and update standard Matter state:
   - on/off power state
   - thermostat local temperature
   - occupied heating and cooling setpoints
@@ -64,14 +64,14 @@ and no implicit HAP fallback.
   - fan mode, percentage, and discrete WAVE speed mapping
   - ambient humidity when `currentTemperatureSource` is `ambient`
   - firmware revision and stable manufacturer/model/serial metadata
-- [ ] Preserve the per-device temperature-source contract:
+- [x] Preserve the per-device temperature-source contract:
   - `ambient` -> ambient local temperature plus humidity part
   - `outlet` -> indoor supply-air local temperature, no humidity part
   - `none` -> null/unavailable Matter local temperature and no humidity part
-- [ ] Update external device changes with
+- [x] Update external device changes with
   `api.matter.updateAccessoryState`; do not mutate Matter state optimistically
   when an EcoFlow command is merely published.
-- [ ] Use `api.matter.updatePlatformAccessories` for firmware/name/context
+- [x] Use `api.matter.updatePlatformAccessories` for firmware/name/context
   metadata changes and unregister stale Matter accessories by UUID.
 
 **Phase M2 exit:** fake controller snapshots produce a complete Matter

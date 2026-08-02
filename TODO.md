@@ -15,7 +15,7 @@ EcoFlow cloud + WAVE 3 protocol
     -> Apple Home commissioning
 ```
 
-## Now — Phase M1: Matter-only platform contract
+## Completed — Phase M1: Matter-only platform contract
 
 - [x] Require `api.isMatterEnabled()` / `api.matter` before starting device
   sessions; emit one clear configuration error and stop when Matter is absent.
@@ -60,7 +60,8 @@ and no implicit HAP fallback.
   - on/off power state
   - thermostat local temperature
   - occupied heating and cooling setpoints
-  - system mode and running mode
+  - system mode; omit optional running mode until the protocol supplies direct
+    compressor-activity evidence
   - fan mode, percentage, and discrete WAVE speed mapping
   - ambient humidity when `currentTemperatureSource` is `ambient`
   - firmware revision and stable manufacturer/model/serial metadata
@@ -185,7 +186,7 @@ error types in the command path.
 only Matter accessories while retaining the existing cloud/controller safety
 properties.
 
-## Phase M5: Delete the HAP surface
+## Next — Phase M5: Delete the HAP surface
 
 - [ ] Delete `src/platformAccessory.ts` and replace its imports/usages with the
   Matter adapter.

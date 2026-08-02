@@ -1067,9 +1067,6 @@ describe('WAVE 3 Matter accessory', () => {
     assert.deepEqual(errors, [
       'EcoFlow WAVE 3 Matter system mode command failed: '
         + 'Use the Room Air Conditioner power control before selecting a system mode',
-      ...Array<string>(5).fill(
-        'EcoFlow WAVE 3 Matter state update failed: Matter state update was not confirmed by Homebridge',
-      ),
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Cooling setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',

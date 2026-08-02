@@ -34,7 +34,12 @@ const MATTER_FAN_MODE = {
   high: 0x03,
 } as const;
 
-const desiredMatterState = new Map<string, unknown>();
+interface DesiredMatterValue {
+  count: number;
+  value: unknown;
+}
+
+const desiredMatterState = new Map<string, DesiredMatterValue[]>();
 const matterControls = new Map<string, Wave3MatterControl>();
 const Wave3OnOffBase = devices.RoomAirConditionerRequirements.OnOffServer;
 const Wave3ThermostatBase = devices.RoomAirConditionerRequirements.ThermostatServer.with(
@@ -1049,12 +1054,21 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     rememberDesiredCluster(uuid, cluster, attributes);
     try {
       await this.matter.updateAccessoryState(uuid, cluster, attributes);
-      if (!await waitForAttributes(this.matter, uuid, cluster, attributes)) {
-        throw new Error('Matter state update was not confirmed by Homebridge');
-      }
-    } finally {
+    } catch (error) {
       forgetDesiredCluster(uuid, cluster, attributes);
+      throw error;
     }
+    const confirmedAttributes = await waitForAttributes(this.matter, uuid, cluster, attributes);
+    if (confirmedAttributes.size > 0) {
+      forgetDesiredCluster(uuid, cluster, Object.fromEntries(
+        Object.entries(attributes).filter(([attribute]) => confirmedAttributes.has(attribute)),
+      ));
+    }
+    // Homebridge 2.2.1 dispatches bridged state updates asynchronously and its
+    // public promise can resolve before Matter.js applies them. If read-back
+    // has not caught up, retain these values as internal-write markers. A
+    // later Matter.js reaction consumes them, a newer snapshot safely adds its
+    // own marker, and stop/release clears anything still pending.
   }
 
   private async pushFirmware(firmwareRevision: string | undefined): Promise<void> {
@@ -1224,7 +1238,15 @@ function rememberDesiredCluster(
   attributes: Record<string, unknown>,
 ): void {
   for (const [attribute, value] of Object.entries(attributes)) {
-    desiredMatterState.set(desiredStateKey(uuid, cluster, attribute), value);
+    const key = desiredStateKey(uuid, cluster, attribute);
+    const values = desiredMatterState.get(key) ?? [];
+    const existing = values.find(entry => Object.is(entry.value, value));
+    if (existing === undefined) {
+      values.push({ count: 1, value });
+    } else {
+      existing.count += 1;
+    }
+    desiredMatterState.set(key, values);
   }
 }
 
@@ -1235,7 +1257,17 @@ function forgetDesiredCluster(
 ): void {
   for (const [attribute, value] of Object.entries(attributes)) {
     const key = desiredStateKey(uuid, cluster, attribute);
-    if (Object.is(desiredMatterState.get(key), value)) {
+    const values = desiredMatterState.get(key);
+    const index = values?.findIndex(entry => Object.is(entry.value, value)) ?? -1;
+    if (values === undefined || index < 0) {
+      continue;
+    }
+    const entry = values[index]!;
+    entry.count -= 1;
+    if (entry.count === 0) {
+      values.splice(index, 1);
+    }
+    if (values.length === 0) {
       desiredMatterState.delete(key);
     }
   }
@@ -1248,7 +1280,10 @@ function requireDesiredValueOrControl(
   value: unknown,
   control: (control: Wave3MatterControl) => void,
 ): boolean {
-  if (Object.is(desiredMatterState.get(desiredStateKey(uuid, cluster, attribute)), value)) {
+  const desired = { [attribute]: value };
+  const key = desiredStateKey(uuid, cluster, attribute);
+  if (desiredMatterState.get(key)?.some(entry => Object.is(entry.value, value)) === true) {
+    forgetDesiredCluster(uuid, cluster, desired);
     return false;
   }
   control(requireMatterControl(uuid));
@@ -1348,21 +1383,28 @@ async function waitForAttributes(
   uuid: string,
   cluster: string,
   expected: Record<string, unknown>,
-): Promise<boolean> {
+): Promise<Set<string>> {
+  const confirmed = new Set<string>();
+  const expectedEntries = Object.entries(expected);
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
       const state = await matter.getAccessoryState(uuid, cluster);
-      if (state !== undefined && Object.entries(expected).every(
-        ([attribute, value]) => Object.is(state[attribute], value),
-      )) {
-        return true;
+      if (state !== undefined) {
+        for (const [attribute, value] of expectedEntries) {
+          if (Object.is(state[attribute], value)) {
+            confirmed.add(attribute);
+          }
+        }
+        if (confirmed.size === expectedEntries.length) {
+          return confirmed;
+        }
       }
     } catch {
       // Retry while Homebridge finishes endpoint registration or a deferred update.
     }
     await delay(25);
   }
-  return false;
+  return confirmed;
 }
 
 function delay(milliseconds: number): Promise<void> {

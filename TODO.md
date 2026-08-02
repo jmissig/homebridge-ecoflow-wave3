@@ -1,8 +1,8 @@
 # Current
 
-Commission the hardware-validated WAVE 3 integration as a Matter-only
-Homebridge 2.2.1 child bridge. Phases M1–M5 completed the source migration;
-Phase M6 now requires the separate Saga runtime account and Apple Home.
+Complete one-command-at-a-time hardware acceptance for the commissioned,
+Matter-only WAVE 3 Homebridge 2.2.1 child bridge. Phases M1–M6 are complete;
+Phase M7 is validating live Apple Home behavior and recovery paths.
 
 [Decision 0003](docs/decisions/0003-matter-only.md) governs this work. The
 cloud, protocol, normalized-state, command-confirmation, rate-limiting, and

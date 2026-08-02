@@ -38,6 +38,7 @@ export interface Wave3MatterAccessoryContext {
   serialNumber: string;
   currentTemperatureSource: Wave3DeviceConfig['currentTemperatureSource'];
   lastSystemMode?: number;
+  lastConfirmedAt?: number;
   firmwareRevision?: string;
 }
 

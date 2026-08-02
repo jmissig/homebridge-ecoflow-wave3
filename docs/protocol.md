@@ -396,12 +396,18 @@ publishing a command.
   `1`/cool can coexist with `dev_sleep_state=1`/off. Initial control state
   therefore requires both sleep state and operating mode; explicit mode `0`
   remains intrinsically off.
-- Matter should retain a complete last-confirmed presentation through
-  startup, transient stale, reconnecting, and device-offline states. Writes
-  must still require current authoritative online state; an explicit
-  account/session failure should report communication failure.
+- At bridge startup, Matter may retain a complete last-confirmed presentation
+  for up to 15 minutes after the bridge last received authoritative state.
+  The cached presentation is read-only: writes still require authoritative
+  online state from the current MQTT generation. If the cache is missing or
+  older than 15 minutes, or if that grace period expires before fresh state
+  arrives, publish `BridgedDeviceBasicInformation.reachable = false` so the
+  controller reports No Response. Fresh authoritative state restores
+  reachability and starts a new cache window. Explicit device-offline and
+  account/session-error evidence bypasses the grace period and becomes
+  unreachable immediately.
 
-[Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533277123425472562)
+[Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533514045766897795), superseding the broader 2026-08-01 cached-availability rule.
 
 **Hardware — 2026-08-02 Matter off-to-on sequencing**
 

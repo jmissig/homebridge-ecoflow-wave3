@@ -1308,24 +1308,37 @@ describe('WAVE 3 Matter accessory', () => {
       'ambient',
     );
 
-    assert.equal(harness.stateUpdates.length, 0);
+    await drainMicrotasks();
+    assert.equal(harness.stateUpdates.length, 1);
+    assert.deepEqual(harness.stateUpdates[0], {
+      cluster: 'bridgedDeviceBasicInformation',
+      attributes: { reachable: false },
+    });
     controller.emit(onlineSnapshot());
     await drainMicrotasks();
     assert.deepEqual(
       harness.stateUpdates.map(update => update.cluster),
       [
         'bridgedDeviceBasicInformation',
+        'bridgedDeviceBasicInformation',
         'onOff',
         'thermostat',
         'fanControl',
         'relativeHumidityMeasurement',
+        'bridgedDeviceBasicInformation',
       ],
     );
-    assert.deepEqual(harness.stateUpdates[0]?.attributes, {
-      softwareVersion: 16_842_856,
-      softwareVersionString: '1.1.0.104',
-    });
-    assert.equal(harness.stateUpdates[1]?.attributes.onOff, true);
+    assert.deepEqual(
+      harness.stateUpdates.find(update => 'softwareVersion' in update.attributes)?.attributes,
+      {
+        softwareVersion: 16_842_856,
+        softwareVersionString: '1.1.0.104',
+      },
+    );
+    assert.equal(
+      harness.stateUpdates.find(update => update.cluster === 'onOff')?.attributes.onOff,
+      true,
+    );
     assert.equal(harness.metadataUpdates.length, 0);
 
     controller.emit({
@@ -1379,20 +1392,91 @@ describe('WAVE 3 Matter accessory', () => {
     await drainMicrotasks();
     assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
 
-    for (const availability of ['reconnecting', 'accountError'] as const) {
-      controller.emit({
-        availability,
-        state: { powered: false },
-        runtimeTemperatures: {},
-      });
-      await drainMicrotasks();
-      assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
-    }
+    controller.emit({
+      availability: 'reconnecting',
+      state: { powered: false },
+      runtimeTemperatures: {},
+    });
+    await drainMicrotasks();
+    assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
+
+    controller.emit({
+      availability: 'accountError',
+      state: { powered: false },
+      runtimeTemperatures: {},
+    });
+    await drainMicrotasks();
+    assert.deepEqual(harness.stateUpdates.at(-1), {
+      cluster: 'bridgedDeviceBasicInformation',
+      attributes: { reachable: false },
+    });
+    const afterAccountError = harness.stateUpdates.length;
 
     await binding.stop();
     controller.emit(onlineSnapshot());
     await drainMicrotasks();
-    assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
+    assert.equal(harness.stateUpdates.length, afterAccountError);
+  });
+
+  it('serves recent cached state read-only, then expires it to No Response', async () => {
+    const harness = matterHarness();
+    const cached = createWave3MatterAccessory(
+      harness.matter,
+      'matter-recent-cache',
+      device('ambient'),
+      { ...onlineSnapshot(), updatedAt: 995 },
+    );
+    const restored = createWave3MatterAccessory(
+      harness.matter,
+      cached.UUID,
+      device('ambient'),
+      offlineSnapshot(),
+      cached,
+    );
+    const controller = fakeController(offlineSnapshot());
+    let now = 1_000;
+    const binding = new Wave3MatterAccessory(
+      harness.matter,
+      restored,
+      controller,
+      'ambient',
+      { error: () => undefined },
+      () => now,
+      10,
+    );
+
+    await drainMicrotasks();
+    assert.equal(
+      harness.stateUpdates.some(
+        update => update.attributes.reachable === false,
+      ),
+      false,
+    );
+
+    now = 1_006;
+    await new Promise<void>(resolve => setTimeout(resolve, 20));
+    await drainMicrotasks();
+    assert.deepEqual(
+      harness.stateUpdates.filter(update => 'reachable' in update.attributes).at(-1),
+      {
+        cluster: 'bridgedDeviceBasicInformation',
+        attributes: { reachable: false },
+      },
+    );
+
+    now = 1_007;
+    controller.emit({ ...onlineSnapshot(), updatedAt: 1_007 });
+    await drainMicrotasks();
+    assert.deepEqual(
+      harness.stateUpdates.filter(update => 'reachable' in update.attributes).at(-1),
+      {
+        cluster: 'bridgedDeviceBasicInformation',
+        attributes: { reachable: true },
+      },
+    );
+    assert.equal(restored.context.lastConfirmedAt, 1_007);
+
+    await binding.stop();
   });
 
   it('ignores stale partial startup telemetry until authoritative state arrives', async () => {
@@ -1417,7 +1501,11 @@ describe('WAVE 3 Matter accessory', () => {
       runtimeTemperatures: {},
     });
     await drainMicrotasks();
-    assert.equal(harness.stateUpdates.length, 0);
+    assert.equal(harness.stateUpdates.length, 1);
+    assert.deepEqual(harness.stateUpdates[0], {
+      cluster: 'bridgedDeviceBasicInformation',
+      attributes: { reachable: false },
+    });
 
     controller.emit(onlineSnapshot());
     await drainMicrotasks();

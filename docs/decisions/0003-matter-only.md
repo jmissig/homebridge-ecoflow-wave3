@@ -104,6 +104,15 @@ reports WAVE firmware directly through that standard Matter cluster's
 `softwareVersion` and `softwareVersionString` attributes after confirming that
 the asynchronously registered endpoint is available.
 
+The accessory context also records when this bridge last received
+authoritative WAVE state. On restart, cached Matter values remain presented for
+at most 15 minutes, but control stays blocked until the current MQTT generation
+supplies authoritative state. Missing or expired cache sets the standard
+`BridgedDeviceBasicInformation.reachable` attribute to false; fresh state sets
+it true and renews the timestamp. Explicit offline or account/session-error
+evidence becomes unreachable immediately rather than consuming the grace
+period. [Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533514045766897795)
+
 Homebridge's generic handler wrappers replace required Room Air Conditioner
 behavior features, including OnOff Dead Front Behavior and Fan Control Multi
 Speed. The plugin therefore binds its feature-preserving behaviors directly to

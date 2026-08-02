@@ -18,6 +18,7 @@ import type {
 
 const DEFAULT_TEMPERATURE_CENTIDEGREES = 2_000;
 const DESIRED_MATTER_VALUE_TTL_MS = 30_000;
+const CACHED_STATE_MAX_AGE_MILLISECONDS = 15 * 60_000;
 
 export const MATTER_SYSTEM_MODE = {
   auto: 0x01,
@@ -371,6 +372,13 @@ export function createWave3MatterAccessory(
     currentTemperatureSource: device.currentTemperatureSource,
     lastSystemMode: validSystemMode(cachedContext?.lastSystemMode)
       ?? MATTER_SYSTEM_MODE.cool,
+    ...(
+      snapshot.availability === 'online' && snapshot.updatedAt !== undefined
+        ? { lastConfirmedAt: snapshot.updatedAt }
+        : cachedContext?.lastConfirmedAt === undefined
+          ? {}
+          : { lastConfirmedAt: cachedContext.lastConfirmedAt }
+    ),
     ...(firmwareRevision === undefined ? {} : { firmwareRevision }),
   };
   const clusters = clustersForSnapshot(
@@ -412,6 +420,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private pendingFanWrite?: PendingFanWrite;
   private pendingTemperatureWrite?: PendingTemperatureWrite;
   private stagedOffThermostatIntent?: StagedOffThermostatIntent;
+  private cacheExpiryTimer?: ReturnType<typeof setTimeout>;
+  private presentedReachable = true;
   private stopped = false;
 
   constructor(
@@ -420,6 +430,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     private readonly controller: Wave3AccessoryController,
     private readonly currentTemperatureSource: CurrentTemperatureSource,
     private readonly logger: MatterAccessoryLogger = { error: () => undefined },
+    private readonly now: () => number = Date.now,
+    private readonly cachedStateMaxAgeMilliseconds = CACHED_STATE_MAX_AGE_MILLISECONDS,
   ) {
     this.snapshot = controller.snapshot;
     if (controller.snapshot.availability === 'online') {
@@ -435,8 +447,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       ?? controller.snapshot.firmwareVersions?.iot
       ?? accessory.context.firmwareRevision
       ?? accessory.firmwareRevision,
-    ).catch(error => {
-      this.logger.error(`EcoFlow WAVE 3 Matter firmware update failed: ${errorMessage(error)}`);
+    ).then(async () => {
+      await this.initializeReachability(controller.snapshot);
+    }).catch(error => {
+      this.logger.error(`EcoFlow WAVE 3 Matter startup state update failed: ${errorMessage(error)}`);
     });
     this.detachSnapshot = controller.onSnapshot(snapshot => {
       this.snapshot = snapshot;
@@ -457,6 +471,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
     this.stopped = true;
+    if (this.cacheExpiryTimer !== undefined) {
+      clearTimeout(this.cacheExpiryTimer);
+      this.cacheExpiryTimer = undefined;
+    }
     this.detachSnapshot();
     if (this.pendingFanWrite !== undefined) {
       if (this.pendingFanWrite.timer !== undefined) {
@@ -1031,8 +1049,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     }
 
     if (snapshot.availability !== 'online') {
+      await this.reconcileUnavailableSnapshot(snapshot);
       return;
     }
+
+    this.cancelCacheExpiry();
 
     await this.pushFirmware(snapshot.firmwareVersions?.pd ?? snapshot.firmwareVersions?.iot);
 
@@ -1064,6 +1085,87 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
         clusters.relativeHumidityMeasurement ?? {},
       );
     }
+    await this.pushReachability(true);
+    this.accessory.context.lastConfirmedAt = this.now();
+  }
+
+  private async initializeReachability(snapshot: Wave3ControllerSnapshot): Promise<void> {
+    if (snapshot.availability === 'online') {
+      this.accessory.context.lastConfirmedAt = this.now();
+      return;
+    }
+    if (this.hasRecentCachedState()) {
+      this.scheduleCacheExpiry();
+      return;
+    }
+    await this.pushReachability(false);
+  }
+
+  private async reconcileUnavailableSnapshot(
+    snapshot: Wave3ControllerSnapshot,
+  ): Promise<void> {
+    if (snapshot.availability === 'offline' || snapshot.availability === 'accountError') {
+      this.cancelCacheExpiry();
+      await this.pushReachability(false);
+      return;
+    }
+    if (this.hasRecentCachedState()) {
+      this.scheduleCacheExpiry();
+      return;
+    }
+    this.cancelCacheExpiry();
+    await this.pushReachability(false);
+  }
+
+  private hasRecentCachedState(): boolean {
+    const lastConfirmedAt = this.accessory.context.lastConfirmedAt;
+    return typeof lastConfirmedAt === 'number'
+      && Number.isFinite(lastConfirmedAt)
+      && Math.max(0, this.now() - lastConfirmedAt) <= this.cachedStateMaxAgeMilliseconds;
+  }
+
+  private scheduleCacheExpiry(): void {
+    this.cancelCacheExpiry();
+    const lastConfirmedAt = this.accessory.context.lastConfirmedAt;
+    if (lastConfirmedAt === undefined) {
+      return;
+    }
+    const remaining = Math.max(
+      0,
+      this.cachedStateMaxAgeMilliseconds - Math.max(0, this.now() - lastConfirmedAt),
+    );
+    this.cacheExpiryTimer = setTimeout(() => {
+      this.cacheExpiryTimer = undefined;
+      this.updateTail = this.updateTail.then(async () => {
+        if (!this.stopped
+          && this.snapshot.availability !== 'online'
+          && !this.hasRecentCachedState()) {
+          await this.pushReachability(false);
+        }
+      }).catch(error => {
+        this.logger.error(`EcoFlow WAVE 3 Matter reachability update failed: ${errorMessage(error)}`);
+      });
+    }, remaining);
+    this.cacheExpiryTimer.unref();
+  }
+
+  private cancelCacheExpiry(): void {
+    if (this.cacheExpiryTimer !== undefined) {
+      clearTimeout(this.cacheExpiryTimer);
+      this.cacheExpiryTimer = undefined;
+    }
+  }
+
+  private async pushReachability(reachable: boolean): Promise<void> {
+    if (reachable === this.presentedReachable) {
+      return;
+    }
+    await this.updateState(
+      this.accessory.UUID,
+      this.matter.clusterNames.BridgedDeviceBasicInformation,
+      { reachable },
+    );
+    this.presentedReachable = reachable;
   }
 
   private confirmedStateIsOff(): boolean {

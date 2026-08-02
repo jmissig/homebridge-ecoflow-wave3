@@ -98,6 +98,60 @@ describe('HomeKit climate mapping', () => {
 });
 
 describe('WAVE 3 HomeKit accessory', () => {
+  it('reports ambient humidity as a resilient read-only companion sensor', async () => {
+    const controller = new FakeController(snapshot({
+      powered: true,
+      mode: 'cool',
+      ambientTemperatureCelsius: 24,
+      ambientHumidityPercent: 62.64,
+      targetTemperatureCelsius: 21,
+    }));
+    const accessory = new FakeAccessory('Bedroom WAVE 3', 'uuid-humidity', 'SERIALHUMID');
+    new Wave3PlatformAccessory(
+      platformForAccessoryTests(),
+      accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
+      controller,
+    );
+
+    assert.equal(
+      await getCharacteristic(
+        accessory.humiditySensor!,
+        Characteristic.CurrentRelativeHumidity,
+      ),
+      63,
+    );
+    assert.equal(
+      accessory.humiditySensor!.getCharacteristic(Characteristic.Name).value,
+      'Bedroom WAVE 3 Humidity',
+    );
+
+    controller.emit({
+      availability: 'stale',
+      state: {},
+      runtimeTemperatures: {},
+    });
+    await Promise.resolve();
+    assert.equal(
+      await getCharacteristic(
+        accessory.humiditySensor!,
+        Characteristic.CurrentRelativeHumidity,
+      ),
+      63,
+    );
+
+    controller.emit({
+      availability: 'accountError',
+      state: {},
+      runtimeTemperatures: {},
+    });
+    await Promise.resolve();
+    const error = await getCharacteristicError(
+      accessory.humiditySensor!,
+      Characteristic.CurrentRelativeHumidity,
+    );
+    assert.equal(error, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+  });
+
   it('maps writes to controller commands and waits for confirmed results', async () => {
     const controller = new FakeController(snapshot({
       powered: true,
@@ -778,6 +832,7 @@ class FakeAccessory {
   readonly context: Wave3AccessoryContext;
   private readonly information = new Service.AccessoryInformation();
   heaterCooler?: Service;
+  humiditySensor?: Service;
 
   constructor(
     public displayName: string,
@@ -787,19 +842,31 @@ class FakeAccessory {
     this.context = { schemaVersion: 1, serialNumber };
   }
 
-  getService(service: typeof Service.AccessoryInformation | typeof Service.HeaterCooler): Service | undefined {
+  getService(
+    service: typeof Service.AccessoryInformation
+      | typeof Service.HeaterCooler
+      | typeof Service.HumiditySensor,
+  ): Service | undefined {
     if (service === Service.AccessoryInformation) {
       return this.information;
+    }
+    if (service === Service.HumiditySensor) {
+      return this.humiditySensor;
     }
     return this.heaterCooler;
   }
 
   addService(
-    service: typeof Service.HeaterCooler,
+    service: typeof Service.HeaterCooler | typeof Service.HumiditySensor,
     displayName: string,
   ): Service {
-    this.heaterCooler = new service(displayName);
-    return this.heaterCooler;
+    const instance = new service(displayName);
+    if (service === Service.HumiditySensor) {
+      this.humiditySensor = instance;
+    } else {
+      this.heaterCooler = instance;
+    }
+    return instance;
   }
 }
 

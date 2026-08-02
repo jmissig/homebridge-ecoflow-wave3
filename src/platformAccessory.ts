@@ -68,6 +68,7 @@ interface PendingTemperatureWrite {
  */
 export class Wave3PlatformAccessory {
   public readonly heaterCoolerService: Service;
+  public readonly humiditySensorService: Service;
 
   private snapshot: Wave3ControllerSnapshot;
   private readonly lastPresentedValues: HomeKitClimateValues = {
@@ -116,6 +117,21 @@ export class Wave3PlatformAccessory {
     this.heaterCoolerService.setCharacteristic(
       this.platform.Characteristic.Name,
       this.accessory.displayName,
+    );
+
+    // Ambient temperature is currently the only supported HomeKit current-
+    // temperature source. Keep its humidity reading on the same accessory so
+    // a future non-ambient temperature source can remove both together.
+    const humidityName = `${this.accessory.displayName} Humidity`;
+    this.humiditySensorService = this.accessory.getService(
+      this.platform.Service.HumiditySensor,
+    ) ?? this.accessory.addService(
+      this.platform.Service.HumiditySensor,
+      humidityName,
+    );
+    this.humiditySensorService.setCharacteristic(
+      this.platform.Characteristic.Name,
+      humidityName,
     );
 
     this.configureWritableRanges();
@@ -193,6 +209,9 @@ export class Wave3PlatformAccessory {
     this.bindAirflowSpeed(characteristic.RotationSpeed);
     this.bindReadOnly(characteristic.CurrentHeaterCoolerState, 'currentState');
     this.bindReadOnly(characteristic.CurrentTemperature, 'currentTemperature');
+    this.humiditySensorService
+      .getCharacteristic(characteristic.CurrentRelativeHumidity)
+      .onGet(() => this.readAmbientHumidity());
   }
 
   private configureWritableRanges(): void {
@@ -452,6 +471,10 @@ export class Wave3PlatformAccessory {
       for (const characteristicType of this.climateCharacteristics()) {
         this.heaterCoolerService.updateCharacteristic(characteristicType, error);
       }
+      this.humiditySensorService.updateCharacteristic(
+        this.platform.Characteristic.CurrentRelativeHumidity,
+        error,
+      );
       return;
     }
 
@@ -470,6 +493,12 @@ export class Wave3PlatformAccessory {
       }
       if (hasUsableHomeKitPresentation(snapshot, liveValues)) {
         this.hasConfirmedPresentation = true;
+      }
+      if (snapshot.state.ambientHumidityPercent !== undefined) {
+        this.humiditySensorService.updateCharacteristic(
+          this.platform.Characteristic.CurrentRelativeHumidity,
+          homeKitHumidity(snapshot.state.ambientHumidityPercent),
+        );
       }
     } else {
       this.platform.log.info(
@@ -520,6 +549,22 @@ export class Wave3PlatformAccessory {
     return this.heaterCoolerService
       .getCharacteristic(this.characteristicTypeForKey(key))
       .value;
+  }
+
+  private readAmbientHumidity(): CharacteristicValue {
+    if (this.snapshot.availability === 'accountError') {
+      throw this.communicationError();
+    }
+    const liveHumidity = this.snapshot.availability === 'online'
+      ? this.snapshot.state.ambientHumidityPercent
+      : undefined;
+    if (liveHumidity !== undefined) {
+      return homeKitHumidity(liveHumidity);
+    }
+    const cached = this.humiditySensorService
+      .getCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity)
+      .value;
+    return typeof cached === 'number' ? cached : 0;
   }
 
   private characteristicTypeForKey(key: HomeKitClimateKey): CharacteristicType {
@@ -613,6 +658,10 @@ export class Wave3PlatformAccessory {
         : this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE;
     return new this.platform.api.hap.HapStatusError(status);
   }
+}
+
+function homeKitHumidity(percent: number): number {
+  return Math.round(Math.min(100, Math.max(0, percent)));
 }
 
 export function mapSnapshotToHomeKit(

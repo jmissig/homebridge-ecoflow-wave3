@@ -233,9 +233,11 @@ Evaluate these only after the primary climate accessory is reliable:
   no displayed temperature. First verify whether a standard `HeaterCooler`
   can omit `CurrentTemperature` honestly, and hardware-validate the outlet
   sensor mapping. Outdoor WAVE 3 placement may make its ambient reading
-  unhelpful as the room temperature.
+  unhelpful as the room temperature. Ambient humidity is exposed only while
+  ambient temperature remains the selected source; remove the companion
+  humidity service for outlet/supply-air or no-temperature configurations.
   [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272228437692630)
-- [ ] Evaluate ambient humidity as a read-only `HumiditySensor`.
+  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304485248761926)
 - [ ] Determine whether the WAVE 3 firmware version is available through
   current device telemetry or the private cloud API, and expose it through
   Homebridge's standard accessory information when reliable.

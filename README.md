@@ -18,6 +18,7 @@ app.
 
 - Power control
 - Current and target temperature
+- Ambient humidity, alongside the ambient current-temperature reading
 - Cooling, heating, and automatic modes
 - Fan speed
 - One HomeKit accessory for each explicitly configured WAVE 3
@@ -110,4 +111,3 @@ Protocol-derived files retain their Apache 2.0 licensing and attribution; see
 ---
 
 Made with Codex and OpenClaw.
-

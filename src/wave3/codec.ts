@@ -50,6 +50,10 @@ export interface Wave3Diagnostic {
     number: number;
     wireType: string;
     dataLength: number;
+    scalarCandidates?: {
+      unsigned?: string;
+      float?: number;
+    };
   }>;
   unsupportedValues?: ReadonlyArray<{
     field: string;
@@ -742,16 +746,65 @@ function collectUnknownFieldDiagnostics(
     for (const field of message?.$unknown ?? []) {
       count += 1;
       if (fields.length < MAX_DIAGNOSTIC_UNKNOWN_FIELDS) {
+        const scalarCandidates = unknownScalarCandidates(scope, field);
         fields.push({
           scope,
           number: field.no,
           wireType: WIRE_TYPE_NAMES[field.wireType] ?? `unknown(${field.wireType})`,
           dataLength: field.data.length,
+          ...(scalarCandidates === undefined ? {} : { scalarCandidates }),
         });
       }
     }
   }
   return { count, fields };
+}
+
+function unknownScalarCandidates(
+  scope: string,
+  field: UnknownField,
+): NonNullable<NonNullable<Wave3Diagnostic['unknownFields']>[number]['scalarCandidates']>
+  | undefined {
+  if (scope === 'envelope' || scope === 'header') {
+    return undefined;
+  }
+  if (field.wireType === 0) {
+    const unsigned = decodeUnsignedVarint(field.data);
+    return unsigned === undefined ? undefined : { unsigned };
+  }
+  if (field.wireType === 5 && field.data.length === 4) {
+    const view = new DataView(field.data.buffer, field.data.byteOffset, field.data.byteLength);
+    const float = view.getFloat32(0, true);
+    return {
+      unsigned: String(view.getUint32(0, true)),
+      ...(Number.isFinite(float) ? { float } : {}),
+    };
+  }
+  if (field.wireType === 1 && field.data.length === 8) {
+    const view = new DataView(field.data.buffer, field.data.byteOffset, field.data.byteLength);
+    const float = view.getFloat64(0, true);
+    return {
+      unsigned: view.getBigUint64(0, true).toString(),
+      ...(Number.isFinite(float) ? { float } : {}),
+    };
+  }
+  return undefined;
+}
+
+function decodeUnsignedVarint(data: Uint8Array): string | undefined {
+  if (data.length === 0 || data.length > 10) {
+    return undefined;
+  }
+  let value = 0n;
+  let shift = 0n;
+  for (const byte of data) {
+    value |= BigInt(byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) {
+      return value.toString();
+    }
+    shift += 7n;
+  }
+  return undefined;
 }
 
 function collectDisplayUnknownFieldDiagnostics(

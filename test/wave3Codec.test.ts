@@ -436,10 +436,12 @@ describe('WAVE 3 codec', () => {
         number: 700,
         wireType: 'varint',
         dataLength: 1,
+        scalarCandidates: {
+          unsigned: '7',
+        },
       },
     ]);
-    assert.equal(JSON.stringify(decoded.diagnostic).includes('[7]'), false);
-    assert.equal(JSON.stringify(decoded.diagnostic).includes('[8]'), false);
+    assert.equal(JSON.stringify(decoded.diagnostic).includes('"data"'), false);
 
     const unknownMode = create(Wave3DisplayPropertyUploadSchema, {
       waveOperatingMode: 99,

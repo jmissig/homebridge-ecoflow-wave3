@@ -131,18 +131,22 @@ describe('WAVE 3 controller', () => {
     );
 
     session.emitPacket('property', displayPacket(2, { ambientTemperature: 25 }));
-    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.availability, 'stale');
     assert.deepEqual(controller.snapshot.state, {
       ambientTemperatureCelsius: 25,
     });
 
+    session.emitPacket('property', displayPacket(3, { mode: 1 }));
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.state.mode, 'cool');
+
     session.emitState('offline');
     session.emitState('online');
-    session.emitPacket('property', envelope(99, 3, Uint8Array.of(1, 2, 3)));
+    session.emitPacket('property', envelope(99, 4, Uint8Array.of(1, 2, 3)));
     assert.equal(controller.snapshot.availability, 'stale');
     assert.deepEqual(controller.snapshot.state, {});
 
-    session.emitPacket('property', displayPacket(4, { mode: 99 }));
+    session.emitPacket('property', displayPacket(5, { mode: 99 }));
     assert.equal(controller.snapshot.availability, 'stale');
     assert.deepEqual(controller.snapshot.state, {});
 

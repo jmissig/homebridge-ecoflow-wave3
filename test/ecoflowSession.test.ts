@@ -130,6 +130,12 @@ describe('EcoFlow cloud session', () => {
     assert.equal(session.state, 'online');
     assert.equal(controller.snapshot.availability, 'stale');
 
+    connection.emitMessage({
+      topic: buildWave3Topics('TEST_USER', 'TESTWAVE30001').property,
+      payload: humidityPacket(9, 73.2),
+    });
+    assert.equal(controller.snapshot.availability, 'stale');
+
     const getReply = buildWave3Topics('TEST_USER', 'TESTWAVE30001').getReply;
     connection.emitMessage({
       topic: getReply,
@@ -960,6 +966,17 @@ function runtimePacket(sequence: number, condenserTemperature: number): Uint8Arr
     toBinary(Wave3RuntimePropertyUploadSchema, create(
       Wave3RuntimePropertyUploadSchema,
       { tempCondenser: condenserTemperature },
+    )),
+  );
+}
+
+function humidityPacket(sequence: number, humidityPercent: number): Uint8Array {
+  return wave3Envelope(
+    21,
+    sequence,
+    toBinary(Wave3DisplayPropertyUploadSchema, create(
+      Wave3DisplayPropertyUploadSchema,
+      { humiAmbient: humidityPercent },
     )),
   );
 }

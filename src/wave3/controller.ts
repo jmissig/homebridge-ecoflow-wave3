@@ -8,6 +8,7 @@ import {
   decodeWave3QuotaReply,
   decodeWave3Message,
   encodeWave3Command,
+  hasWave3ControlStateEvidence,
   hasWave3DisplayEvidence,
   mergeWave3DisplayUpdate,
 } from './codec.js';
@@ -265,7 +266,15 @@ export class Wave3Controller {
       this.logger.info(
         `EcoFlow diagnostics: controller accepted display property sequence=${decoded.sequence} update=${JSON.stringify(decoded.update)}`,
       );
-      this.markStateFresh();
+      if (this.hasCurrentGenerationState || hasWave3ControlStateEvidence(decoded.update)) {
+        this.markStateFresh();
+      } else {
+        this.logger.info(
+          'EcoFlow diagnostics: controller retained supplemental display telemetry '
+          + 'while awaiting authoritative operating-mode state',
+        );
+        this.updateFreshnessForOnlineSession();
+      }
       this.confirmPendingFromObservedState(decoded.update);
       return;
     }
@@ -327,7 +336,15 @@ export class Wave3Controller {
     this.logger.info(
       `EcoFlow diagnostics: controller accepted latestQuotas update=${JSON.stringify(decoded.update)}`,
     );
-    this.markStateFresh();
+    if (this.hasCurrentGenerationState || hasWave3ControlStateEvidence(decoded.update)) {
+      this.markStateFresh();
+    } else {
+      this.logger.info(
+        'EcoFlow diagnostics: controller retained supplemental latestQuotas telemetry '
+        + 'while awaiting authoritative operating-mode state',
+      );
+      this.updateFreshnessForOnlineSession();
+    }
     this.confirmPendingFromObservedState(decoded.update);
   }
 

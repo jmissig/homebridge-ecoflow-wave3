@@ -433,6 +433,16 @@ export function hasWave3DisplayEvidence(update: Wave3DisplayUpdate): boolean {
     || Object.keys(update.modeParameters).length > 0;
 }
 
+/**
+ * Evidence sufficient to establish the active control state for a new MQTT
+ * connection generation. Sensor-only and saved-mode-parameter updates are
+ * useful supplemental telemetry, but do not identify the currently active
+ * operating mode (including authoritative mode 0/off).
+ */
+export function hasWave3ControlStateEvidence(update: Wave3DisplayUpdate): boolean {
+  return update.operatingModeId !== undefined;
+}
+
 function normalizeDisplayUpdate(
   display: MessageShape<typeof Wave3DisplayPropertyUploadSchema>,
 ): {

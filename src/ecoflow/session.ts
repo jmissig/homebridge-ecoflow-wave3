@@ -15,6 +15,7 @@ import type {
 import {
   decodeWave3QuotaReply,
   decodeWave3Message,
+  hasWave3ControlStateEvidence,
   hasWave3DisplayEvidence,
 } from '../wave3/codec.js';
 import type {
@@ -780,7 +781,7 @@ export class EcoFlowCloudSession {
     decoded: DecodedWave3Message,
   ): boolean {
     if (decoded.kind !== 'display'
-      || !hasWave3DisplayEvidence(decoded.update)
+      || !hasWave3ControlStateEvidence(decoded.update)
       || !isNewerSequence(
         decoded.sequence,
         this.lastDisplaySequenceByDevice.get(serialNumber),

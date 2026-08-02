@@ -23,7 +23,7 @@ Underlying philosophy: **software is ephemeral**. Old code should earn its keep.
 
 This project is:
 
-- a Homebridge **2.0-only** plugin
+- a Homebridge **2.2.1-or-newer** plugin
 - a contemporary TypeScript project based on the current official Homebridge dynamic-platform plugin template
 - a WAVE 3 integration using EcoFlow's app-facing cloud API, MQTT topics, and protobuf messages where no supported WAVE 3 API exists
 - a clean Matter climate surface over the subset of WAVE 3 behavior that is understood and verified
@@ -208,10 +208,12 @@ The repository is pre-release. Its EcoFlow authentication, cloud MQTT,
 protobuf, normalized state, command confirmation, app coexistence, and core
 power/temperature/fan control paths have a household WAVE 3 hardware baseline.
 
-The current checked-in presentation is still HAP `HeaterCooler`; it is a
-temporary implementation to be replaced by the Matter-only plan in `TODO.md`
-and [Decision 0003](docs/decisions/0003-matter-only.md). Do not add new HAP
-features or preserve HAP compatibility during that migration.
+The checked-in 0.2 presentation is Matter-only. The former HAP `HeaterCooler`
+adapter and its tests were removed in Phase M5. The dynamic-platform
+`configureAccessory` callback remains only as a one-way migration hook that
+unregisters pre-0.2 cached HAP records; it must never attach handlers or
+re-publish a HAP accessory. [Decision 0003](docs/decisions/0003-matter-only.md)
+governs this boundary.
 
 Do not describe a command or service as supported merely because it compiles, has a plausible protobuf field, or matches a Home Assistant implementation.
 

@@ -549,7 +549,7 @@ describe('WAVE 3 codec', () => {
     ]);
   });
 
-  it('omits invalid HomeKit-facing telemetry with bounded diagnostics', () => {
+  it('omits invalid presentation telemetry with bounded diagnostics', () => {
     const display = create(Wave3DisplayPropertyUploadSchema, {
       tempAmbient: Number.POSITIVE_INFINITY,
       humiAmbient: 101,

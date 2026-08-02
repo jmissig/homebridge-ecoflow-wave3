@@ -35,7 +35,7 @@ The initial WAVE 3 contribution and discussion are preserved in
 - **Hardware** — reserved for behavior observed against the household WAVE 3.
 
 Hardware confidence is recorded only for the bounded observations below; it
-does not yet establish supported HomeKit controls.
+does not yet establish supported Matter controls.
 
 The detailed redacted packet ledger from the first household validation lives
 in [Household WAVE 3 packet evidence — 2026-08-01](hardware-packet-evidence-2026-08-01.md).
@@ -250,7 +250,7 @@ Operating modes used upstream:
 Airflow steps used upstream are 20, 40, 60, 80, and 100.
 The pinned climate entity advertises a 16–30 °C target range with a 1 °C
 target step. Household hardware telemetry later demonstrated fractional target
-temperatures, so the HomeKit surface uses a 0.1 °C step within the same range.
+temperatures, so the Matter surface uses a 0.1 °C step within the same range.
 Submodes used upstream are normal `0`, boost `2`, sleep `3`, and eco `4`.
 Household display packets also repeatedly reported submode `1` for cool and
 heat saved-mode parameters. The plugin preserves that value as read-only state
@@ -271,9 +271,9 @@ firmware versions:
 | BMS | `bms_firm_ver` (241) |
 
 Decode a nonzero value as four big-endian version bytes. The household value
-`16842856` is `0x01010068`, therefore `1.1.0.104`. HomeKit's single
-`FirmwareRevision` uses PD first and IoT as a fallback; it does not conflate
-the envelope header's unrelated protocol `version=3` with device firmware.
+`16842856` is `0x01010068`, therefore `1.1.0.104`. Matter bridged-device
+metadata uses PD first and IoT as a fallback; it does not conflate the envelope
+header's unrelated protocol `version=3` with device firmware.
 [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
 
 **Inference**
@@ -291,8 +291,9 @@ the envelope header's unrelated protocol `version=3` with device firmware.
   even when `dev_sleep_state` is `0`.
 - The active mode list may be absent, incomplete, or shorter than the mode
   value; decoding must tolerate that without inventing targets.
-- Dry, presets, humidity targets, condensate, battery, drainage, and
-  diagnostic telemetry are not part of the first HomeKit slice.
+- Presets, humidity targets, condensate, battery, drainage, and diagnostic
+  telemetry are not part of the first Matter climate slice. Dry is exposed as
+  the standard Matter thermostat system mode after hardware acceptance.
 
 ## First-slice commands
 
@@ -360,7 +361,7 @@ publishing a command.
   ambient temperature, ambient humidity, and complete per-mode parameters.
 - Display fields `53` and `777` moved together and match upstream power
   telemetry definitions; mode-item field `4` matches the upstream humidity
-  target. None is required for the first HomeKit climate slice.
+  target. Neither is required for the first Matter climate slice.
 
 [Source: household Homebridge diagnostic log and narrated app actions shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
 
@@ -386,7 +387,7 @@ publishing a command.
   `1`/cool can coexist with `dev_sleep_state=1`/off. Initial control state
   therefore requires both sleep state and operating mode; explicit mode `0`
   remains intrinsically off.
-- HomeKit should retain a complete last-confirmed presentation through
+- Matter should retain a complete last-confirmed presentation through
   startup, transient stale, reconnecting, and device-offline states. Writes
   must still require current authoritative online state; an explicit
   account/session failure should report communication failure.

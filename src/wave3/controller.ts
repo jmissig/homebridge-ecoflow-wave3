@@ -27,6 +27,13 @@ import type {
   Wave3State,
 } from './domain.js';
 
+export interface Wave3AccessoryController {
+  readonly snapshot: Wave3ControllerSnapshot;
+  onSnapshot(listener: (snapshot: Wave3ControllerSnapshot) => void): () => void;
+  execute(command: Wave3Command): Promise<Wave3CommandResult>;
+  stop(): void;
+}
+
 export interface Wave3ControllerSession {
   readonly state: CloudSessionState;
   onMessage(listener: (message: Wave3InboundMessage) => void): () => void;

@@ -139,7 +139,7 @@ function isHostname(value: string): boolean {
 function validateDisplayName(value: string, field: string): void {
   if (!HOMEKIT_NAME_PATTERN.test(value)) {
     throw new ConfigurationError(
-      `${field} must be a HomeKit-safe name that starts and ends with a letter or number`,
+      `${field} must be an Apple Home-safe name that starts and ends with a letter or number`,
     );
   }
 }

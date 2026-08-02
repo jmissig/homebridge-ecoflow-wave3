@@ -1,13 +1,11 @@
 import type {
   API,
-  Characteristic,
   DynamicPlatformPlugin,
   Logging,
   MatterAPI,
   MatterAccessory,
   PlatformAccessory,
   PlatformConfig,
-  Service,
 } from 'homebridge';
 
 import {
@@ -23,9 +21,6 @@ import {
   type CloudSessionLogger,
 } from './ecoflow/session.js';
 import {
-  type Wave3AccessoryController,
-} from './platformAccessory.js';
-import {
   createWave3MatterAccessory,
   releaseWave3MatterAccessoryState,
   Wave3MatterAccessory,
@@ -34,14 +29,9 @@ import {
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import {
   Wave3Controller,
+  type Wave3AccessoryController,
   type Wave3ControllerSession,
 } from './wave3/controller.js';
-
-export interface Wave3AccessoryContext {
-  schemaVersion: 1;
-  serialNumber: string;
-  lastTargetMode?: 'auto' | 'cool' | 'heat';
-}
 
 export interface Wave3MatterAccessoryContext {
   schemaVersion: 1;
@@ -103,17 +93,12 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
  * accessories.
  */
 export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
-  public readonly Service: typeof Service;
-  public readonly Characteristic: typeof Characteristic;
-  public readonly homeKitWriteSettleMilliseconds = 750;
-  public readonly accessories = new Map<string, PlatformAccessory>();
   public readonly matterAccessories = new Map<
     string,
     MatterAccessory<Wave3MatterAccessoryContext>
   >();
   public readonly matter?: MatterAPI;
 
-  private readonly duplicateAccessories: PlatformAccessory[] = [];
   private readonly duplicateMatterAccessories: MatterAccessory<Wave3MatterAccessoryContext>[] = [];
   private readonly bindings = new Map<string, MatterAccessoryBinding>();
   private readonly controllers = new Map<string, Wave3AccessoryController>();
@@ -130,8 +115,6 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     public readonly api: API,
     private readonly dependencies: EcoFlowWave3PlatformDependencies = DEFAULT_DEPENDENCIES,
   ) {
-    this.Service = api.hap.Service;
-    this.Characteristic = api.hap.Characteristic;
     this.matter = api.matter;
 
     try {
@@ -158,22 +141,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     });
   }
 
-  /**
-   * Record cached accessories. Controllers and HomeKit handlers are attached
-   * only after Homebridge has finished restoring the complete cache.
-   */
+  /** Remove a pre-0.2 HAP cache entry; this platform publishes Matter only. */
   configureAccessory(accessory: PlatformAccessory): void {
-    const existing = this.accessories.get(accessory.UUID);
-    if (existing === accessory) {
-      return;
-    }
-    if (existing !== undefined) {
-      this.duplicateAccessories.push(accessory);
-      this.log.warn('Ignoring a duplicate cached WAVE 3 accessory');
-      return;
-    }
-    this.accessories.set(accessory.UUID, accessory);
-    this.log.debug('Recorded a cached WAVE 3 accessory');
+    this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+    this.log.info('Removed a legacy cached HAP WAVE 3 accessory');
   }
 
   /** Record Matter cache entries before launch for reconciliation by UUID. */

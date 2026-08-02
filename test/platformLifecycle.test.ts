@@ -5,6 +5,7 @@ import type {
   API,
   Logging,
   MatterAccessory,
+  PlatformAccessory,
   PlatformConfig,
 } from 'homebridge';
 
@@ -16,11 +17,21 @@ import {
 } from '../src/platform.js';
 import type {
   Wave3AccessoryController,
-} from '../src/platformAccessory.js';
+} from '../src/wave3/controller.js';
 import { wave3RoomAirConditionerDeviceType } from '../src/matterAccessory.js';
 import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
 
 describe('EcoFlow WAVE 3 platform lifecycle', () => {
+  it('removes legacy cached HAP accessories without publishing a HAP surface', () => {
+    const harness = platformHarness(validConfig());
+    const legacy = new FakeCachedAccessory('Legacy WAVE 3', 'legacy-hap-uuid');
+
+    harness.platform.configureAccessory(legacy as unknown as PlatformAccessory);
+
+    assert.deepEqual(harness.legacyHapUnregistered, [legacy]);
+    assert.match(harness.logs.info.join('\n'), /Removed a legacy cached HAP/);
+  });
+
   it('validates configuration before creating a session', async () => {
     const harness = platformHarness({
       name: 'Invalid',
@@ -384,6 +395,7 @@ function platformHarness(
   registered: MatterAccessory[];
   updated: MatterAccessory[];
   unregistered: MatterAccessory[];
+  legacyHapUnregistered: FakeCachedAccessory[];
   boundSerials: string[];
   boundTemperatureSources: string[];
   events: string[];
@@ -397,6 +409,7 @@ function platformHarness(
   const registered: MatterAccessory[] = [];
   const updated: MatterAccessory[] = [];
   const unregistered: MatterAccessory[] = [];
+  const legacyHapUnregistered: FakeCachedAccessory[] = [];
   const boundSerials: string[] = [];
   const boundTemperatureSources: string[] = [];
   const events: string[] = [];
@@ -416,18 +429,7 @@ function platformHarness(
   let registrationReady = registrationGate === undefined;
   const eventListeners = new Map<string, () => void>();
 
-  class Accessory extends FakeCachedAccessory {}
   const api = {
-    hap: {
-      Service: {},
-      Characteristic: {},
-      uuid: {
-        generate: () => {
-          throw new Error('HAP UUID generator must not be used');
-        },
-      },
-    },
-    platformAccessory: Accessory,
     matter: matterEnabled
       ? {
         uuid: {
@@ -484,14 +486,12 @@ function platformHarness(
       }
       : undefined,
     isMatterEnabled: () => matterEnabled,
-    registerPlatformAccessories: () => {
-      throw new Error('HAP registration must not be used');
-    },
-    updatePlatformAccessories: () => {
-      throw new Error('HAP update must not be used');
-    },
-    unregisterPlatformAccessories: () => {
-      throw new Error('HAP unregistration must not be used');
+    unregisterPlatformAccessories: (
+      _plugin: string,
+      _platform: string,
+      accessories: FakeCachedAccessory[],
+    ) => {
+      legacyHapUnregistered.push(...accessories);
     },
     on: (event: string, listener: () => void) => {
       eventListeners.set(event, listener);
@@ -582,6 +582,7 @@ function platformHarness(
     registered,
     updated,
     unregistered,
+    legacyHapUnregistered,
     boundSerials,
     boundTemperatureSources,
     events,

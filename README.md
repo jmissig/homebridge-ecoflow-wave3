@@ -15,9 +15,8 @@ EcoFlow app.
 > on it for unattended climate control.
 
 > [!NOTE]
-> The 0.2 development line publishes Matter accessories only. Legacy HAP source
-> and tests remain temporarily for migration comparison and will be deleted in
-> Phase M5. There will not be a permanently supported dual HAP/Matter mode.
+> The 0.2 development line publishes Matter accessories only. It does not
+> contain or maintain a parallel HAP climate adapter.
 
 ## What it provides
 
@@ -46,7 +45,7 @@ honest standard representation.
 
 You will need:
 
-- Homebridge 2
+- Homebridge 2.2.1 or newer
 - Node.js 24 or newer
 - An EcoFlow account with the WAVE 3 already added in the EcoFlow app
 - The serial number of each WAVE 3 you want to add
@@ -64,7 +63,7 @@ git clone https://github.com/jmissig/homebridge-ecoflow-wave3.git
 cd homebridge-ecoflow-wave3
 npm install
 npm run verify
-npm link
+npm install -g .
 ```
 
 Add the **EcoFlow WAVE 3** platform in Homebridge UI and enter:
@@ -108,6 +107,11 @@ Available API regions are:
 Run early tests in an isolated Homebridge child bridge. After restart,
 Homebridge registers one Matter Room Air Conditioner per configured WAVE 3;
 pair the EcoFlow child bridge with Apple Home using its Matter QR code.
+
+If this installation previously used the 0.1 HAP child bridge, follow the
+[Matter commissioning runbook](docs/commissioning.md). HAP and Matter pairings
+are different identities; room assignments, scenes, and automations do not
+migrate automatically.
 
 The Matter-only 0.2 development line requires Matter on this child bridge and
 does not fall back to HAP. Configure the EcoFlow platform's `_bridge` block as:

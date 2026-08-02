@@ -6,8 +6,8 @@ import {
 } from 'homebridge';
 
 import type { CurrentTemperatureSource, Wave3DeviceConfig } from './ecoflow/config.js';
-import type { Wave3AccessoryController } from './platformAccessory.js';
 import type { Wave3MatterAccessoryContext } from './platform.js';
+import type { Wave3AccessoryController } from './wave3/controller.js';
 import type {
   Wave3AirflowSpeed,
   Wave3Command,

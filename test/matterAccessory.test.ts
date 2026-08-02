@@ -12,7 +12,7 @@ import {
   wave3RoomAirConditionerDeviceType,
   Wave3MatterAccessory,
 } from '../src/matterAccessory.js';
-import type { Wave3AccessoryController } from '../src/platformAccessory.js';
+import type { Wave3AccessoryController } from '../src/wave3/controller.js';
 import type {
   Wave3Command,
   Wave3CommandFailure,

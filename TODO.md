@@ -1,7 +1,8 @@
 # Current
 
-Migrate the existing hardware-validated WAVE 3 integration from its temporary
-HAP `HeaterCooler` presentation to a Matter-only Homebridge 2 child bridge.
+Commission the hardware-validated WAVE 3 integration as a Matter-only
+Homebridge 2.2.1 child bridge. Phases M1–M5 completed the source migration;
+Phase M6 now requires the separate Saga runtime account and Apple Home.
 
 [Decision 0003](docs/decisions/0003-matter-only.md) governs this work. The
 cloud, protocol, normalized-state, command-confirmation, rate-limiting, and
@@ -186,28 +187,38 @@ error types in the command path.
 only Matter accessories while retaining the existing cloud/controller safety
 properties.
 
-## Next — Phase M5: Delete the HAP surface
+## Completed — Phase M5: Delete the HAP surface
 
-- [ ] Delete `src/platformAccessory.ts` and replace its imports/usages with the
+- [x] Delete `src/platformAccessory.ts` and replace its imports/usages with the
   Matter adapter.
-- [ ] Delete HAP `PlatformAccessory`, `Service.HeaterCooler`,
-  `HumiditySensor`, characteristic, `HapStatusError`, and cached-HAP lifecycle
-  code.
-- [ ] Delete HAP-specific tests and test doubles after equivalent Matter tests
+- [x] Delete HAP `Service.HeaterCooler`, `HumiditySensor`, characteristics,
+  `HapStatusError`, and presentation/cache state. Retain only Homebridge's
+  required `configureAccessory` callback as a one-way removal hook for legacy
+  cached HAP records.
+- [x] Delete HAP-specific tests and test doubles after equivalent Matter tests
   pass.
-- [ ] Remove the direct `@homebridge/hap-nodejs` development dependency if no
-  non-HAP test or type still needs it.
-- [ ] Remove HAP configuration, troubleshooting, and product-language from
+- [x] Remove the direct `@homebridge/hap-nodejs` development dependency; the
+  transitive copy owned by Homebridge is not a plugin presentation dependency.
+- [x] Remove legacy HAP troubleshooting and product-language from
   `README.md`, `AGENTS.md`, and release metadata; retain historical HAP evidence
-  only in git history and decision records.
-- [ ] Update architecture diagrams and protocol notes so the presentation
-  boundary is Matter, not HomeKit/HAP.
+  in decision and hardware-evidence records.
+- [x] Update architecture and protocol notes so the active presentation
+  boundary is Matter rather than HomeKit/HAP.
+- [x] Raise the declared Homebridge minimum to 2.2.1, matching the Matter API
+  and Room Air Conditioner behavior verified by the test suite.
 
 **Phase M5 exit:** the source tree contains no maintained HAP adapter or HAP
 compatibility path.
 
 ## Phase M6: Child-bridge cutover and commissioning
 
+- [x] Add a commissioning runbook with exact runtime requirements, install and
+  bridge configuration, read-only first checks, redaction rules, and stop
+  conditions.
+- [x] Confirm the 0.2 package/build contains the Matter adapter and no compiled
+  HAP presentation; run `npm run verify` and inspect `npm pack --dry-run`.
+- [x] Add a one-way legacy-cache removal hook so a pre-0.2 HAP accessory is
+  unregistered rather than silently restored during the upgrade.
 - [ ] Pull/build/install the Matter-only plugin under the Saga account that
   runs this Homebridge child bridge.
 - [ ] Stop using the existing HAP pairing and unpair the old EcoFlow WAVE 3

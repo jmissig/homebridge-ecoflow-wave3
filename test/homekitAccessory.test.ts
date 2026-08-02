@@ -670,7 +670,7 @@ describe('WAVE 3 HomeKit accessory', () => {
     assert.equal(accountError, HAPStatus.SERVICE_COMMUNICATION_FAILURE);
   });
 
-  it('reports no response when no trustworthy device state has ever arrived', async () => {
+  it('keeps cached values responsive while awaiting the first trustworthy device state', async () => {
     const controller = new FakeController({
       availability: 'offline',
       state: {},
@@ -682,6 +682,18 @@ describe('WAVE 3 HomeKit accessory', () => {
       accessory as unknown as PlatformAccessory<Wave3AccessoryContext>,
       controller,
     );
+    const currentTemperature = await getCharacteristic(
+      accessory.heaterCooler!,
+      Characteristic.CurrentTemperature,
+    );
+    assert.equal(typeof currentTemperature, 'number');
+
+    controller.emit({
+      availability: 'accountError',
+      state: {},
+      runtimeTemperatures: {},
+    });
+    await Promise.resolve();
     const error = await getCharacteristicError(
       accessory.heaterCooler!,
       Characteristic.CurrentTemperature,

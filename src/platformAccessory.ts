@@ -402,8 +402,7 @@ export class Wave3PlatformAccessory {
   }
 
   private readCharacteristic(key: HomeKitClimateKey): CharacteristicValue {
-    if (this.snapshot.availability === 'accountError'
-      || this.snapshot.availability === 'stopped') {
+    if (this.snapshot.availability === 'accountError') {
       throw this.communicationError();
     }
     const liveValue = this.snapshot.availability === 'online'
@@ -411,9 +410,9 @@ export class Wave3PlatformAccessory {
       : undefined;
     const value = liveValue ?? (this.hasConfirmedPresentation
       ? this.lastPresentedValues[key]
-      : undefined);
-    if (value === undefined) {
-      throw this.communicationError();
+      : undefined) ?? this.cachedCharacteristicValue(key);
+    if (value === undefined || value === null || value instanceof Error) {
+      return this.defaultCharacteristicValue(key);
     }
     return value;
   }
@@ -448,13 +447,15 @@ export class Wave3PlatformAccessory {
   }
 
   private pushSnapshot(snapshot: Wave3ControllerSnapshot): void {
-    if (snapshot.availability === 'stopped'
-      || snapshot.availability === 'accountError'
-      || (snapshot.availability !== 'online' && !this.hasConfirmedPresentation)) {
+    if (snapshot.availability === 'accountError') {
       const error = this.communicationError();
       for (const characteristicType of this.climateCharacteristics()) {
         this.heaterCoolerService.updateCharacteristic(characteristicType, error);
       }
+      return;
+    }
+
+    if (snapshot.availability === 'stopped') {
       return;
     }
 
@@ -477,10 +478,10 @@ export class Wave3PlatformAccessory {
     }
 
     if (!this.hasConfirmedPresentation) {
-      const error = this.communicationError();
-      for (const characteristicType of this.climateCharacteristics()) {
-        this.heaterCoolerService.updateCharacteristic(characteristicType, error);
-      }
+      this.platform.log.info(
+        'EcoFlow diagnostics: leaving cached HomeKit values untouched while awaiting '
+        + `the first trustworthy device snapshot (availability=${snapshot.availability})`,
+      );
       return;
     }
 
@@ -513,6 +514,52 @@ export class Wave3PlatformAccessory {
       characteristic.HeatingThresholdTemperature,
       characteristic.RotationSpeed,
     ];
+  }
+
+  private cachedCharacteristicValue(key: HomeKitClimateKey): CharacteristicValue | null {
+    return this.heaterCoolerService
+      .getCharacteristic(this.characteristicTypeForKey(key))
+      .value;
+  }
+
+  private characteristicTypeForKey(key: HomeKitClimateKey): CharacteristicType {
+    const characteristic = this.platform.Characteristic;
+    switch (key) {
+    case 'active':
+      return characteristic.Active;
+    case 'currentState':
+      return characteristic.CurrentHeaterCoolerState;
+    case 'targetState':
+      return characteristic.TargetHeaterCoolerState;
+    case 'currentTemperature':
+      return characteristic.CurrentTemperature;
+    case 'coolingThreshold':
+      return characteristic.CoolingThresholdTemperature;
+    case 'heatingThreshold':
+      return characteristic.HeatingThresholdTemperature;
+    case 'rotationSpeed':
+      return characteristic.RotationSpeed;
+    }
+  }
+
+  private defaultCharacteristicValue(key: HomeKitClimateKey): number {
+    const characteristic = this.platform.Characteristic;
+    switch (key) {
+    case 'active':
+      return characteristic.Active.INACTIVE;
+    case 'currentState':
+      return characteristic.CurrentHeaterCoolerState.INACTIVE;
+    case 'targetState':
+      return this.lastTargetState
+        ?? characteristic.TargetHeaterCoolerState.COOL;
+    case 'currentTemperature':
+      return 20;
+    case 'coolingThreshold':
+    case 'heatingThreshold':
+      return 16;
+    case 'rotationSpeed':
+      return 20;
+    }
   }
 
   private requireOnline(): void {

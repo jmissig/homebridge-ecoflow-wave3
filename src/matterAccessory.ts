@@ -392,6 +392,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private interactiveCommandDepth = 0;
   private fanWriteGeneration = 0;
   private updateTail: Promise<void> = Promise.resolve();
+  private lastConfirmedSnapshot?: Wave3ControllerSnapshot;
   private presentedFirmwareRevision?: string;
   private snapshot: Wave3ControllerSnapshot;
   private pendingFanWrite?: PendingFanWrite;
@@ -406,6 +407,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     private readonly logger: MatterAccessoryLogger = { error: () => undefined },
   ) {
     this.snapshot = controller.snapshot;
+    if (controller.snapshot.availability === 'online') {
+      this.lastConfirmedSnapshot = controller.snapshot;
+    }
     // Registration has completed before the binding is created. The desired
     // values used to admit asynchronous endpoint construction must not remain
     // as permanent exemptions for later controller writes.
@@ -421,6 +425,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     });
     this.detachSnapshot = controller.onSnapshot(snapshot => {
       this.snapshot = snapshot;
+      if (snapshot.availability === 'online') {
+        this.lastConfirmedSnapshot = snapshot;
+      }
       if (this.interactiveCommandDepth > 0) {
         this.deferredSnapshot = snapshot;
       } else {
@@ -491,7 +498,10 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (this.stopped) {
       return;
     }
-    const snapshot = this.snapshot;
+    const snapshot = this.lastConfirmedSnapshot;
+    if (snapshot === undefined) {
+      return;
+    }
     setImmediate(() => {
       if (this.stopped) {
         return;

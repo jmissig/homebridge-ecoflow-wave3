@@ -251,6 +251,7 @@ implementation.
 | Target humidity | active mode item's `humi_set` |
 | Automatic upper threshold | active mode item's `temp_thermostatic_upper_limit` |
 | Automatic lower threshold | active mode item's `temp_thermostatic_lower_limit` |
+| User temperature display unit | `user_temp_unit` (field 512): `1` Celsius, `2` Fahrenheit |
 
 Operating modes used upstream:
 
@@ -281,6 +282,26 @@ can preserve fractional values and clamp them to the 16–30 °C range, but it
 cannot tell Apple Home to render a whole-degree-only control. Any future
 whole-degree normalization should be an explicit presentation policy rather
 than a protocol limitation.
+
+The WAVE's Celsius/Fahrenheit selector is a display preference, not a change
+to the wire unit used for climate data. Household traffic reported display
+field `user_temp_unit` (`512`) changing from `1` to `2` when the EcoFlow app
+selected Fahrenheit, then back to `1` when the app selected Celsius. Ambient,
+outlet, runtime, target, and automatic-range values remained Celsius floats.
+The corresponding configuration write/acknowledgement field is
+`cfg_user_temp_unit` (`166`), with acknowledgement action ID `166` observed on
+the return to Celsius.
+
+This meaning matches Matter's optional
+`ThermostatUserInterfaceConfiguration.temperatureDisplayMode` attribute:
+Matter value `0` is Celsius and `1` is Fahrenheit. The mapping is therefore
+WAVE `1` -> Matter `0` and WAVE `2` -> Matter `1`. A Matter write may change
+the appliance preference, but the next qualified WAVE report remains the
+authoritative state. Temperatures stay canonical Celsius internally and at the
+Matter Thermostat boundary regardless of the display preference.
+
+[Source: pinned upstream WAVE 3 schema fields 512 and 166](https://github.com/tolwi/hassio-ecoflow-cloud/blob/95dc51eb12562c49be9067052814d5960cc0829f/custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto)
+[Told: household C -> F -> C app observation from Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533575308517572688)
 
 [Source: installed Matter v1.6 Thermostat cluster model · inspected 2026-08-02](../package-lock.json)
 
@@ -341,6 +362,7 @@ header's unrelated protocol `version=3` with device firmware.
 | Set automatic high threshold | `cfg_temp_thermostatic_upper_limit` |
 | Set automatic low threshold | `cfg_temp_thermostatic_lower_limit` |
 | Set airflow | `cfg_airflow_speed` |
+| Set user temperature display unit | `cfg_user_temp_unit` (`1` Celsius, `2` Fahrenheit) |
 
 The upstream implementation updates Home Assistant state optimistically before
 publishing a command.

@@ -21,6 +21,7 @@ export interface Wave3MatterControl {
   setFanMode(fanMode: number): void;
   setFanPercent(percent: number | null): void;
   setFanSpeed(speed: number | null): void;
+  setTemperatureDisplayMode(mode: number): void;
 }
 
 const desiredMatterState = new Map<string, DesiredMatterValue[]>();
@@ -159,7 +160,8 @@ function requiresMatterWriteGuard(cluster: string, attribute: string): boolean {
     attribute === 'fanMode'
     || attribute === 'percentSetting'
     || attribute === 'speedSetting'
-  ));
+  )) || (cluster === 'thermostatUserInterfaceConfiguration'
+    && attribute === 'temperatureDisplayMode');
 }
 
 function desiredStateKey(uuid: string, cluster: string, attribute: string): string {

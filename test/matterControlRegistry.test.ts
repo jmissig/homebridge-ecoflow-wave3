@@ -65,5 +65,6 @@ function fakeControl(): Wave3MatterControl {
     setFanMode: () => undefined,
     setFanPercent: () => undefined,
     setFanSpeed: () => undefined,
+    setTemperatureDisplayMode: () => undefined,
   };
 }

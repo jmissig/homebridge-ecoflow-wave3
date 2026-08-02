@@ -9,6 +9,7 @@ import {
 } from '@bufbuild/protobuf';
 
 import {
+  UserTempUnitType,
   Wave3ConfigWriteAckSchema,
   Wave3ConfigWriteSchema,
   Wave3DisplayPropertyUploadSchema,
@@ -29,6 +30,7 @@ import {
   type Wave3ModeParameters,
   type Wave3RuntimeTemperatures,
   type Wave3State,
+  type Wave3TemperatureDisplayUnit,
 } from './domain.js';
 
 const WAVE3_COMMAND_FUNCTION = 254;
@@ -447,6 +449,8 @@ export function mergeWave3DisplayUpdate(
     ?? previous?.state.ambientHumidityPercent;
   const outletTemperature = update.outletTemperatureCelsius
     ?? previous?.state.outletTemperatureCelsius;
+  const temperatureDisplayUnit = update.temperatureDisplayUnit
+    ?? previous?.state.temperatureDisplayUnit;
   if (ambientTemperature !== undefined) {
     state.ambientTemperatureCelsius = ambientTemperature;
   }
@@ -455,6 +459,9 @@ export function mergeWave3DisplayUpdate(
   }
   if (outletTemperature !== undefined) {
     state.outletTemperatureCelsius = outletTemperature;
+  }
+  if (temperatureDisplayUnit !== undefined) {
+    state.temperatureDisplayUnit = temperatureDisplayUnit;
   }
 
   if (sleepState === 0 || sleepState === 1) {
@@ -493,6 +500,7 @@ export function hasWave3DisplayEvidence(update: Wave3DisplayUpdate): boolean {
     || update.ambientTemperatureCelsius !== undefined
     || update.ambientHumidityPercent !== undefined
     || update.outletTemperatureCelsius !== undefined
+    || update.temperatureDisplayUnit !== undefined
     || Object.keys(update.modeParameters).length > 0;
 }
 
@@ -554,6 +562,14 @@ function normalizeDisplayUpdate(
       update.operatingModeId = operatingModeId;
     } else {
       addUnsupportedValue(unsupportedValues, 'wave_operating_mode', operatingModeId);
+    }
+  }
+  if (has(display, Wave3DisplayPropertyUploadSchema, 'userTempUnit')) {
+    const unit = wave3TemperatureDisplayUnit(display.userTempUnit!);
+    if (unit === undefined) {
+      addUnsupportedValue(unsupportedValues, 'user_temp_unit', display.userTempUnit!);
+    } else {
+      update.temperatureDisplayUnit = unit;
     }
   }
 
@@ -739,6 +755,18 @@ function normalizeAcknowledgement(
     'targetTemperatureUpperCelsius',
   );
   assignIfPresent(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgSysPause', values, 'systemPaused');
+  if (has(acknowledgement, Wave3ConfigWriteAckSchema, 'cfgUserTempUnit')) {
+    const unit = wave3TemperatureDisplayUnit(acknowledgement.cfgUserTempUnit!);
+    if (unit === undefined) {
+      addUnsupportedValue(
+        unsupportedValues,
+        'cfg_user_temp_unit',
+        acknowledgement.cfgUserTempUnit!,
+      );
+    } else {
+      values.temperatureDisplayUnit = unit;
+    }
+  }
 
   return {
     acknowledgement: {
@@ -786,7 +814,23 @@ function commandToConfig(command: Wave3Command): Record<string, boolean | number
     return { cfgAirflowSpeed: command.speed };
   case 'submode':
     return { cfgWaveOperatingSubmode: command.submode };
+  case 'temperatureDisplayUnit':
+    return {
+      cfgUserTempUnit: command.unit === 'celsius'
+        ? UserTempUnitType.C
+        : UserTempUnitType.F,
+    };
   }
+}
+
+function wave3TemperatureDisplayUnit(value: number): Wave3TemperatureDisplayUnit | undefined {
+  if (value === UserTempUnitType.C) {
+    return 'celsius';
+  }
+  if (value === UserTempUnitType.F) {
+    return 'fahrenheit';
+  }
+  return undefined;
 }
 
 function validateModeCommand(command: Extract<Wave3Command, { type: 'mode' }>): void {

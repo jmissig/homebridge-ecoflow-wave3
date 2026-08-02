@@ -8,6 +8,7 @@ import {
   requireDesiredValueOrControl,
   requireMatterControl,
 } from './controlRegistry.js';
+import { MATTER_THERMOSTAT_UI_CLUSTER } from './constants.js';
 import { fanModeForAirflow } from './projection.js';
 
 export function wave3RoomAirConditionerDeviceType(
@@ -32,6 +33,7 @@ export function wave3RoomAirConditionerDeviceType(
     'LocalTemperatureNotExposed',
   );
   const MultiSpeedFanControlServer = requirements.FanControlServer.with('MultiSpeed');
+  const Wave3ThermostatUiBase = requirements.ThermostatUserInterfaceConfigurationServer;
 
   class Wave3OnOffServer extends Wave3OnOffBase {
     override async on(): Promise<void> {
@@ -149,6 +151,24 @@ export function wave3RoomAirConditionerDeviceType(
     }
   }
 
+  class Wave3ThermostatUserInterfaceConfigurationServer extends Wave3ThermostatUiBase {
+    override initialize(): void {
+      super.initialize();
+      this.reactTo(
+        this.events.temperatureDisplayMode$Changing,
+        value => {
+          requireDesiredValueOrControl(
+            this.endpoint.id,
+            MATTER_THERMOSTAT_UI_CLUSTER,
+            'temperatureDisplayMode',
+            value,
+            control => control.setTemperatureDisplayMode(value),
+          );
+        },
+      );
+    }
+  }
+
   class Wave3ThermostatServer extends Wave3ThermostatBase {
     override initialize(): void {
       super.initialize();
@@ -262,12 +282,14 @@ export function wave3RoomAirConditionerDeviceType(
       Wave3OnOffServer,
       thermostat,
       Wave3FanControlServer,
+      Wave3ThermostatUserInterfaceConfigurationServer,
       requirements.RelativeHumidityMeasurementServer,
     )
     : roomAirConditioner.with(
       Wave3OnOffServer,
       thermostat,
       Wave3FanControlServer,
+      Wave3ThermostatUserInterfaceConfigurationServer,
     );
 }
 

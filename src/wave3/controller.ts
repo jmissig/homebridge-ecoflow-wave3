@@ -721,6 +721,8 @@ function expectedAcknowledgementValues(
     return { airflowSpeed: command.speed };
   case 'submode':
     return { submode: command.submode };
+  case 'temperatureDisplayUnit':
+    return { temperatureDisplayUnit: command.unit };
   }
 }
 
@@ -791,6 +793,8 @@ function stateMatchesCommand(state: Wave3State, command: Wave3Command): boolean 
     return state.airflowSpeed === command.speed;
   case 'submode':
     return state.submode === command.submode;
+  case 'temperatureDisplayUnit':
+    return state.temperatureDisplayUnit === command.unit;
   }
 }
 
@@ -853,6 +857,9 @@ function matchingObservedUpdateFields(
   if (parameters?.submode !== undefined) {
     evidencedFields.add('submode');
   }
+  if (update.temperatureDisplayUnit !== undefined) {
+    evidencedFields.add('temperatureDisplayUnit');
+  }
   for (const [field, expected] of Object.entries(
     expectedAcknowledgementValues(command),
   ) as Array<[CommandEvidenceField, boolean | number | string]>) {
@@ -890,6 +897,8 @@ function displayFieldMatchesExpected(
     return displayState.state.airflowSpeed === expected;
   case 'submode':
     return displayState.state.submode === expected;
+  case 'temperatureDisplayUnit':
+    return displayState.state.temperatureDisplayUnit === expected;
   }
 }
 

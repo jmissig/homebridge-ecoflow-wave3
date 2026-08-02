@@ -26,6 +26,8 @@ EcoFlow app.
 - Cooling, heating, and automatic modes
 - Matter protocol mappings for Fan Only, Dry, and Sleep system modes
 - Fan speed
+- Celsius/Fahrenheit display preference through the standard Matter thermostat
+  UI configuration cluster
 - Device firmware revision in Matter bridged-device information
 - One Matter accessory for each explicitly configured WAVE 3
 
@@ -52,6 +54,11 @@ two-step: first wake and confirm power, then apply and confirm the destination
 mode's saved target or Auto range. Auto ranges are normalized to the WAVE app's
 observed 4°C minimum without narrowing the 16–30°C Cool/Heat range in Matter.
 
+The Celsius/Fahrenheit preference changes only how compatible controller and
+appliance UIs display temperatures. Protocol state, commands, and Matter
+temperature values remain canonical Celsius measurements; no sensor or
+setpoint values are converted in storage.
+
 The plugin uses EcoFlow's private, app-facing cloud service. It is not local
 control, requires an internet connection, and may stop working if EcoFlow
 changes that service. Eco, Boost, drainage, battery information, display
@@ -75,13 +82,16 @@ This project distinguishes code coverage from household-device acceptance:
   `outlet` and `none` temperature-source
   variants, reconnect/power-cycle recovery, and stale-cache action-71 startup
   acquisition.
+- **Observed in EcoFlow traffic; Matter controller acceptance pending:**
+  bidirectional Celsius/Fahrenheit display preference synchronization through
+  the standard thermostat UI configuration cluster.
 - **Protocol-mapped but hidden by tested controllers:** Fan Only, Dry, and
   Sleep/Night. Apple Home on the iOS 27 beta and Eve do not present these
   standard system-mode values for this accessory.
 - **Published but not rendered by Apple Home:** device firmware in standard
   Matter bridged-device metadata.
 - **Intentionally unexposed:** Eco, Boost, drainage, battery, electrical
-  telemetry, timers, display settings, and other secondary controls whose
+  telemetry, timers, other display settings, and other secondary controls whose
   standard Matter behavior or WAVE semantics are not yet established.
 
 See [Troubleshooting and recovery](docs/troubleshooting.md) for startup,

@@ -9,6 +9,7 @@ import {
   type Wave3InboundMessage,
 } from '../src/ecoflow/session.js';
 import {
+  UserTempUnitType,
   Wave3ConfigWriteAckSchema,
   Wave3DisplayPropertyUploadSchema,
   Wave3RuntimePropertyUploadSchema,
@@ -1071,6 +1072,27 @@ describe('WAVE 3 controller', () => {
     assert.deepEqual(await second, { status: 'confirmed', sequence: 61 });
   });
 
+  it('confirms a temperature-display preference from matching acknowledgement and delta', async () => {
+    const session = new FakeControllerSession();
+    const controller = readyController(session, { initialSequence: 77 });
+
+    const result = controller.execute({
+      type: 'temperatureDisplayUnit',
+      unit: 'fahrenheit',
+    });
+    await flushAsyncWork();
+    session.emitPacket('setReply', acknowledgementPacket(77, {
+      configOk: true,
+      temperatureDisplayUnit: UserTempUnitType.F,
+    }));
+    session.emitPacket('property', displayPacket(201, {
+      temperatureDisplayUnit: UserTempUnitType.F,
+    }));
+
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 77 });
+    assert.equal(controller.snapshot.state.temperatureDisplayUnit, 'fahrenheit');
+  });
+
   it('aborts hanging publication on timeout and stop without blocking command completion', async () => {
     const timeoutSession = new FakeControllerSession();
     timeoutSession.publishGate = new Deferred<void>();
@@ -1344,6 +1366,7 @@ function displayPacket(
     lowerTemperature?: number;
     upperTemperature?: number;
     submode?: number;
+    temperatureDisplayUnit?: UserTempUnitType;
   },
 ): Uint8Array {
   const mode = values.mode ?? 1;
@@ -1366,6 +1389,7 @@ function displayPacket(
       ? {}
       : { devSleepState: values.sleepState }),
     waveModeInfo: { listInfo },
+    userTempUnit: values.temperatureDisplayUnit,
   });
   return envelope(
     21,
@@ -1386,6 +1410,7 @@ function acknowledgementPacket(
     upperTemperature?: number;
     submode?: number;
     systemPaused?: boolean;
+    temperatureDisplayUnit?: UserTempUnitType;
   },
 ): Uint8Array {
   const acknowledgement = create(Wave3ConfigWriteAckSchema, {
@@ -1398,6 +1423,7 @@ function acknowledgementPacket(
     cfgTempThermostaticUpperLimit: values.upperTemperature,
     cfgWaveOperatingSubmode: values.submode,
     cfgSysPause: values.systemPaused,
+    cfgUserTempUnit: values.temperatureDisplayUnit,
   });
   return envelope(
     18,

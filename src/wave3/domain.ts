@@ -11,6 +11,7 @@ export type Wave3Mode = keyof typeof WAVE3_MODE_IDS;
 export type Wave3ControllableMode = Exclude<Wave3Mode, 'off'>;
 export type Wave3AirflowSpeed = 20 | 40 | 60 | 80 | 100;
 export type Wave3Submode = 0 | 2 | 3 | 4;
+export type Wave3TemperatureDisplayUnit = 'celsius' | 'fahrenheit';
 
 export interface Wave3State {
   powered?: boolean;
@@ -24,6 +25,7 @@ export interface Wave3State {
   targetTemperatureUpperCelsius?: number;
   airflowSpeed?: number;
   submode?: number;
+  temperatureDisplayUnit?: Wave3TemperatureDisplayUnit;
 }
 
 export interface Wave3ModeParameters {
@@ -45,6 +47,7 @@ export interface Wave3DisplayUpdate {
   ambientTemperatureCelsius?: number;
   ambientHumidityPercent?: number;
   outletTemperatureCelsius?: number;
+  temperatureDisplayUnit?: Wave3TemperatureDisplayUnit;
   modeParameters: Readonly<Record<number, Wave3ModeParameters>>;
 }
 
@@ -85,7 +88,8 @@ export type Wave3Command =
   | { type: 'targetTemperature'; celsius: number }
   | { type: 'automaticTemperatureRange'; lowerCelsius: number; upperCelsius: number }
   | { type: 'airflowSpeed'; speed: Wave3AirflowSpeed }
-  | { type: 'submode'; submode: Wave3Submode };
+  | { type: 'submode'; submode: Wave3Submode }
+  | { type: 'temperatureDisplayUnit'; unit: Wave3TemperatureDisplayUnit };
 
 export type Wave3AcknowledgedValues = Partial<{
   mainPower: boolean;
@@ -96,6 +100,7 @@ export type Wave3AcknowledgedValues = Partial<{
   targetTemperatureLowerCelsius: number;
   targetTemperatureUpperCelsius: number;
   systemPaused: boolean;
+  temperatureDisplayUnit: Wave3TemperatureDisplayUnit;
 }>;
 
 export interface Wave3Acknowledgement {

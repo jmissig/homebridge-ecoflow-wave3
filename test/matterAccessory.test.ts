@@ -12,6 +12,7 @@ import {
   wave3RoomAirConditionerDeviceType,
   Wave3MatterAccessory,
 } from '../src/matterAccessory.js';
+import { MATTER_TEMPERATURE_DISPLAY_MODE } from '../src/matter/constants.js';
 import type { Wave3AccessoryController } from '../src/wave3/controller.js';
 import type {
   Wave3Command,
@@ -202,6 +203,11 @@ describe('WAVE 3 Matter accessory', () => {
       assert.equal(endpoint.lifecycle.isReady, true);
       assert.equal(supported.onOff?.features.deadFrontBehavior, true);
       assert.equal(supported.fanControl?.features.multiSpeed, true);
+      assert.equal('thermostatUserInterfaceConfiguration' in supported, true);
+      assert.equal(
+        endpoint.state.thermostatUserInterfaceConfiguration.temperatureDisplayMode,
+        MATTER_TEMPERATURE_DISPLAY_MODE.celsius,
+      );
       await assert.rejects(
         async () => endpoint.act('reject unbound power command', agent => agent.onOff.on()),
         /unavailable until command mapping/,
@@ -1260,6 +1266,39 @@ describe('WAVE 3 Matter accessory', () => {
       await stalledPowerOff;
       await endpoint.act('turn back on after stalled cancellation', agent => agent.onOff.on());
 
+      controller.setSnapshot({
+        ...controller.snapshot,
+        state: {
+          ...controller.snapshot.state,
+          temperatureDisplayUnit: 'celsius',
+        },
+      });
+      await waitUntil(
+        () => endpoint.state.thermostatUserInterfaceConfiguration.temperatureDisplayMode
+          === MATTER_TEMPERATURE_DISPLAY_MODE.celsius,
+        'Celsius display preference projection',
+      );
+      const commandsBeforeFahrenheit = controller.commands.length;
+      await endpoint.set({
+        thermostatUserInterfaceConfiguration: {
+          temperatureDisplayMode: MATTER_TEMPERATURE_DISPLAY_MODE.fahrenheit,
+        },
+      });
+      await waitUntil(
+        () => controller.snapshot.state.temperatureDisplayUnit === 'fahrenheit',
+        'Fahrenheit display preference command',
+      );
+      await waitUntil(
+        () => endpoint.state.thermostatUserInterfaceConfiguration.temperatureDisplayMode
+          === MATTER_TEMPERATURE_DISPLAY_MODE.fahrenheit,
+        'Fahrenheit display preference projection',
+      );
+      assert.deepEqual(controller.commands.slice(commandsBeforeFahrenheit), [{
+        type: 'temperatureDisplayUnit',
+        unit: 'fahrenheit',
+      }]);
+      assert.equal(controller.snapshot.state.ambientTemperatureCelsius, 21.23);
+
       controller.failNext('timeout');
       errorCount = errors.length;
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
@@ -1461,6 +1500,7 @@ describe('WAVE 3 Matter accessory', () => {
         'bridgedDeviceBasicInformation',
         'onOff',
         'thermostat',
+        'thermostatUserInterfaceConfiguration',
         'fanControl',
         'relativeHumidityMeasurement',
         'bridgedDeviceBasicInformation',
@@ -1857,6 +1897,9 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
         break;
       case 'submode':
         state.submode = command.submode;
+        break;
+      case 'temperatureDisplayUnit':
+        state.temperatureDisplayUnit = command.unit;
         break;
       }
       snapshot = { ...snapshot, state };

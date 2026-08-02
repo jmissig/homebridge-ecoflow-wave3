@@ -15,3 +15,10 @@ export const MATTER_FAN_MODE = {
   medium: 0x02,
   high: 0x03,
 } as const;
+
+export const MATTER_THERMOSTAT_UI_CLUSTER = 'thermostatUserInterfaceConfiguration';
+
+export const MATTER_TEMPERATURE_DISPLAY_MODE = {
+  celsius: 0x00,
+  fahrenheit: 0x01,
+} as const;

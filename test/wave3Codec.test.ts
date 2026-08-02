@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import { create, fromBinary, isFieldSet, toBinary } from '@bufbuild/protobuf';
 
 import {
+  UserTempUnitType,
   Wave3ConfigWriteAckSchema,
   Wave3ConfigWriteSchema,
   Wave3DisplayPropertyUploadSchema,
@@ -108,6 +109,33 @@ describe('WAVE 3 codec', () => {
         undefined,
         decoded.update,
       ).state.outletTemperatureCelsius ?? 0) - 16.6) < 0.0001);
+    }
+  });
+
+  it('decodes the observed WAVE temperature-display preference without converting temperatures', () => {
+    for (const [wireUnit, expected] of [
+      [UserTempUnitType.C, 'celsius'],
+      [UserTempUnitType.F, 'fahrenheit'],
+    ] as const) {
+      const display = create(Wave3DisplayPropertyUploadSchema, {
+        tempAmbient: 22.3,
+        userTempUnit: wireUnit,
+      });
+      const decoded = decodeWave3Message(envelope(
+        21,
+        46,
+        toBinary(Wave3DisplayPropertyUploadSchema, display),
+      ));
+
+      assert.equal(decoded.kind, 'display');
+      if (decoded.kind === 'display') {
+        assert.equal(decoded.update.temperatureDisplayUnit, expected);
+        assert.ok(Math.abs((decoded.update.ambientTemperatureCelsius ?? 0) - 22.3) < 0.0001);
+        assert.equal(
+          mergeWave3DisplayUpdate(undefined, decoded.update).state.temperatureDisplayUnit,
+          expected,
+        );
+      }
     }
   });
 
@@ -359,6 +387,28 @@ describe('WAVE 3 codec', () => {
     }
   });
 
+  it('decodes a temperature-display preference acknowledgement', () => {
+    const acknowledgement = create(Wave3ConfigWriteAckSchema, {
+      actionId: 166,
+      configOk: true,
+      cfgUserTempUnit: UserTempUnitType.F,
+    });
+    const decoded = decodeWave3Message(envelope(
+      18,
+      77,
+      toBinary(Wave3ConfigWriteAckSchema, acknowledgement),
+    ));
+
+    assert.equal(decoded.kind, 'acknowledgement');
+    if (decoded.kind === 'acknowledgement') {
+      assert.deepEqual(decoded.acknowledgement, {
+        actionId: 166,
+        reportedConfigOk: true,
+        values: { temperatureDisplayUnit: 'fahrenheit' },
+      });
+    }
+  });
+
   it('encodes every first-slice command in the reviewed write envelope', () => {
     const cases: Array<{
       command: Wave3Command;
@@ -396,6 +446,14 @@ describe('WAVE 3 codec', () => {
       },
       { command: { type: 'airflowSpeed', speed: 80 }, expected: { cfgAirflowSpeed: 80 } },
       { command: { type: 'submode', submode: 3 }, expected: { cfgWaveOperatingSubmode: 3 } },
+      {
+        command: { type: 'temperatureDisplayUnit', unit: 'celsius' },
+        expected: { cfgUserTempUnit: UserTempUnitType.C },
+      },
+      {
+        command: { type: 'temperatureDisplayUnit', unit: 'fahrenheit' },
+        expected: { cfgUserTempUnit: UserTempUnitType.F },
+      },
     ];
 
     for (const { command, expected } of cases) {

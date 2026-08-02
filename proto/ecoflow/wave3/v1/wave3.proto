@@ -9,6 +9,12 @@ syntax = "proto3";
 
 package ecoflow.wave3.v1;
 
+enum UserTempUnitType {
+  USER_TEMP_UNIT_TYPE_UNSPECIFIED = 0;
+  USER_TEMP_UNIT_TYPE_C = 1;
+  USER_TEMP_UNIT_TYPE_F = 2;
+}
+
 message Wave3WaveOperatingModeParamItem {
   optional uint32 submode = 1;
   optional uint32 airflow_speed = 2;
@@ -27,6 +33,7 @@ message Wave3DisplayPropertyUpload {
   optional float humi_ambient = 485;
   optional uint32 wave_operating_mode = 486;
   optional float temp_indoor_supply_air = 494;
+  optional UserTempUnitType user_temp_unit = 512;
   optional Wave3WaveOperatingModeParamList wave_mode_info = 514;
 }
 
@@ -52,6 +59,7 @@ message Wave3ConfigWrite {
   optional float cfg_temp_set = 156;
   optional float cfg_temp_thermostatic_upper_limit = 158;
   optional float cfg_temp_thermostatic_lower_limit = 159;
+  optional UserTempUnitType cfg_user_temp_unit = 166;
   optional bool cfg_sys_pause = 172;
 }
 
@@ -66,6 +74,7 @@ message Wave3ConfigWriteAck {
   optional float cfg_temp_set = 156;
   optional float cfg_temp_thermostatic_upper_limit = 158;
   optional float cfg_temp_thermostatic_lower_limit = 159;
+  optional UserTempUnitType cfg_user_temp_unit = 166;
   optional bool cfg_sys_pause = 172;
 }
 

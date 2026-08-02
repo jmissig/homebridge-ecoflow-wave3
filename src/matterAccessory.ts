@@ -12,6 +12,8 @@ import {
 import {
   MATTER_FAN_MODE,
   MATTER_SYSTEM_MODE,
+  MATTER_TEMPERATURE_DISPLAY_MODE,
+  MATTER_THERMOSTAT_UI_CLUSTER,
 } from './matter/constants.js';
 import type { Wave3MatterAccessoryContext } from './matter/context.js';
 import {
@@ -260,6 +262,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       setFanMode: fanMode => this.setFanMode(fanMode),
       setFanPercent: percent => this.setFanPercent(percent),
       setFanSpeed: speed => this.setFanSpeed(speed),
+      setTemperatureDisplayMode: mode => this.setTemperatureDisplayMode(mode),
     };
   }
 
@@ -601,6 +604,31 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     );
   }
 
+  private setTemperatureDisplayMode(mode: number): void {
+    this.requireControllable();
+    const unit = mode === MATTER_TEMPERATURE_DISPLAY_MODE.celsius
+      ? 'celsius'
+      : mode === MATTER_TEMPERATURE_DISPLAY_MODE.fahrenheit
+        ? 'fahrenheit'
+        : undefined;
+    if (unit === undefined) {
+      throw new MatterStatus.ConstraintError(
+        `Unsupported Matter temperature display mode ${mode}`,
+      );
+    }
+    this.logger.debug?.(`EcoFlow diagnostics: Matter write temperatureDisplayUnit=${unit}`);
+    if (this.snapshot.state.temperatureDisplayUnit === unit) {
+      return;
+    }
+    this.trackAttributeCommand(
+      this.enqueueControllerOperation(() => this.execute({
+        type: 'temperatureDisplayUnit',
+        unit,
+      })),
+      'temperature display mode',
+    );
+  }
+
   private trackAttributeCommand(command: Promise<void>, description: string): void {
     const tracked = command
       .catch(error => {
@@ -806,6 +834,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       clusters.onOff ?? {},
     );
     await this.pushThermostatState(clusters.thermostat ?? {});
+    await this.updateState(
+      this.accessory.UUID,
+      MATTER_THERMOSTAT_UI_CLUSTER,
+      clusters.thermostatUserInterfaceConfiguration ?? {},
+    );
     await this.updateState(
       this.accessory.UUID,
       this.matter.clusterNames.FanControl,

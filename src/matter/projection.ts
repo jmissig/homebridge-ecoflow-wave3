@@ -7,6 +7,7 @@ import {
   DEFAULT_TEMPERATURE_CENTIDEGREES,
   MATTER_FAN_MODE,
   MATTER_SYSTEM_MODE,
+  MATTER_TEMPERATURE_DISPLAY_MODE,
 } from './constants.js';
 
 export function clustersForSnapshot(
@@ -18,6 +19,7 @@ export function clustersForSnapshot(
   const state = snapshot.state;
   const previousThermostat = previous?.thermostat ?? {};
   const previousFan = previous?.fanControl ?? {};
+  const previousThermostatUi = previous?.thermostatUserInterfaceConfiguration ?? {};
   const profiles = snapshot.modeProfiles;
   const temperature = currentTemperatureSource === 'ambient'
     ? state.ambientTemperatureCelsius
@@ -94,6 +96,16 @@ export function clustersForSnapshot(
       speedMax: 5,
       speedSetting: powered ? speedIndex(airflow) : 0,
       speedCurrent: powered ? speedIndex(airflow) : 0,
+    },
+    thermostatUserInterfaceConfiguration: {
+      ...previousThermostatUi,
+      temperatureDisplayMode: state.temperatureDisplayUnit === 'fahrenheit'
+        ? MATTER_TEMPERATURE_DISPLAY_MODE.fahrenheit
+        : state.temperatureDisplayUnit === 'celsius'
+          ? MATTER_TEMPERATURE_DISPLAY_MODE.celsius
+          : numberOrUndefined(previousThermostatUi.temperatureDisplayMode)
+            ?? MATTER_TEMPERATURE_DISPLAY_MODE.celsius,
+      keypadLockout: 0,
     },
   };
 

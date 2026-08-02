@@ -200,7 +200,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(harness.platform.matterAccessories.size, 0);
   });
 
-  it('bounds dropped Matter registration and unregistration dispatches', async () => {
+  it('bounds shutdown cleanup and fails closed on dropped Matter removal dispatches', async () => {
     const droppedRegistration = deferred();
     const registering = platformHarness(
       validConfig(),
@@ -238,6 +238,39 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await unregistering.platform.shutdown();
     assert.equal(unregistering.sessionCreateCount, 0);
     assert.match(unregistering.logs.error.join('\n'), /removal did not complete/);
+
+    const config = validConfig();
+    config.devices = [{
+      name: 'Bedroom WAVE 3',
+      serialNumber: 'FIRST1234',
+      currentTemperatureSource: 'outlet',
+    }];
+    const droppedReplacement = deferred();
+    const replacing = platformHarness(
+      config,
+      undefined,
+      true,
+      undefined,
+      droppedReplacement,
+      2,
+    );
+    const oldShape = cachedMatterAccessory(
+      'Bedroom WAVE 3',
+      uuidFor('FIRST1234'),
+      'FIRST1234',
+      'ambient',
+    );
+    replacing.platform.configureMatterAccessory(oldShape);
+    await replacing.signalDidFinishLaunching();
+    assert.equal(replacing.sessionCreateCount, 1);
+    assert.equal(replacing.sessionStopCount, 1);
+    assert.doesNotMatch(replacing.events.join(','), /session:start/);
+    assert.equal(replacing.platform.matterAccessories.get(oldShape.UUID), oldShape);
+    assert.equal(replacing.registered.length, 0);
+    assert.equal(replacing.boundSerials.length, 0);
+    assert.match(replacing.logs.error.join('\n'), /replacement could not remove the old shape/);
+    await replacing.platform.shutdown();
+    assert.equal(replacing.sessionStopCount, 1);
   });
 });
 

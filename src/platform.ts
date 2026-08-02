@@ -269,14 +269,15 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
           PLATFORM_NAME,
           [cachedAccessory],
         );
-        this.matterAccessories.delete(uuid);
         const removed = await this.waitForMatterUnregistration([uuid]);
         if (!removed) {
           if (!this.shutdownStarted) {
             this.log.error('EcoFlow WAVE 3 Matter endpoint replacement could not remove the old shape');
           }
-          break;
+          await this.stopSession();
+          return;
         }
+        this.matterAccessories.delete(uuid);
         if (this.shutdownStarted) {
           break;
         }

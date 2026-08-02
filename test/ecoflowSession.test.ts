@@ -519,6 +519,10 @@ describe('EcoFlow cloud session', () => {
     );
 
     const visibleText = logger.messages.join(' ');
+    assert.equal(
+      logger.errors.some(message => message.includes('MQTT connection open failed')),
+      true,
+    );
     for (const secret of [
       'owner@example.test',
       'TEST_ACCOUNT_PASSWORD',
@@ -600,6 +604,30 @@ describe('EcoFlow cloud session', () => {
     ]) {
       assert.equal(visibleText.includes(secret), false, secret);
     }
+    assert.equal(
+      logger.infos.some(message => message.includes('authenticating with private cloud')),
+      true,
+    );
+    assert.equal(
+      logger.infos.some(message => message.includes('authentication and MQTT certification succeeded')),
+      true,
+    );
+    assert.equal(
+      logger.infos.some(message => message.includes('EcoFlow MQTT session is ready')),
+      true,
+    );
+    assert.equal(
+      logger.debugs.some(message => message.includes('MQTT inbound topic=')),
+      true,
+    );
+    assert.equal(
+      logger.infos.some(message => message.includes('MQTT inbound topic=')),
+      false,
+    );
+    assert.equal(
+      logger.warnings.some(message => message.includes('dropping getReply')),
+      false,
+    );
   });
 
   it('cancels never-resolving authentication and MQTT open operations', async () => {
@@ -879,20 +907,28 @@ class FakeMqttConnection implements MqttConnection {
 
 class CapturingLogger implements CloudSessionLogger {
   public readonly messages: string[] = [];
+  public readonly debugs: string[] = [];
+  public readonly infos: string[] = [];
+  public readonly warnings: string[] = [];
+  public readonly errors: string[] = [];
 
   debug(message: string): void {
+    this.debugs.push(message);
     this.messages.push(message);
   }
 
   info(message: string): void {
+    this.infos.push(message);
     this.messages.push(message);
   }
 
   warn(message: string): void {
+    this.warnings.push(message);
     this.messages.push(message);
   }
 
   error(message: string): void {
+    this.errors.push(message);
     this.messages.push(message);
   }
 }

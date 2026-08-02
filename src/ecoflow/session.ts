@@ -110,7 +110,7 @@ export class EcoFlowCloudSession {
       throw new EcoFlowCloudSessionError('EcoFlow cloud session has already been started');
     }
     this.setState('starting');
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: starting cloud session (apiHost=${this.config.apiHost}, devices=${this.config.devices.length})`,
     );
     this.logger.info('EcoFlow diagnostics: authenticating with private cloud');
@@ -162,7 +162,7 @@ export class EcoFlowCloudSession {
 
     let connection: MqttConnection;
     try {
-      this.logger.info('EcoFlow diagnostics: opening TLS MQTT connection');
+      this.logger.debug('EcoFlow diagnostics: opening TLS MQTT connection');
       connection = await withAbortAndTimeout(
         this.mqtt.open(authenticated.mqtt, controller.signal),
         controller,
@@ -183,7 +183,7 @@ export class EcoFlowCloudSession {
     }
     this.connection = connection;
     this.mqttConnected = true;
-    this.logger.info('EcoFlow diagnostics: initial MQTT connection opened');
+    this.logger.debug('EcoFlow diagnostics: initial MQTT connection opened');
 
     this.attachConnectionListeners(connection);
     const setup = this.establishLatestConnectionGeneration(controller.signal);
@@ -227,7 +227,7 @@ export class EcoFlowCloudSession {
   ): Promise<void> {
     const connection = this.requireOnlineConnection();
     const topics = this.topicsForConfiguredDevice(serialNumber);
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: publishing command for ${this.deviceLabel(serialNumber)} (bytes=${payload.length}, generation=${this.connectionGeneration})`,
     );
     try {
@@ -237,7 +237,7 @@ export class EcoFlowCloudSession {
         payload,
         signal,
       );
-      this.logger.info(`EcoFlow diagnostics: MQTT broker accepted command publication for ${this.deviceLabel(serialNumber)}`);
+      this.logger.debug(`EcoFlow diagnostics: MQTT broker accepted command publication for ${this.deviceLabel(serialNumber)}`);
     } catch {
       this.logger.error(`EcoFlow diagnostics: command publication failed for ${this.deviceLabel(serialNumber)}`);
       throw new EcoFlowCloudSessionError('EcoFlow command publication failed');
@@ -255,7 +255,7 @@ export class EcoFlowCloudSession {
       requestId: refresh.requestId,
       generation: this.connectionGeneration,
     });
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: publishing explicit latestQuotas refresh for ${this.deviceLabel(serialNumber)} `
       + `(requestId=${refresh.requestId}, generation=${this.connectionGeneration})`,
     );
@@ -266,7 +266,7 @@ export class EcoFlowCloudSession {
         refresh.payload,
         signal,
       );
-      this.logger.info(`EcoFlow diagnostics: MQTT broker accepted explicit refresh publication for ${this.deviceLabel(serialNumber)}`);
+      this.logger.debug(`EcoFlow diagnostics: MQTT broker accepted explicit refresh publication for ${this.deviceLabel(serialNumber)}`);
     } catch {
       this.clearPendingRefresh(serialNumber, refresh.requestId);
       throw new EcoFlowCloudSessionError('EcoFlow state refresh failed');
@@ -281,7 +281,7 @@ export class EcoFlowCloudSession {
   }
 
   private async performStop(): Promise<void> {
-    this.logger.info(`EcoFlow diagnostics: stopping cloud session from state=${this.state}`);
+    this.logger.debug(`EcoFlow diagnostics: stopping cloud session from state=${this.state}`);
     this.stopped = true;
     this.setState('stopped');
     this.lifecycleController?.abort();
@@ -317,7 +317,7 @@ export class EcoFlowCloudSession {
     }
     this.lifecycleController = undefined;
     this.setupGenerationController = undefined;
-    this.logger.info('EcoFlow diagnostics: cloud session stopped and MQTT resources released');
+    this.logger.debug('EcoFlow diagnostics: cloud session stopped and MQTT resources released');
   }
 
   private attachConnectionListeners(connection: MqttConnection): void {
@@ -329,7 +329,7 @@ export class EcoFlowCloudSession {
         this.connectionGeneration += 1;
         this.pendingRefreshes.clear();
         this.lastDisplaySequenceByDevice.clear();
-        this.logger.info(
+        this.logger.debug(
           `EcoFlow diagnostics: MQTT connected event received; advancing to generation=${this.connectionGeneration}`,
         );
         this.setState('starting');
@@ -350,16 +350,16 @@ export class EcoFlowCloudSession {
       }),
       connection.onMessage(message => this.handleMessage(message)),
       ...(connection.onReconnect === undefined ? [] : [connection.onReconnect(() => {
-        this.logger.info('EcoFlow diagnostics: MQTT.js is attempting a reconnect');
+        this.logger.debug('EcoFlow diagnostics: MQTT.js is attempting a reconnect');
       })]),
       ...(connection.onError === undefined ? [] : [connection.onError(() => {
         this.logger.warn('EcoFlow diagnostics: MQTT client emitted an error (details redacted)');
       })]),
       ...(connection.onClose === undefined ? [] : [connection.onClose(() => {
-        this.logger.info('EcoFlow diagnostics: MQTT transport emitted a close event');
+        this.logger.debug('EcoFlow diagnostics: MQTT transport emitted a close event');
       })]),
     ];
-    this.logger.info('EcoFlow diagnostics: MQTT connection listeners attached');
+    this.logger.debug('EcoFlow diagnostics: MQTT connection listeners attached');
   }
 
   private scheduleReconnectSetup(): void {
@@ -409,7 +409,7 @@ export class EcoFlowCloudSession {
         lifecycleSignal,
         generationController.signal,
       ]);
-      this.logger.info(`EcoFlow diagnostics: establishing subscriptions and refresh for generation=${generation}`);
+      this.logger.debug(`EcoFlow diagnostics: establishing subscriptions and refresh for generation=${generation}`);
       try {
         await this.establishSubscriptionsAndRefresh(
           generation,
@@ -454,7 +454,7 @@ export class EcoFlowCloudSession {
       topics.setReply,
       topics.getReply,
     ]);
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: subscribing to ${new Set(subscriptionTopics).size} MQTT topics `
       + `for ${topicsByDevice.length} configured device(s) (topic identifiers redacted)`,
     );
@@ -472,7 +472,7 @@ export class EcoFlowCloudSession {
       throw new EcoFlowCloudSessionError('EcoFlow MQTT subscription failed');
     }
     this.assertSetupActive(connection, generation);
-    this.logger.info(`EcoFlow diagnostics: MQTT subscriptions acknowledged for generation=${generation}`);
+    this.logger.debug(`EcoFlow diagnostics: MQTT subscriptions acknowledged for generation=${generation}`);
 
     try {
       for (const { serialNumber, topics } of topicsByDevice) {
@@ -481,7 +481,7 @@ export class EcoFlowCloudSession {
           requestId: refresh.requestId,
           generation,
         });
-        this.logger.info(
+        this.logger.debug(
           `EcoFlow diagnostics: publishing initial latestQuotas refresh for ${this.deviceLabel(serialNumber)} `
           + `(requestId=${refresh.requestId}, generation=${generation})`,
         );
@@ -499,7 +499,7 @@ export class EcoFlowCloudSession {
           throw error;
         }
         this.assertSetupActive(connection, generation);
-        this.logger.info(
+        this.logger.debug(
           `EcoFlow diagnostics: MQTT broker accepted initial refresh publication for ${this.deviceLabel(serialNumber)}`,
         );
       }
@@ -513,13 +513,13 @@ export class EcoFlowCloudSession {
   private handleMessage(message: MqttMessage): void {
     const authenticated = this.authenticated;
     if (authenticated === undefined || !this.mqttConnected || this.stopped) {
-      this.logger.warn(
+      this.logger.debug(
         'EcoFlow diagnostics: dropping inbound MQTT message because session is inactive '
         + `(bytes=${message.payload.length}, state=${this.state}, connected=${this.mqttConnected})`,
       );
       return;
     }
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: MQTT inbound topic=${sanitizeMqttTopic(message.topic)} `
       + `bytes=${message.payload.length} generation=${this.connectionGeneration}`,
     );
@@ -528,13 +528,13 @@ export class EcoFlowCloudSession {
       const kind = inboundKindForTopic(message.topic, topics);
       if (kind !== undefined) {
         const label = this.deviceLabel(device.serialNumber);
-        this.logger.info(`EcoFlow diagnostics: matched inbound message to ${label} as ${kind}`);
+        this.logger.debug(`EcoFlow diagnostics: matched inbound message to ${label} as ${kind}`);
         if (kind === 'property') {
           const decoded = decodeWave3Message(message.payload);
           this.logDecodedMessage(label, decoded);
           if (this.propertySupersedesRefresh(device.serialNumber, decoded)) {
             const hadPendingRefresh = this.pendingRefreshes.delete(device.serialNumber);
-            this.logger.info(
+            this.logger.debug(
               `EcoFlow diagnostics: accepted newer display property for ${label}${hadPendingRefresh ? '; pending initial refresh is now superseded' : ''}`,
             );
           }
@@ -542,7 +542,7 @@ export class EcoFlowCloudSession {
           const pending = this.pendingRefreshes.get(device.serialNumber);
           const replyId = parseRefreshReplyId(message.payload);
           if (!this.consumeMatchingRefresh(device.serialNumber, replyId)) {
-            this.logger.warn(
+            this.logger.debug(
               `EcoFlow diagnostics: dropping getReply for ${label}; `
               + `replyId=${replyId ?? '<missing-or-non-string>'}, `
               + `expectedRequestId=${pending?.requestId ?? '<none>'}, `
@@ -552,7 +552,7 @@ export class EcoFlowCloudSession {
             );
             return;
           }
-          this.logger.info(`EcoFlow diagnostics: getReply request ID matched pending refresh for ${label}`);
+          this.logger.debug(`EcoFlow diagnostics: getReply request ID matched pending refresh for ${label}`);
           this.logQuotaReply(label, decodeWave3QuotaReply(message.payload));
         } else {
           this.logDecodedMessage(label, decodeWave3Message(message.payload));
@@ -566,13 +566,13 @@ export class EcoFlowCloudSession {
         for (const listener of this.messageListeners) {
           listener(inbound);
         }
-        this.logger.info(
+        this.logger.debug(
           `EcoFlow diagnostics: forwarded ${kind} for ${label} to ${this.messageListeners.size} controller listener(s)`,
         );
         return;
       }
     }
-    this.logger.warn(
+    this.logger.debug(
       `EcoFlow diagnostics: no configured WAVE 3 topic matched inbound message topic=${sanitizeMqttTopic(message.topic)}; message dropped`,
     );
   }
@@ -601,7 +601,7 @@ export class EcoFlowCloudSession {
       detach();
     }
     this.detachListeners = [];
-    this.logger.info('EcoFlow diagnostics: MQTT connection listeners detached');
+    this.logger.debug('EcoFlow diagnostics: MQTT connection listeners detached');
   }
 
   private async closeConnectionAfterFailure(): Promise<void> {
@@ -718,7 +718,7 @@ export class EcoFlowCloudSession {
     }
     const previous = this.state;
     this.state = state;
-    this.logger.info(`EcoFlow diagnostics: cloud session state ${previous} -> ${state}`);
+    this.logger.debug(`EcoFlow diagnostics: cloud session state ${previous} -> ${state}`);
     for (const listener of this.stateListeners) {
       listener(state);
     }
@@ -799,11 +799,11 @@ export class EcoFlowCloudSession {
   }
 
   private logDecodedMessage(label: string, decoded: DecodedWave3Message): void {
-    this.logger.info(`EcoFlow diagnostics: ${label} protobuf decode ${describeDecodedMessage(decoded)}`);
+    this.logger.debug(`EcoFlow diagnostics: ${label} protobuf decode ${describeDecodedMessage(decoded)}`);
   }
 
   private logQuotaReply(label: string, decoded: DecodedWave3QuotaReply): void {
-    this.logger.info(`EcoFlow diagnostics: ${label} quota decode ${describeQuotaReply(decoded)}`);
+    this.logger.debug(`EcoFlow diagnostics: ${label} quota decode ${describeQuotaReply(decoded)}`);
   }
 
   private clearPendingRefresh(serialNumber: string, requestId: string): void {

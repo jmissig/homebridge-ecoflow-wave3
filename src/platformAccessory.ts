@@ -308,12 +308,12 @@ export class Wave3PlatformAccessory {
       if (pending.timer !== undefined) {
         clearTimeout(pending.timer);
       }
-      this.platform.log.info(
+      this.platform.log.debug(
         `EcoFlow diagnostics: coalescing pending HomeKit ${kind} temperature write to ${celsius}°C`,
       );
       pending.celsius = celsius;
     } else {
-      this.platform.log.info(
+      this.platform.log.debug(
         `EcoFlow diagnostics: scheduling HomeKit ${kind} temperature write at ${celsius}°C `
         + `after ${this.platform.homeKitWriteSettleMilliseconds}ms settle window`,
       );
@@ -344,7 +344,7 @@ export class Wave3PlatformAccessory {
       : mapped.heatingThreshold;
     const alreadyConfirmed = this.snapshot.availability === 'online'
       && confirmed === pending.celsius;
-    this.platform.log.info(
+    this.platform.log.debug(
       alreadyConfirmed
         ? `EcoFlow diagnostics: suppressing HomeKit ${kind} temperature write because ${pending.celsius}°C is already confirmed`
         : `EcoFlow diagnostics: dispatching settled HomeKit ${kind} temperature write at ${pending.celsius}°C`,
@@ -380,12 +380,12 @@ export class Wave3PlatformAccessory {
       if (this.pendingAirflowWrite.timer !== undefined) {
         clearTimeout(this.pendingAirflowWrite.timer);
       }
-      this.platform.log.info(
+      this.platform.log.debug(
         `EcoFlow diagnostics: coalescing pending HomeKit airflow write to ${speed}%`,
       );
       this.pendingAirflowWrite.speed = speed;
     } else {
-      this.platform.log.info(
+      this.platform.log.debug(
         `EcoFlow diagnostics: scheduling HomeKit airflow write at ${speed}% `
         + `after ${this.platform.homeKitWriteSettleMilliseconds}ms settle window`,
       );
@@ -413,7 +413,7 @@ export class Wave3PlatformAccessory {
 
     const alreadyConfirmed = this.snapshot.availability === 'online'
       && this.snapshot.state.airflowSpeed === pending.speed;
-    this.platform.log.info(
+    this.platform.log.debug(
       alreadyConfirmed
         ? `EcoFlow diagnostics: suppressing HomeKit airflow write because ${pending.speed}% is already confirmed`
         : `EcoFlow diagnostics: dispatching settled HomeKit airflow write at ${pending.speed}%`,
@@ -530,13 +530,13 @@ export class Wave3PlatformAccessory {
         );
       }
     } else {
-      this.platform.log.info(
+      this.platform.log.debug(
         `EcoFlow diagnostics: retaining last confirmed HomeKit values while device availability=${snapshot.availability}`,
       );
     }
 
     if (!this.hasConfirmedPresentation) {
-      this.platform.log.info(
+      this.platform.log.debug(
         'EcoFlow diagnostics: leaving cached HomeKit values untouched while awaiting '
         + `the first trustworthy device snapshot (availability=${snapshot.availability})`,
       );

@@ -99,6 +99,20 @@ Run early tests in an isolated Homebridge child bridge. After Homebridge
 restarts, the configured unit should appear as a heater/cooler accessory in
 Apple Home.
 
+## Debug logging
+
+The plugin uses Homebridge's standard debug logging. Start Homebridge with its
+debug option (for example, `homebridge -D`, or the equivalent Homebridge UI
+debug setting) to see MQTT routing, packet decode summaries, controller state,
+refresh IDs, and command-coalescing diagnostics. No plugin-specific debug
+configuration property is needed.
+
+Normal logging remains intentionally concise. EcoFlow account authentication
+attempts and outcomes, the MQTT-ready milestone, connection warnings, and all
+errors remain visible without debug logging. Credentials, account identifiers,
+serial numbers, full MQTT topics, and raw payload bytes remain redacted in both
+normal and debug logs.
+
 ## Developing
 
 ```sh

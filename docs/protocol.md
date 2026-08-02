@@ -159,6 +159,10 @@ A matching get reply contains `data.online` and `data.quotaMap`.
   initialized live connection.
 - MQTT.js dependency logging is forced to a no-op because its debug packets can
   contain credentials, full serials, topics, and payload bytes.
+- Packet routing, bounded decode summaries, controller snapshots, refresh IDs,
+  and command-settling traces use Homebridge's standard debug logger and are
+  hidden during normal operation. Authentication milestones, connection
+  warnings, and errors remain visible without debug mode.
 - Topic strings, client IDs, usernames, and full serial numbers are sensitive
   diagnostics and must be redacted.
 

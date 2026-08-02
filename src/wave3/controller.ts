@@ -126,7 +126,7 @@ export class Wave3Controller {
       session.onError(() => this.handleSessionFailure()),
       session.onStateChange(state => this.handleSessionState(state)),
     ];
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: WAVE 3 controller created (sessionState=${session.state}, initialAvailability=${this.snapshot.availability})`,
     );
   }
@@ -232,19 +232,19 @@ export class Wave3Controller {
     if (this.stopped || message.serialNumber !== this.serialNumber) {
       return;
     }
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: controller received ${message.kind} `
       + `(bytes=${message.payload.length}, generation=${message.generation}, `
       + `activeGeneration=${this.activeGeneration ?? '<none>'})`,
     );
     if (this.activeGeneration !== undefined
       && message.generation < this.activeGeneration) {
-      this.logger.warn('EcoFlow diagnostics: controller dropped message from an older connection generation');
+      this.logger.debug('EcoFlow diagnostics: controller dropped message from an older connection generation');
       return;
     }
     if (this.activeGeneration === undefined
       || message.generation > this.activeGeneration) {
-      this.logger.info(
+      this.logger.debug(
         `EcoFlow diagnostics: controller adopting connection generation=${message.generation} and clearing prior-generation state`,
       );
       this.clearCurrentGenerationState();
@@ -257,13 +257,13 @@ export class Wave3Controller {
     const decoded = decodeWave3Message(message.payload);
     if (message.kind === 'property' && decoded.kind === 'display') {
       if (!hasWave3DisplayEvidence(decoded.update)) {
-        this.logger.warn(
+        this.logger.debug(
           `EcoFlow diagnostics: controller rejected display property with no recognized state evidence diagnostic=${JSON.stringify(decoded.diagnostic)}`,
         );
         return;
       }
       if (!isNewerSequence(decoded.sequence, this.lastDisplaySequence)) {
-        this.logger.warn(
+        this.logger.debug(
           `EcoFlow diagnostics: controller rejected display property sequence=${decoded.sequence} `
           + `because lastAcceptedSequence=${this.lastDisplaySequence ?? '<none>'}`,
         );
@@ -272,13 +272,13 @@ export class Wave3Controller {
       this.lastDisplaySequence = decoded.sequence;
       this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
       this.displayRevision += 1;
-      this.logger.info(
+      this.logger.debug(
         `EcoFlow diagnostics: controller accepted display property sequence=${decoded.sequence} update=${JSON.stringify(decoded.update)}`,
       );
       if (this.hasCurrentGenerationState || hasWave3ControlStateEvidence(decoded.update)) {
         this.markStateFresh();
       } else {
-        this.logger.info(
+        this.logger.debug(
           'EcoFlow diagnostics: controller retained supplemental display telemetry '
           + 'while awaiting authoritative operating-mode state',
         );
@@ -289,7 +289,7 @@ export class Wave3Controller {
     }
     if (message.kind === 'property' && decoded.kind === 'runtime') {
       if (!isNewerSequence(decoded.sequence, this.lastRuntimeSequence)) {
-        this.logger.warn(
+        this.logger.debug(
           `EcoFlow diagnostics: controller rejected runtime property sequence=${decoded.sequence} `
           + `because lastAcceptedSequence=${this.lastRuntimeSequence ?? '<none>'}`,
         );
@@ -304,7 +304,7 @@ export class Wave3Controller {
         ...this.firmwareVersions,
         ...decoded.firmwareVersions,
       };
-      this.logger.info(
+      this.logger.debug(
         `EcoFlow diagnostics: controller accepted runtime property sequence=${decoded.sequence} `
         + `temperatures=${JSON.stringify(decoded.temperatures)} `
         + `firmwareVersions=${JSON.stringify(decoded.firmwareVersions)}`,
@@ -316,7 +316,7 @@ export class Wave3Controller {
       this.handleAcknowledgement(decoded.sequence, decoded.acknowledgement);
       return;
     }
-    this.logger.warn(
+    this.logger.debug(
       `EcoFlow diagnostics: controller ignored ${message.kind} decoded as ${decoded.kind} diagnostic=${JSON.stringify(decoded.diagnostic)}`,
     );
   }
@@ -324,14 +324,14 @@ export class Wave3Controller {
   private handleQuotaReply(payload: Uint8Array): void {
     const decoded = decodeWave3QuotaReply(payload);
     if (decoded.kind === 'malformed') {
-      this.logger.warn(
+      this.logger.debug(
         `EcoFlow diagnostics: controller rejected malformed latestQuotas reply reason=${JSON.stringify(decoded.reason)}`,
       );
       return;
     }
     this.deviceReportedOnline = decoded.deviceOnline;
     if (!decoded.deviceOnline) {
-      this.logger.warn('EcoFlow diagnostics: latestQuotas reports the WAVE 3 offline');
+      this.logger.debug('EcoFlow diagnostics: latestQuotas reports the WAVE 3 offline');
       this.hasCurrentGenerationState = false;
       this.cancelStaleTimer?.();
       this.cancelStaleTimer = undefined;
@@ -340,7 +340,7 @@ export class Wave3Controller {
       return;
     }
     if (decoded.update === undefined || !hasWave3DisplayEvidence(decoded.update)) {
-      this.logger.warn(
+      this.logger.debug(
         'EcoFlow diagnostics: latestQuotas reports online but contains no recognized display state evidence',
       );
       this.updateFreshnessForOnlineSession();
@@ -348,13 +348,13 @@ export class Wave3Controller {
     }
     this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
     this.displayRevision += 1;
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: controller accepted latestQuotas update=${JSON.stringify(decoded.update)}`,
     );
     if (this.hasCurrentGenerationState || hasWave3ControlStateEvidence(decoded.update)) {
       this.markStateFresh();
     } else {
-      this.logger.info(
+      this.logger.debug(
         'EcoFlow diagnostics: controller retained supplemental latestQuotas telemetry '
         + 'while awaiting authoritative operating-mode state',
       );
@@ -376,7 +376,7 @@ export class Wave3Controller {
       pending.command,
     );
     if (fragment === 'unrelated' || fragment === 'conflicting') {
-      this.logger.info(
+      this.logger.debug(
         `EcoFlow diagnostics: controller ignored same-sequence acknowledgement=${sequence} `
         + `because it is ${fragment} to the pending command; possible foreign client traffic`,
       );
@@ -398,7 +398,7 @@ export class Wave3Controller {
     );
     pending.acknowledgement = aggregate;
     if (!acknowledgementMatchesCommand(aggregate, pending.command)) {
-      this.logger.info(
+      this.logger.debug(
         `EcoFlow diagnostics: controller accumulated partial acknowledgement=${sequence} `
         + 'and is waiting for remaining command fields',
       );
@@ -451,7 +451,7 @@ export class Wave3Controller {
     if (this.stopped) {
       return;
     }
-    this.logger.info(`EcoFlow diagnostics: controller observed cloud session state=${state}`);
+    this.logger.debug(`EcoFlow diagnostics: controller observed cloud session state=${state}`);
     if (state === 'offline' || state === 'starting') {
       this.clearCurrentGenerationState();
       if (this.pending?.publicationCompleted !== false) {
@@ -505,7 +505,7 @@ export class Wave3Controller {
     this.hasCurrentGenerationState = true;
     this.deviceReportedOnline = true;
     this.updatedAt = this.now();
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: controller marked state fresh at epochMs=${this.updatedAt}`,
     );
     this.updateFreshnessForOnlineSession();
@@ -546,7 +546,7 @@ export class Wave3Controller {
       firmwareVersions: this.firmwareVersions,
       updatedAt: this.updatedAt,
     });
-    this.logger.info(
+    this.logger.debug(
       `EcoFlow diagnostics: controller snapshot availability ${previousAvailability} -> ${availability}; `
       + `state=${JSON.stringify(this.snapshot.state)} `
       + `runtime=${JSON.stringify(this.snapshot.runtimeTemperatures)} `

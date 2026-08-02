@@ -959,6 +959,7 @@ function platformForAccessoryTests(): EcoFlowWave3Platform {
     Characteristic,
     homeKitWriteSettleMilliseconds: 1,
     log: {
+      debug: () => undefined,
       info: () => undefined,
     },
     api: {

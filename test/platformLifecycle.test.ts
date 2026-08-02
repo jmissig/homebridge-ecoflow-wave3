@@ -243,6 +243,8 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const launch = harness.signalDidFinishLaunching();
     await Promise.resolve();
     assert.deepEqual(harness.events, ['register']);
+    await waitUntil(() => harness.stateReadClusters.length > 0);
+    assert.deepEqual([...new Set(harness.stateReadClusters)], ['onOff']);
 
     const shutdown = harness.platform.shutdown();
     registrationGate.resolve();
@@ -376,6 +378,7 @@ function platformHarness(
   unregistered: MatterAccessory[];
   boundSerials: string[];
   boundTemperatureSources: string[];
+  stateReadClusters: string[];
   events: string[];
   logs: Record<'debug' | 'info' | 'warn' | 'error', string[]>;
   signalDidFinishLaunching(): Promise<void>;
@@ -389,6 +392,7 @@ function platformHarness(
   const unregistered: MatterAccessory[] = [];
   const boundSerials: string[] = [];
   const boundTemperatureSources: string[] = [];
+  const stateReadClusters: string[] = [];
   const events: string[] = [];
   const logs = {
     debug: [] as string[],
@@ -459,7 +463,10 @@ function platformHarness(
           }
         },
         updateAccessoryState: async () => undefined,
-        getAccessoryState: async () => registrationReady ? { onOff: false } : undefined,
+        getAccessoryState: async (_uuid: string, cluster: string) => {
+          stateReadClusters.push(cluster);
+          return registrationReady ? { onOff: false } : undefined;
+        },
       }
       : undefined,
     isMatterEnabled: () => matterEnabled,
@@ -554,6 +561,7 @@ function platformHarness(
     unregistered,
     boundSerials,
     boundTemperatureSources,
+    stateReadClusters,
     events,
     logs,
     async signalDidFinishLaunching() {

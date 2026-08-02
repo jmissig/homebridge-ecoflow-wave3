@@ -386,30 +386,54 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   ): Promise<boolean> {
     let attempts = 0;
     while (!this.shutdownStarted) {
+      await this.waitForMatterRegistrationProbe();
+      if (this.shutdownStarted) {
+        return false;
+      }
       try {
         const onOff = await this.matter!.getAccessoryState(
           accessory.UUID,
           this.matter!.clusterNames.OnOff,
         );
-        const humidity = accessory.context.currentTemperatureSource === 'ambient'
-          ? await this.matter!.getAccessoryState(
+        if (onOff === undefined) {
+          attempts += 1;
+          if (attempts === 30) {
+            this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
+          }
+          continue;
+        }
+        if (accessory.context.currentTemperatureSource === 'ambient') {
+          const humidity = await this.matter!.getAccessoryState(
             accessory.UUID,
             this.matter!.clusterNames.RelativeHumidityMeasurement,
-          )
-          : {};
-        if (onOff !== undefined && humidity !== undefined) {
-          return true;
+          );
+          if (humidity === undefined) {
+            attempts += 1;
+            if (attempts === 30) {
+              this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
+            }
+            continue;
+          }
         }
+        return true;
       } catch {
         // Homebridge reports a missing endpoint while bridged registration is still in flight.
       }
       attempts += 1;
-      if (attempts === 200) {
+      if (attempts === 30) {
         this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
       }
-      await this.waitForMatterOperationPoll();
     }
     return false;
+  }
+
+  private async waitForMatterRegistrationProbe(): Promise<void> {
+    // Homebridge 2.2.1 dispatches bridged registration asynchronously despite the
+    // public API promise. Probe sparsely because each getAccessoryState call is
+    // echoed into Homebridge's global debug log while the endpoint is absent.
+    for (let interval = 0; interval < 40 && !this.shutdownStarted; interval += 1) {
+      await this.waitForMatterOperationPoll();
+    }
   }
 
   private async waitForMatterUnregistration(uuids: readonly string[]): Promise<boolean> {

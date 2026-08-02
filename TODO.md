@@ -211,7 +211,7 @@ properties.
 **Phase M5 exit:** the source tree contains no maintained HAP adapter or HAP
 compatibility path.
 
-## Phase M6: Child-bridge cutover and commissioning
+## Completed — Phase M6: Child-bridge cutover and commissioning
 
 - [x] Add a commissioning runbook with exact runtime requirements, install and
   bridge configuration, read-only first checks, redaction rules, and stop
@@ -220,7 +220,7 @@ compatibility path.
   HAP presentation; run `npm run verify` and inspect `npm pack --dry-run`.
 - [x] Pull/build/install the Matter-only plugin under the Saga account that
   runs this Homebridge child bridge.
-- [ ] Stop using the existing HAP pairing and unpair the old EcoFlow WAVE 3
+- [x] Stop using the existing HAP pairing and unpair the old EcoFlow WAVE 3
   child bridge from Apple Home.
 - [x] Disable HAP and enable Matter only for the EcoFlow child bridge; leave all
   other bridges and child bridges unchanged.
@@ -228,9 +228,9 @@ compatibility path.
   Matter commissioning QR code.
 - [x] Pair the Matter bridge to Apple Home and accept the expected uncertified
   Matter accessory warning if presented.
-- [ ] Reassign the WAVE 3 to its room and deliberately rebuild any desired
+- [x] Reassign the WAVE 3 to its room and deliberately rebuild any desired
   scenes or automations; do not assume HAP identity or automations migrate.
-- [ ] Confirm one WAVE 3 appears as one coherent accessory and inspect whether
+- [x] Confirm one WAVE 3 appears as one coherent accessory and inspect whether
   composed Fan/Humidity parts create useful rather than confusing tiles.
 
 **Phase M6 exit:** Apple Home is commissioned only to the EcoFlow Matter child

@@ -1,118 +1,32 @@
-# homebridge-ecoflow-wave3
+# EcoFlow WAVE 3 for Apple Home and Matter
 
-Bring an EcoFlow WAVE 3 portable air conditioner into Apple Home through
-Homebridge.
+Your EcoFlow WAVE 3, now available in Apple Home—or another compatible Matter
+system—through Homebridge.
 
-This plugin is deliberately small and device-specific. The 0.2 development
-line presents each configured WAVE 3 as a Matter Room Air Conditioner instead
-of trying to support every EcoFlow product or expose every setting in the
-EcoFlow app.
+This plugin publishes one Matter Room Air Conditioner accessory for every
+WAVE 3 you configure. Control power, temperature, operating mode, and fan
+speed alongside the rest of your smart home.
 
-> [!WARNING]
-> This is an unpublished, pre-release project. Core cloud state, power,
-> temperature, and fan controls have been exercised against one real WAVE 3,
-> but broader mode and long-session acceptance remain incomplete. Do not rely
-> on it for unattended climate control.
+## Requirements
 
-> [!NOTE]
-> The 0.2 development line publishes Matter accessories only. It does not
-> contain or maintain a parallel HAP climate adapter.
-
-## What it provides
-
-- Power control
-- Current and target temperature
-- Ambient humidity, alongside the ambient current-temperature reading
-- Cooling, heating, and automatic modes
-- Matter protocol mappings for Fan Only, Dry, and Sleep system modes
-- Fan speed
-- Celsius/Fahrenheit display preference through the standard Matter thermostat
-  UI configuration cluster
-- Device firmware revision in Matter bridged-device information
-- One Matter accessory for each explicitly configured WAVE 3
-
-> [!NOTE]
-> As of the iOS 27 beta, neither Apple Home nor the Eve app presents Fan Only,
-> Dry, or Sleep as selectable modes for this Matter accessory. Their protocol
-> mappings exist, but control from those apps and real-device behavior have not
-> yet been verified. Sleep maps to the WAVE's Night/Sleep operating submode,
-> not to a sleep timer.
->
-> The WAVE also appears to retain separate parameters for each operating mode,
-> including mode-specific target temperatures. Alternative controls therefore
-> need careful state modeling rather than simple additive mode switches.
-> [Told: household controller observation and WAVE behavior from Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533528620189089966)
-
-Matter power and setpoint-adjustment commands wait for EcoFlow confirmation.
-Standard thermostat-mode, target-temperature, and fan attributes are committed
-by Matter.js before a cloud round trip can finish; invalid writes reject
-immediately, while later EcoFlow failures are logged and the accessory returns
-to its last confirmed device state. When Apple Home selects a mode or target
-while the WAVE is off, the plugin stages that thermostat intent and applies
-it when Home subsequently turns the accessory on. Startup is deliberately
-two-step: first wake and confirm power, then apply and confirm the destination
-mode's saved target or Auto range. Auto ranges are normalized to the WAVE app's
-observed 4°C minimum without narrowing the 16–30°C Cool/Heat range in Matter.
-
-The Celsius/Fahrenheit preference changes only how compatible controller and
-appliance UIs display temperatures. Protocol state, commands, and Matter
-temperature values remain canonical Celsius measurements; no sensor or
-setpoint values are converted in storage.
-
-The plugin uses EcoFlow's private, app-facing cloud service. It is not local
-control, requires an internet connection, and may stop working if EcoFlow
-changes that service. Eco, Boost, drainage, battery information, display
-settings, and other secondary features remain unexposed where Matter has no
-honest standard representation.
-
-## Current support status
-
-This project distinguishes code coverage from household-device acceptance:
-
-- **Hardware-verified:** Matter commissioning and cached restoration, EcoFlow
-  authentication/MQTT, live climate telemetry, concurrent EcoFlow-app use,
-  and Matter power on/off.
-- **Observed on hardware; current fixes need a repeat run:** cooling and its
-  target, plus switching into Heat with a selected target. The appliance
-  obeyed the underlying commands, while acceptance exposed and fixed split
-  acknowledgement and delayed-mode-write behavior.
-- **Observed on hardware; current fixes need a repeat run:** Auto with both
-  thresholds and its 4°C minimum range.
-- **Implemented; Matter hardware acceptance pending:** all five fan speeds,
-  `outlet` and `none` temperature-source
-  variants, reconnect/power-cycle recovery, and stale-cache action-71 startup
-  acquisition.
-- **Observed in EcoFlow traffic; Matter controller acceptance pending:**
-  bidirectional Celsius/Fahrenheit display preference synchronization through
-  the standard thermostat UI configuration cluster.
-- **Protocol-mapped but hidden by tested controllers:** Fan Only, Dry, and
-  Sleep/Night. Apple Home on the iOS 27 beta and Eve do not present these
-  standard system-mode values for this accessory.
-- **Published but not rendered by Apple Home:** device firmware in standard
-  Matter bridged-device metadata.
-- **Intentionally unexposed:** Eco, Boost, drainage, battery, electrical
-  telemetry, timers, other display settings, and other secondary controls whose
-  standard Matter behavior or WAVE semantics are not yet established.
-
-See [Troubleshooting and recovery](docs/troubleshooting.md) for startup,
-No Response, command diagnostics, regional API, and re-pairing guidance.
-
-## Before you start
-
-You will need:
-
-- Homebridge 2.2.1 or newer
+- [Homebridge](https://homebridge.io/) 2.2.1 or newer
 - Node.js 24 or newer
-- An EcoFlow account with the WAVE 3 already added in the EcoFlow app
+- An EcoFlow account with each WAVE 3 already added in the EcoFlow app
 - The serial number of each WAVE 3 you want to add
+- An internet connection
 
-The plugin signs in to EcoFlow using the email address and password stored in
-your Homebridge configuration. Treat that configuration as sensitive.
+This is a Matter-only Homebridge plugin. It does not publish a legacy HAP
+accessory.
 
-## Getting started
+> [!IMPORTANT]
+> The plugin uses EcoFlow's private, app-facing cloud service rather than local
+> control. It requires your EcoFlow account credentials and may need updates if
+> EcoFlow changes that service.
 
-The plugin is not published to npm yet, so the current setup is for developers
-testing a checkout:
+## Install
+
+The plugin is not published to npm yet. Install the current development build
+from GitHub:
 
 ```sh
 git clone https://github.com/jmissig/homebridge-ecoflow-wave3.git
@@ -120,20 +34,33 @@ cd homebridge-ecoflow-wave3
 ./npm-install-dev-build.sh
 ```
 
-The helper installs dependencies, runs the complete verification/build, packs
-the plugin into a temporary directory, and installs that artifact globally.
-Install the packed artifact, not the checkout directory itself. A direct
-`npm install -g .` creates a symlink that can expose the checkout's development
-copy of Homebridge/Matter.js to the running plugin. Matter behavior and status
-classes must come from the same runtime instance as global Homebridge.
+The helper verifies and builds the plugin, packs it into a temporary directory,
+and installs that artifact globally. Use the helper instead of
+`npm install -g .`; a direct global install from the checkout creates a symlink
+that can load a different Matter.js runtime from Homebridge.
 
-Add the **EcoFlow WAVE 3** platform in Homebridge UI and enter:
+To update an existing checkout:
+
+```sh
+git pull --ff-only
+./npm-install-dev-build.sh
+```
+
+Restart the EcoFlow child bridge after installing or updating.
+
+## Configure your WAVE 3 units
+
+In Homebridge UI, add the **EcoFlow WAVE 3** platform and enter:
 
 1. Your EcoFlow account email and password.
-2. The EcoFlow API region used by your account.
-3. A Matter display name and serial number for each WAVE 3.
+2. The API region used by your account.
+3. A display name and serial number for each WAVE 3.
+4. Optionally, which sensor each unit should publish as its current
+   temperature.
 
-If you edit `config.json` directly, the equivalent configuration is:
+Each configured unit becomes its own Matter air-conditioner accessory.
+
+If you edit `config.json` directly, use this shape:
 
 ```json
 {
@@ -152,44 +79,52 @@ If you edit `config.json` directly, the equivalent configuration is:
 }
 ```
 
-`currentTemperatureSource` is optional per device and defaults to `ambient`:
+Keep your Homebridge configuration private: it contains your EcoFlow account
+password.
 
-- `ambient` — use the WAVE 3 ambient sensor and add its humidity sensor.
-- `outlet` — use field 494, identified upstream as indoor supply-air
-  temperature. This mapping is experimental pending one more Home app check.
-- `none` — publish no Matter local-temperature or humidity measurement.
-
-Available API regions are:
+### API regions
 
 - `api.ecoflow.com` — Global
 - `api-a.ecoflow.com` — Americas
 - `api-e.ecoflow.com` — Europe
 
-Run early tests in an isolated Homebridge child bridge. After restart,
-Homebridge registers one Matter Room Air Conditioner per configured WAVE 3;
-pair the EcoFlow child bridge with Apple Home using its Matter QR code.
+Choose the same region your EcoFlow account uses. Authentication usually fails
+if the region is wrong.
 
-## Set up the Matter-only child bridge
+### Current-temperature source
 
-Homebridge configures HAP and Matter independently for each child bridge. This
-plugin must run as a platform child bridge with Matter enabled and HAP disabled;
-it has no HAP fallback. Other Homebridge bridges and child bridges are
-unaffected and may continue using HAP.
+`currentTemperatureSource` is optional for each device and defaults to
+`ambient`:
 
-In Homebridge UI:
+- `ambient` — publish the WAVE 3 ambient temperature and ambient humidity.
+- `outlet` — publish the indoor supply-air/outlet temperature; do not publish
+  ambient humidity.
+- `none` — publish no Matter current-temperature or humidity measurement.
+
+This option is useful when the WAVE 3 sits outdoors and its ambient sensor does
+not represent the room being conditioned.
+
+## Enable Matter and pair with your controller
+
+Run the plugin as a Homebridge platform child bridge with Matter enabled and
+HAP disabled:
 
 1. Enable **Child Bridge** for the EcoFlow WAVE 3 platform.
-2. Open that child bridge's settings.
+2. Open the child bridge's settings.
 3. Enable **Matter**, then disable **HAP**. Homebridge requires at least one
    protocol to remain enabled while editing.
-4. Save the configuration and restart only the EcoFlow child bridge.
-5. Confirm the logs show Matter accessory registration, EcoFlow authentication,
-   and an MQTT-ready session.
-6. Open the child bridge's Matter pairing screen and scan its QR code in Apple
-   Home. Homebridge's Matter implementation is uncertified, so Apple may show
-   an uncertified-accessory warning.
+4. Save and restart the EcoFlow child bridge.
+5. Open its Matter pairing screen.
+6. Scan the QR code in Apple Home or another compatible Matter controller.
 
-The equivalent `_bridge` configuration is:
+You pair the child bridge once. Every configured WAVE 3 then appears as a
+separate air-conditioner accessory.
+
+Homebridge's Matter implementation is uncertified, so Apple Home may show an
+uncertified-accessory warning during pairing. Matter accessories also do not
+appear in Homebridge UI's legacy HAP accessory screen.
+
+The equivalent child-bridge protocol configuration looks like this:
 
 ```json
 "_bridge": {
@@ -203,61 +138,83 @@ The equivalent `_bridge` configuration is:
 }
 ```
 
-The `username` and `port` values above are placeholders; keep the values
-generated for the actual child bridge. No plugin-specific Matter flag is
-needed—the protocol selection belongs to Homebridge's child-bridge settings.
+Keep the `username` and `port` generated by Homebridge; the values above are
+placeholders.
 
-Matter accessories do not appear in Homebridge UI's HAP accessory screen. Use
-Apple Home or another commissioned Matter controller to view and operate them.
-The [commissioning runbook](docs/commissioning.md) provides the cautious first
-read-only and real-device validation sequence.
+## Supported controls and information
+
+- Power on and off
+- Cooling and heating modes
+- Automatic heat/cool mode with separate lower and upper thresholds
+- Target temperature
+- Five fan-speed steps
+- Current temperature from the configured sensor
+- Ambient humidity when using the ambient-temperature source
+- Celsius/Fahrenheit display preference through Matter's standard thermostat
+  UI configuration
+- Live changes made in the official EcoFlow app
+- Device reachability and firmware revision in Matter metadata
+
+The WAVE 3 stores separate temperature, range, fan, and preset values for its
+operating modes. The plugin preserves those saved profiles when switching
+modes. Automatic mode enforces the same observed minimum 4°C separation as the
+EcoFlow app.
+
+## What Apple Home does not currently show
+
+The plugin maps Fan Only, Dry, and Sleep/Night to standard Matter thermostat
+system modes. As of the iOS 27 beta, neither Apple Home nor Eve presents those
+values as selectable modes for this accessory, so their controller and
+real-device behavior remains unverified.
+
+Sleep/Night means the WAVE 3's quiet operating preset; it is not a sleep timer.
+Other Matter controllers may present these standard modes differently.
+
+Apple Home also does not currently display the published firmware revision.
+Its UI may hide the standard Celsius/Fahrenheit preference even though the
+attribute remains available to Matter controllers.
+
+Eco, Boost, drainage, battery and electrical telemetry, timers, display
+brightness, beeper controls, Pet Care, and charge limits are not currently
+exposed.
+
+## Troubleshooting
+
+Allow up to about a minute after startup for the WAVE 3 to send authoritative
+state. The last confirmed state may remain visible during that interval, but
+the plugin will not send commands until the current cloud session has fresh
+device state.
+
+See [Troubleshooting and recovery](docs/troubleshooting.md) for help with:
+
+- pairing and re-pairing
+- **No Response** after startup
+- EcoFlow authentication and API regions
+- command confirmation messages
+- child-bridge cache and recovery
+- collecting safe diagnostic logs
+
+For deeper setup and validation guidance, see the
+[commissioning runbook](docs/commissioning.md).
 
 ## Debug logging
 
-The plugin uses Homebridge's standard debug logging. When the plugin runs in a
-child bridge, enable **Debug Mode** in that child bridge's settings to scope
-verbose logging to the EcoFlow child process. The equivalent `config.json`
-setting is `debugModeEnabled` in the same `_bridge` block; it is independent of
-the `hap` and `matter` protocol settings:
+Enable **Debug Mode** in the EcoFlow child bridge's settings to show MQTT
+routing, decoded state summaries, command confirmation, and reconnect details
+without enabling verbose logging for the rest of Homebridge.
 
-```json
-"_bridge": {
-  "username": "AA:BB:CC:DD:EE:FF",
-  "port": 30141,
-  "debugModeEnabled": true
-}
-```
+Credentials, account identifiers, serial numbers, full MQTT topics, and raw
+payload bytes are redacted from normal and debug logs.
 
-Homebridge passes `-D` only to that child bridge. MQTT routing, packet decode
-summaries, controller state, refresh IDs, and command-coalescing diagnostics
-then become visible without enabling debug output for the main bridge or other
-child bridges. No plugin-specific debug configuration property is needed.
+## Project status
 
-Normal logging remains intentionally concise. EcoFlow account authentication
-attempts and outcomes, the MQTT-ready milestone, connection warnings, and all
-errors remain visible without debug logging. Credentials, account identifiers,
-serial numbers, full MQTT topics, and raw payload bytes remain redacted in both
-normal and debug logs.
+This is an unpublished, pre-release plugin currently being validated against
+real WAVE 3 hardware. Do not rely on it as the sole control for unattended or
+safety-critical climate operation.
 
-## Developing
-
-```sh
-npm run verify
-```
-
-That command checks generated protocol code, linting, types, tests, and a clean
-build. It uses synthetic fixtures and does not contact EcoFlow, an MQTT broker,
-an external service, or a real WAVE 3. The installed-runtime Matter probes do
-instantiate local Matter nodes and therefore bind local Matter/mDNS sockets.
-
-Protocol details and implementation evidence live in
-[`docs/protocol.md`](docs/protocol.md). The
-[blinded greenfield architecture](docs/architecture-blinded-proposal.md) and
-[comparison with the current implementation](docs/architecture-comparison.md)
-record an independent architecture review. The resulting
-[architecture hardening record](docs/architecture-refactor-plan.md) documents
-the five implemented pre-release refactors. Third-party attribution is in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+Protocol research, architecture records, contributor commands, and detailed
+hardware evidence live in [`docs/`](docs/) and [`TODO.md`](TODO.md). Third-party
+attribution is in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## License
 

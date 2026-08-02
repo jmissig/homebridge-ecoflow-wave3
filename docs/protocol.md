@@ -488,6 +488,24 @@ publishing a command.
 
 [Source: household Matter/Homebridge diagnostic log and narrated Apple Home actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533508417145147622)
 
+**Hardware — 2026-08-02 complete composite acknowledgement**
+
+- Home sent one composite Cool/22 °C startup command. EcoFlow returned three
+  same-sequence positive acknowledgements explicitly echoing main power, the
+  22 °C target, and Cool mode.
+- The next display upload contained only `dev_sleep_state = 0`; merged state
+  nevertheless matched powered-on Cool/22 °C. Requiring that single display
+  packet to repeat mode and target caused a false command timeout.
+- A complete matching acknowledgement may therefore use a later
+  command-relevant partial display upload for observed-state confirmation.
+  Incomplete acknowledgements still require later display evidence for their
+  omitted command fields, and unrelated telemetry remains insufficient.
+- Turning the WAVE off in the official app then produced the expected foreign
+  `cfg_sys_pause = true` acknowledgement and `dev_sleep_state = 1` display
+  update; Matter state reconciled to Off without a plugin command.
+
+[Source: household Homebridge diagnostics and narrated Home/EcoFlow actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533539611412922458)
+
 ## Known uncertainty
 
 - No private device-list endpoint is evidenced by the pinned upstream code.

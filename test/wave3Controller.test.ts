@@ -710,6 +710,50 @@ describe('WAVE 3 controller', () => {
     controller.stop();
   });
 
+  it('confirms a fully acknowledged mode command from a later power-state upload', async () => {
+    const session = new FakeControllerSession();
+    const controller = readyController(session, { initialSequence: 148 });
+    session.emitPacket('property', displayPacket(1, {
+      mode: 1,
+      sleepState: 1,
+      targetTemperature: 22,
+    }));
+    const result = controller.execute({
+      type: 'mode',
+      mode: 'cool',
+      targetTemperatureCelsius: 22,
+    });
+    let settled = false;
+    void result.then(() => {
+      settled = true;
+    });
+    await flushAsyncWork();
+
+    session.emitPacket('setReply', acknowledgementPacket(148, {
+      configOk: true,
+      mainPower: true,
+    }));
+    session.emitPacket('setReply', acknowledgementPacket(148, {
+      configOk: true,
+      targetTemperature: 22,
+    }));
+    session.emitPacket('setReply', acknowledgementPacket(148, {
+      configOk: true,
+      mode: 1,
+    }));
+    session.emitPacket('property', displayPacket(2, {
+      ambientTemperature: 24,
+    }));
+    await flushAsyncWork();
+    assert.equal(settled, false, 'unrelated telemetry must not confirm even a complete acknowledgement');
+
+    session.emitPacket('property', displayPacket(3, { sleepState: 0 }));
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 148 });
+    assert.equal(controller.snapshot.state.powered, true);
+    assert.equal(controller.snapshot.state.mode, 'cool');
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 22);
+  });
+
   it('logs a redacted semantic lifecycle for composite commands', async () => {
     const session = new FakeControllerSession();
     const logs: string[] = [];

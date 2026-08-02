@@ -41,6 +41,14 @@ Semantically identical duplicate acknowledgements are ignored; contradictory
 acknowledgements with the same sequence are treated as foreign traffic and do
 not contribute evidence.
 
+When the accumulated acknowledgement explicitly and consistently echoes every
+command field, a later command-relevant display upload may complete observed
+state confirmation without repeating every field. The merged authoritative
+state must still match the complete command, and unrelated temperature or
+humidity telemetry cannot confirm it. This covers the household WAVE's
+observed composite startup sequence: separate positive power, target, and mode
+acknowledgements followed by a power-state-only display upload.
+
 Publication failure, explicit/ambiguous acknowledgement, timeout, disconnect,
 or shutdown returns a typed failure. Commands are serialized so climate mode,
 target, range, fan, and submode writes cannot race. Cached confirmed state is

@@ -455,7 +455,9 @@ export class Wave3Controller {
     if (pending?.acknowledgement === undefined
       || pending.acknowledgementRevision === undefined
       || this.displayRevision <= pending.acknowledgementRevision
-      || !updateProvidesCommandEvidence(update, this.displayState, pending.command)
+      || !(acknowledgementCoversCommand(pending.acknowledgement, pending.command)
+        ? updateProvidesAnyCommandEvidence(update, this.displayState, pending.command)
+        : updateProvidesCommandEvidence(update, this.displayState, pending.command))
       || !stateMatchesCommand(this.displayState?.state ?? {}, pending.command)) {
       return;
     }
@@ -720,6 +722,13 @@ function acknowledgementProgress(
   };
 }
 
+function acknowledgementCoversCommand(
+  acknowledgement: Wave3Acknowledgement,
+  command: Wave3Command,
+): boolean {
+  return acknowledgementProgress(acknowledgement, command).waitingFields.length === 0;
+}
+
 function describeCommand(command: Wave3Command): string {
   // WAVE commands contain only bounded mode, setpoint, fan, submode, and power
   // values. Device/account identifiers and encoded payload bytes never enter
@@ -786,6 +795,42 @@ function updateProvidesCommandEvidence(
   case 'automaticTemperatureRange':
     return parameters?.targetTemperatureLowerCelsius !== undefined
       && parameters.targetTemperatureUpperCelsius !== undefined;
+  case 'airflowSpeed':
+    return parameters?.airflowSpeed !== undefined;
+  case 'submode':
+    return parameters?.submode !== undefined;
+  }
+}
+
+function updateProvidesAnyCommandEvidence(
+  update: Wave3DisplayUpdate,
+  displayState: Wave3DisplayState | undefined,
+  command: Wave3Command,
+): boolean {
+  const activeModeId = update.operatingModeId ?? displayState?.operatingModeId;
+  const parameters = activeModeId === undefined
+    ? undefined
+    : update.modeParameters[activeModeId];
+  switch (command.type) {
+  case 'power':
+    return command.on
+      ? update.sleepState === 0
+        || (update.operatingModeId !== undefined && update.operatingModeId !== 0)
+      : update.sleepState === 1 || update.operatingModeId === 0;
+  case 'mode':
+    return update.sleepState !== undefined
+      || update.operatingModeId !== undefined
+      || (command.targetTemperatureCelsius !== undefined
+        && parameters?.targetTemperatureCelsius !== undefined)
+      || (command.targetTemperatureLowerCelsius !== undefined
+        && parameters?.targetTemperatureLowerCelsius !== undefined)
+      || (command.targetTemperatureUpperCelsius !== undefined
+        && parameters?.targetTemperatureUpperCelsius !== undefined);
+  case 'targetTemperature':
+    return parameters?.targetTemperatureCelsius !== undefined;
+  case 'automaticTemperatureRange':
+    return parameters?.targetTemperatureLowerCelsius !== undefined
+      || parameters?.targetTemperatureUpperCelsius !== undefined;
   case 'airflowSpeed':
     return parameters?.airflowSpeed !== undefined;
   case 'submode':

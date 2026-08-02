@@ -162,7 +162,8 @@ npm run verify
 
 That command checks generated protocol code, linting, types, tests, and a clean
 build. It uses synthetic fixtures and does not contact EcoFlow, an MQTT broker,
-Homebridge, or a real WAVE 3.
+an external service, or a real WAVE 3. The installed-runtime Matter probes do
+instantiate local Matter nodes and therefore bind local Matter/mDNS sockets.
 
 Protocol details and implementation evidence live in
 [`docs/protocol.md`](docs/protocol.md). Third-party attribution is in

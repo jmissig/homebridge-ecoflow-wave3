@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { Endpoint, Environment, MockStorageService, ServerNode } from '@matter/main';
 import { BridgedDeviceBasicInformationServer } from '@matter/main/behaviors';
 import { AggregatorEndpoint } from '@matter/main/endpoints/aggregator';
-import type { MatterAccessory, MatterAPI } from 'homebridge';
+import { MatterStatus, type MatterAccessory, type MatterAPI } from 'homebridge';
 
 import {
   createWave3MatterAccessory,
@@ -68,37 +68,51 @@ describe('WAVE 3 Matter accessory', () => {
     }
   });
 
-  it('preserves cached control state through partial startup packets and stable endpoint shape', () => {
+  it('preserves cached control state and complete endpoint shape for every temperature source', () => {
     const harness = matterHarness();
-    const cached = createWave3MatterAccessory(
-      harness.matter,
-      'matter-partial-cache',
-      device('ambient'),
-      onlineSnapshot(),
-    );
     const partial: Wave3ControllerSnapshot = {
       availability: 'online',
       state: { ambientHumidityPercent: 61 },
       runtimeTemperatures: {},
     };
-    const restored = createWave3MatterAccessory(
-      harness.matter,
-      cached.UUID,
-      device('ambient'),
-      partial,
-      cached,
-    );
-    assert.equal(restored.clusters?.onOff?.onOff, true);
-    assert.equal(restored.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.auto);
-    assert.equal(restored.clusters?.thermostat?.occupiedHeatingSetpoint, 1_900);
-    assert.equal(restored.clusters?.thermostat?.occupiedCoolingSetpoint, 2_400);
-    assert.equal(restored.clusters?.fanControl?.percentSetting, 60);
-    assert.equal(restored.clusters?.relativeHumidityMeasurement?.measuredValue, 6_100);
-    assert.equal(restored.firmwareRevision, '1.1.0.104');
-    assert.deepEqual(
-      Object.keys(restored.deviceType.behaviors).sort(),
-      Object.keys(cached.deviceType.behaviors).sort(),
-    );
+
+    for (const source of ['ambient', 'outlet', 'none'] as const) {
+      const cached = createWave3MatterAccessory(
+        harness.matter,
+        `matter-partial-cache-${source}`,
+        device(source),
+        onlineSnapshot(),
+      );
+      const restored = createWave3MatterAccessory(
+        harness.matter,
+        cached.UUID,
+        device(source),
+        partial,
+        cached,
+      );
+      assert.equal(restored.clusters?.onOff?.onOff, true);
+      assert.equal(restored.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.auto);
+      assert.equal(restored.clusters?.thermostat?.occupiedHeatingSetpoint, 1_900);
+      assert.equal(restored.clusters?.thermostat?.occupiedCoolingSetpoint, 2_400);
+      assert.equal(restored.clusters?.fanControl?.percentSetting, 60);
+      assert.equal(
+        restored.clusters?.thermostat?.localTemperature,
+        source === 'ambient' ? 2_123 : source === 'outlet' ? 1_655 : null,
+      );
+      assert.equal(
+        restored.clusters?.relativeHumidityMeasurement?.measuredValue,
+        source === 'ambient' ? 6_100 : undefined,
+      );
+      assert.equal(restored.firmwareRevision, '1.1.0.104');
+      assert.deepEqual(
+        Object.keys(restored.clusters ?? {}).sort(),
+        Object.keys(cached.clusters ?? {}).sort(),
+      );
+      assert.deepEqual(
+        Object.keys(restored.deviceType.behaviors).sort(),
+        Object.keys(cached.deviceType.behaviors).sort(),
+      );
+    }
 
     const fresh = createWave3MatterAccessory(
       harness.matter,
@@ -658,19 +672,43 @@ describe('WAVE 3 Matter accessory', () => {
         upperCelsius: 21,
       });
 
-      for (const [reason, message] of [
-        ['publicationFailed', /cloud did not accept/],
-        ['acknowledgementRejected', /rejected the command/],
-        ['timeout', /did not confirm/],
-        ['disconnected', /not currently controllable/],
-        ['stopped', /not currently controllable/],
+      for (const [reason, StatusType, message] of [
+        ['publicationFailed', MatterStatus.Failure, /cloud did not accept/],
+        ['acknowledgementRejected', MatterStatus.Failure, /rejected the command/],
+        ['timeout', MatterStatus.Timeout, /did not confirm/],
+        ['disconnected', MatterStatus.InvalidInState, /not currently controllable/],
+        ['stopped', MatterStatus.InvalidInState, /not currently controllable/],
       ] as const) {
         controller.failNext(reason);
         await assert.rejects(
           async () => endpoint.act(`failed power command: ${reason}`, agent => agent.onOff.off()),
-          message,
+          error => {
+            assert.ok(error instanceof StatusType);
+            assert.equal(MatterStatus.isMatterProtocolError(error), true);
+            assert.match(error.message, message);
+            return true;
+          },
         );
       }
+      assert.equal(endpoint.state.onOff.onOff, true);
+
+      const inFlightReconnect = controller.deferNextFailure();
+      const interruptedPower = endpoint.act(
+        'power command interrupted by reconnect',
+        agent => agent.onOff.off(),
+      );
+      await inFlightReconnect.started;
+      controller.setSnapshot({
+        ...controller.snapshot,
+        availability: 'reconnecting',
+      });
+      inFlightReconnect.fail('disconnected');
+      await assert.rejects(async () => interruptedPower, error => {
+        assert.ok(error instanceof MatterStatus.InvalidInState);
+        assert.equal(MatterStatus.isMatterProtocolError(error), true);
+        assert.match(error.message, /not currently controllable/);
+        return true;
+      });
       assert.equal(endpoint.state.onOff.onOff, true);
 
       for (const availability of ['reconnecting', 'accountError'] as const) {
@@ -680,7 +718,12 @@ describe('WAVE 3 Matter accessory', () => {
         });
         await assert.rejects(
           async () => endpoint.act(`${availability} power command`, agent => agent.onOff.off()),
-          /not currently controllable/,
+          error => {
+            assert.ok(error instanceof MatterStatus.InvalidInState);
+            assert.equal(MatterStatus.isMatterProtocolError(error), true);
+            assert.match(error.message, /not currently controllable/);
+            return true;
+          },
         );
       }
       controller.setSnapshot(onlineSnapshot());
@@ -727,7 +770,7 @@ describe('WAVE 3 Matter accessory', () => {
 
       controller.failNext('timeout');
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
-      await waitUntil(() => errors.length === 8, 'failed attribute command reconciliation');
+      await waitUntil(() => errors.length === 9, 'failed attribute command reconciliation');
       await waitUntil(
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
         'confirmed thermostat restoration',
@@ -747,7 +790,7 @@ describe('WAVE 3 Matter accessory', () => {
       await binding?.stop();
       await node.close();
     }
-    assert.equal(errors.length, 8);
+    assert.equal(errors.length, 9);
     assert.match(errors[0]!, /cloud did not accept the command/);
     assert.match(errors[1]!, /rejected the command/);
     assert.match(errors[2]!, /did not confirm the command/);
@@ -755,7 +798,8 @@ describe('WAVE 3 Matter accessory', () => {
     assert.match(errors[4]!, /not currently controllable/);
     assert.match(errors[5]!, /not currently controllable/);
     assert.match(errors[6]!, /not currently controllable/);
-    assert.match(errors[7]!, /system mode command failed.*did not confirm the command/);
+    assert.match(errors[7]!, /not currently controllable/);
+    assert.match(errors[8]!, /system mode command failed.*did not confirm the command/);
   });
 
   it('builds a customized room air conditioner with auto, fan, humidity, and complete state', () => {
@@ -1088,6 +1132,10 @@ function fakeController(initial: Wave3ControllerSnapshot): Wave3AccessoryControl
 
 function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryController & {
   commands: Wave3Command[];
+  deferNextFailure(): {
+    started: Promise<void>;
+    fail(reason: Wave3CommandFailure): void;
+  };
   failNext(reason: Wave3CommandFailure): void;
   setSnapshot(snapshot: Wave3ControllerSnapshot): void;
 } {
@@ -1095,11 +1143,30 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
   let listener: ((snapshot: Wave3ControllerSnapshot) => void) | undefined;
   const commands: Wave3Command[] = [];
   let nextFailure: Wave3CommandFailure | undefined;
+  let deferredExecution: {
+    started: ReturnType<typeof deferred>;
+    failure: Promise<Wave3CommandFailure>;
+  } | undefined;
   return {
     get snapshot() {
       return snapshot;
     },
     commands,
+    deferNextFailure() {
+      assert.equal(deferredExecution, undefined);
+      const started = deferred();
+      let resolveFailure!: (reason: Wave3CommandFailure) => void;
+      const failure = new Promise<Wave3CommandFailure>(resolve => {
+        resolveFailure = resolve;
+      });
+      deferredExecution = { started, failure };
+      return {
+        started: started.promise,
+        fail(reason) {
+          resolveFailure(reason);
+        },
+      };
+    },
     failNext(reason) {
       nextFailure = reason;
     },
@@ -1115,6 +1182,13 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
     },
     execute: async command => {
       commands.push(command);
+      if (deferredExecution !== undefined) {
+        const execution = deferredExecution;
+        deferredExecution = undefined;
+        execution.started.resolve();
+        const reason = await execution.failure;
+        return { status: 'failed', sequence: commands.length, reason };
+      }
       if (nextFailure !== undefined) {
         const reason = nextFailure;
         nextFailure = undefined;

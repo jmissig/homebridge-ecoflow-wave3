@@ -177,7 +177,9 @@ error types in the command path.
   updates, stale Matter accessory removal, and restart/cache restoration.
 - [x] Test that the plugin refuses to start device sessions when Matter is not
   enabled and never registers a HAP accessory.
-- [x] Keep `npm run verify` network- and hardware-independent.
+- [x] Keep `npm run verify` independent of external network services and
+  household hardware. Installed-runtime Matter probes intentionally bind local
+  Matter/mDNS sockets.
 
 **Phase M4 exit:** the aggregate suite proves the plugin publishes and controls
 only Matter accessories while retaining the existing cloud/controller safety

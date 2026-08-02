@@ -1,3 +1,5 @@
+import { randomInt } from 'node:crypto';
+
 import type {
   CloudSessionLogger,
   CloudSessionState,
@@ -110,7 +112,7 @@ export class Wave3Controller {
     this.now = options.now ?? Date.now;
     this.logger = options.logger ?? NOOP_LOGGER;
     this.schedule = options.schedule ?? defaultSchedule;
-    this.nextSequence = options.initialSequence ?? 10;
+    this.nextSequence = options.initialSequence ?? randomInt(10, 1_000);
     this.snapshot = freezeSnapshot({
       availability: availabilityForSession(session.state, false),
       state: {},
@@ -354,6 +356,13 @@ export class Wave3Controller {
   ): void {
     const pending = this.pending;
     if (pending === undefined || pending.sequence !== sequence) {
+      return;
+    }
+    if (!acknowledgementMatchesCommand(acknowledgement, pending.command)) {
+      this.logger.info(
+        `EcoFlow diagnostics: controller ignored same-sequence acknowledgement=${sequence} `
+        + 'because its echoed values do not match the pending command; possible foreign client traffic',
+      );
       return;
     }
     if (pending.acknowledgement !== undefined) {

@@ -68,8 +68,12 @@ describe('EcoFlow cloud session', () => {
     assert.deepEqual(
       connection.subscribeCalls[0],
       [
-        ...Object.values(buildWave3Topics('TEST_USER', 'TESTWAVE30001')),
-        ...Object.values(buildWave3Topics('TEST_USER', 'TESTWAVE30002')),
+        buildWave3Topics('TEST_USER', 'TESTWAVE30001').property,
+        buildWave3Topics('TEST_USER', 'TESTWAVE30001').setReply,
+        buildWave3Topics('TEST_USER', 'TESTWAVE30001').getReply,
+        buildWave3Topics('TEST_USER', 'TESTWAVE30002').property,
+        buildWave3Topics('TEST_USER', 'TESTWAVE30002').setReply,
+        buildWave3Topics('TEST_USER', 'TESTWAVE30002').getReply,
       ],
     );
     assert.equal(connection.publishCalls.length, 2);

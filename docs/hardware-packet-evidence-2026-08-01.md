@@ -215,6 +215,26 @@ stable account identifiers.
   JSON decoding is reserved for replies whose request ID matches the plugin's
   pending refresh.
 
+## Concurrent-client resilience
+
+**Implementation policy derived from the observed coexistence traffic**
+
+- Subscribe only to `property`, `set_reply`, and `get_reply`. The plugin still
+  publishes to `set` and `get`, but no longer receives either client's echoed
+  outbound requests.
+- Match quota replies to the plugin's current request ID and MQTT generation;
+  drop all other replies before quota decoding.
+- Require authoritative active-mode evidence before partial property traffic
+  can establish a new MQTT generation or supersede its initial refresh.
+- Randomize the first command sequence in the evidenced `10–999` range after
+  each plugin restart, then advance sequentially.
+- Ignore a same-sequence acknowledgement when its echoed fields do not match
+  the plugin's pending command. Require a matching positive acknowledgement
+  and a later matching display update before confirming success.
+- Serialize HomeKit writes and coalesce slider traffic. A genuine official-app
+  change may still race a HomeKit change; the device remains last-writer-wins,
+  and the plugin reports only subsequently observed state.
+
 ## Evidence still missing
 
 - Exact semantics of acknowledgement action IDs beyond the mapped climate

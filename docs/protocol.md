@@ -134,8 +134,9 @@ A matching get reply contains `data.online` and `data.quotaMap`.
 
 - The Homebridge transport should subscribe before publishing the initial
   refresh.
-- The first slice retains the pinned client's five-topic subscription shape;
-  narrowing it to inbound-only topics requires broker or hardware evidence.
+- Household hardware confirmed that the `set` and `get` subscriptions only
+  expose echoed plugin/app publications. The plugin therefore subscribes only
+  to the three inbound topics: `property`, `set_reply`, and `get_reply`.
 - Every reconnect should re-subscribe and refresh exactly once.
 - MQTT setup completing means only that the cloud transport is ready. The
   controller remains stale and rejects writes until current-generation WAVE 3
@@ -204,7 +205,9 @@ implementation.
 **Inference**
 
 - Our codec should accept an explicit sequence number so tests and command
-  correlation are deterministic.
+  correlation are deterministic. Runtime controllers randomize their initial
+  sequence within the evidenced `10–999` range on every restart, then advance
+  sequentially, reducing predictable collisions with the official app.
 - Unknown function/command IDs should produce bounded diagnostic results, not
   be decoded as display messages.
 - The XOR condition is reverse-engineered behavior, not cryptographic
@@ -284,6 +287,9 @@ publishing a command.
   sequence-based correlation or a complete acceptance policy.
 - Acknowledgement correlation and state-confirmation rules must therefore be
   designed and fixture-tested before live commands are attempted.
+- A same-sequence acknowledgement whose echoed values do not match the pending
+  plugin command is treated as possible foreign-client traffic and ignored.
+  Matching acknowledgement plus later matching display state remains required.
 
 ## Household hardware observations
 

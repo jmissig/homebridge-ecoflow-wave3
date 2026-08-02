@@ -451,9 +451,7 @@ export class EcoFlowCloudSession {
     }));
     const subscriptionTopics = topicsByDevice.flatMap(({ topics }) => [
       topics.property,
-      topics.set,
       topics.setReply,
-      topics.get,
       topics.getReply,
     ]);
     this.logger.info(

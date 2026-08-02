@@ -95,7 +95,9 @@ describe('WAVE 3 controller', () => {
 
   it('requires current-generation climate evidence and honors quota availability', async () => {
     const session = new FakeControllerSession();
-    const controller = new Wave3Controller(TEST_SERIAL, session);
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      initialSequence: 10,
+    });
     assert.equal(controller.snapshot.availability, 'stale');
 
     session.emitPacket('getReply', quotaReply({
@@ -442,11 +444,10 @@ describe('WAVE 3 controller', () => {
     assert.deepEqual(await result, { status: 'confirmed', sequence: 47 });
   });
 
-  it('rejects negative, absent, and mismatched acknowledgements', async () => {
+  it('rejects negative and incomplete matching acknowledgements', async () => {
     for (const acknowledgement of [
       { configOk: false, airflowSpeed: 60 },
       { airflowSpeed: 60 },
-      { configOk: true, airflowSpeed: 80 },
     ]) {
       const session = new FakeControllerSession();
       const controller = readyController(session, {
@@ -462,6 +463,30 @@ describe('WAVE 3 controller', () => {
       });
       controller.stop();
     }
+  });
+
+  it('ignores a foreign same-sequence acknowledgement and waits for its own evidence', async () => {
+    const session = new FakeControllerSession();
+    const controller = readyController(session, {
+      initialSequence: 54,
+    });
+    const result = controller.execute({ type: 'airflowSpeed', speed: 60 });
+    await flushAsyncWork();
+
+    session.emitPacket('setReply', acknowledgementPacket(54, {
+      configOk: true,
+      airflowSpeed: 80,
+    }));
+    session.emitPacket('setReply', acknowledgementPacket(54, {
+      configOk: true,
+      airflowSpeed: 60,
+    }));
+    session.emitPacket('property', displayPacket(114, {
+      mode: 1,
+      airflowSpeed: 60,
+    }));
+
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 54 });
   });
 
   it('applies acknowledgement and observed-state policy to every command shape', async () => {

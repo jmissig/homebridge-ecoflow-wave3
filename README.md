@@ -101,11 +101,23 @@ Apple Home.
 
 ## Debug logging
 
-The plugin uses Homebridge's standard debug logging. Start Homebridge with its
-debug option (for example, `homebridge -D`, or the equivalent Homebridge UI
-debug setting) to see MQTT routing, packet decode summaries, controller state,
-refresh IDs, and command-coalescing diagnostics. No plugin-specific debug
-configuration property is needed.
+The plugin uses Homebridge's standard debug logging. When the plugin runs in a
+child bridge, enable **Debug Mode** in that child bridge's settings to scope
+verbose logging to the EcoFlow child process. The equivalent `config.json`
+setting lives in the platform's existing `_bridge` block:
+
+```json
+"_bridge": {
+  "username": "AA:BB:CC:DD:EE:FF",
+  "port": 30141,
+  "debugModeEnabled": true
+}
+```
+
+Homebridge passes `-D` only to that child bridge. MQTT routing, packet decode
+summaries, controller state, refresh IDs, and command-coalescing diagnostics
+then become visible without enabling debug output for the main bridge or other
+child bridges. No plugin-specific debug configuration property is needed.
 
 Normal logging remains intentionally concise. EcoFlow account authentication
 attempts and outcomes, the MQTT-ready milestone, connection warnings, and all

@@ -20,6 +20,99 @@ import type {
 } from '../src/wave3/domain.js';
 
 describe('WAVE 3 Matter accessory', () => {
+  it('maps every supported system mode and all five fan speeds from snapshots', () => {
+    const harness = matterHarness();
+    const cases = [
+      { mode: 'off', powered: false, submode: 0, speed: 20, systemMode: 3, fanMode: 0, running: 0 },
+      { mode: 'auto', powered: true, submode: 0, speed: 20, systemMode: 1, fanMode: 1, running: 0 },
+      { mode: 'cool', powered: true, submode: 0, speed: 40, systemMode: 3, fanMode: 2, running: 3 },
+      { mode: 'heat', powered: true, submode: 0, speed: 60, systemMode: 4, fanMode: 2, running: 4 },
+      { mode: 'fan', powered: true, submode: 0, speed: 80, systemMode: 7, fanMode: 3, running: 0 },
+      { mode: 'dry', powered: true, submode: 0, speed: 100, systemMode: 8, fanMode: 3, running: 0 },
+      { mode: 'cool', powered: true, submode: 3, speed: 20, systemMode: 9, fanMode: 1, running: 3 },
+    ] as const;
+
+    for (const [index, value] of cases.entries()) {
+      const snapshot: Wave3ControllerSnapshot = {
+        availability: 'online',
+        state: {
+          powered: value.powered,
+          mode: value.mode,
+          submode: value.submode,
+          airflowSpeed: value.speed,
+          ambientTemperatureCelsius: 21,
+          ambientHumidityPercent: 50,
+          ...(value.mode === 'auto'
+            ? {
+              targetTemperatureLowerCelsius: 19,
+              targetTemperatureUpperCelsius: 24,
+            }
+            : value.mode === 'cool' || value.mode === 'heat'
+              ? { targetTemperatureCelsius: 22 }
+              : {}),
+        },
+        runtimeTemperatures: {},
+      };
+      const accessory = createWave3MatterAccessory(
+        harness.matter,
+        `matter-mode-${index}`,
+        device('ambient'),
+        snapshot,
+      );
+      assert.equal(accessory.clusters?.onOff?.onOff, value.powered);
+      assert.equal(accessory.clusters?.thermostat?.systemMode, value.systemMode);
+      assert.equal(accessory.clusters?.thermostat?.thermostatRunningMode, value.running);
+      assert.equal(accessory.clusters?.fanControl?.fanMode, value.fanMode);
+      assert.equal(accessory.clusters?.fanControl?.percentSetting, value.powered ? value.speed : 0);
+      assert.equal(accessory.clusters?.fanControl?.speedSetting, value.powered ? value.speed / 20 : 0);
+    }
+  });
+
+  it('preserves cached control state through partial startup packets and stable endpoint shape', () => {
+    const harness = matterHarness();
+    const cached = createWave3MatterAccessory(
+      harness.matter,
+      'matter-partial-cache',
+      device('ambient'),
+      onlineSnapshot(),
+    );
+    const partial: Wave3ControllerSnapshot = {
+      availability: 'online',
+      state: { ambientHumidityPercent: 61 },
+      runtimeTemperatures: {},
+    };
+    const restored = createWave3MatterAccessory(
+      harness.matter,
+      cached.UUID,
+      device('ambient'),
+      partial,
+      cached,
+    );
+    assert.equal(restored.clusters?.onOff?.onOff, true);
+    assert.equal(restored.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.auto);
+    assert.equal(restored.clusters?.thermostat?.occupiedHeatingSetpoint, 1_900);
+    assert.equal(restored.clusters?.thermostat?.occupiedCoolingSetpoint, 2_400);
+    assert.equal(restored.clusters?.fanControl?.percentSetting, 60);
+    assert.equal(restored.clusters?.relativeHumidityMeasurement?.measuredValue, 6_100);
+    assert.equal(restored.firmwareRevision, '1.1.0.104');
+    assert.deepEqual(
+      Object.keys(restored.deviceType.behaviors).sort(),
+      Object.keys(cached.deviceType.behaviors).sort(),
+    );
+
+    const fresh = createWave3MatterAccessory(
+      harness.matter,
+      'matter-partial-fresh',
+      device('ambient'),
+      partial,
+    );
+    assert.equal(fresh.clusters?.onOff?.onOff, false);
+    assert.equal(fresh.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.cool);
+    assert.equal(fresh.clusters?.thermostat?.localTemperature, null);
+    assert.equal(fresh.clusters?.fanControl?.percentSetting, 0);
+    assert.equal(fresh.clusters?.relativeHumidityMeasurement?.measuredValue, 6_100);
+  });
+
   it('constructs a conformant endpoint with the installed Matter runtime', async () => {
     const harness = matterHarness();
     const accessory = createWave3MatterAccessory(
@@ -565,12 +658,33 @@ describe('WAVE 3 Matter accessory', () => {
         upperCelsius: 21,
       });
 
-      controller.failNext('disconnected');
-      await assert.rejects(
-        async () => endpoint.act('failed power command', agent => agent.onOff.off()),
-        /not currently controllable/,
-      );
+      for (const [reason, message] of [
+        ['publicationFailed', /cloud did not accept/],
+        ['acknowledgementRejected', /rejected the command/],
+        ['timeout', /did not confirm/],
+        ['disconnected', /not currently controllable/],
+        ['stopped', /not currently controllable/],
+      ] as const) {
+        controller.failNext(reason);
+        await assert.rejects(
+          async () => endpoint.act(`failed power command: ${reason}`, agent => agent.onOff.off()),
+          message,
+        );
+      }
       assert.equal(endpoint.state.onOff.onOff, true);
+
+      for (const availability of ['reconnecting', 'accountError'] as const) {
+        controller.setSnapshot({
+          ...controller.snapshot,
+          availability,
+        });
+        await assert.rejects(
+          async () => endpoint.act(`${availability} power command`, agent => agent.onOff.off()),
+          /not currently controllable/,
+        );
+      }
+      controller.setSnapshot(onlineSnapshot());
+      await waitUntil(() => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto);
 
       const airflowBeforePowerOff = controller.commands.filter(
         command => command.type === 'airflowSpeed',
@@ -613,12 +727,12 @@ describe('WAVE 3 Matter accessory', () => {
 
       controller.failNext('timeout');
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
-      await waitUntil(() => errors.length === 2, 'failed attribute command reconciliation');
+      await waitUntil(() => errors.length === 8, 'failed attribute command reconciliation');
       await waitUntil(
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
         'confirmed thermostat restoration',
       );
-      assert.match(errors[1]!, /did not confirm the command/);
+      assert.match(errors.at(-1)!, /did not confirm the command/);
 
       const airflowCommands = controller.commands.filter(command => command.type === 'airflowSpeed').length;
       await endpoint.set({ fanControl: { percentSetting: 40 } });
@@ -633,12 +747,15 @@ describe('WAVE 3 Matter accessory', () => {
       await binding?.stop();
       await node.close();
     }
-    assert.deepEqual(errors, [
-      'EcoFlow WAVE 3 Matter power command failed: '
-        + 'EcoFlow WAVE 3 is not currently controllable',
-      'EcoFlow WAVE 3 Matter system mode command failed: '
-        + 'EcoFlow WAVE 3 did not confirm the command',
-    ]);
+    assert.equal(errors.length, 8);
+    assert.match(errors[0]!, /cloud did not accept the command/);
+    assert.match(errors[1]!, /rejected the command/);
+    assert.match(errors[2]!, /did not confirm the command/);
+    assert.match(errors[3]!, /not currently controllable/);
+    assert.match(errors[4]!, /not currently controllable/);
+    assert.match(errors[5]!, /not currently controllable/);
+    assert.match(errors[6]!, /not currently controllable/);
+    assert.match(errors[7]!, /system mode command failed.*did not confirm the command/);
   });
 
   it('builds a customized room air conditioner with auto, fan, humidity, and complete state', () => {
@@ -790,16 +907,94 @@ describe('WAVE 3 Matter accessory', () => {
 
     controller.emit({
       ...onlineSnapshot(),
+      firmwareVersions: { pd: '1.1.0.105' },
+    });
+    await drainMicrotasks();
+    assert.deepEqual(
+      harness.stateUpdates.filter(
+        update => update.cluster === 'bridgedDeviceBasicInformation',
+      ).at(-1)?.attributes,
+      {
+        softwareVersion: 16_842_857,
+        softwareVersionString: '1.1.0.105',
+      },
+    );
+    const afterFirmwareUpdate = harness.stateUpdates.length;
+
+    controller.emit({
+      ...onlineSnapshot(),
       availability: 'stale',
       state: { powered: false },
     });
     await drainMicrotasks();
-    assert.equal(harness.stateUpdates.length, 5);
+    assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
+
+    for (const availability of ['reconnecting', 'accountError'] as const) {
+      controller.emit({
+        availability,
+        state: { powered: false },
+        runtimeTemperatures: {},
+      });
+      await drainMicrotasks();
+      assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
+    }
 
     await binding.stop();
     controller.emit(onlineSnapshot());
     await drainMicrotasks();
-    assert.equal(harness.stateUpdates.length, 5);
+    assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
+  });
+
+  it('keeps a partial pre-authoritative snapshot non-controlling until full state arrives', async () => {
+    const harness = matterHarness();
+    const controller = fakeController(offlineSnapshot());
+    const accessory = createWave3MatterAccessory(
+      harness.matter,
+      'matter-partial-binding',
+      device('ambient'),
+      controller.snapshot,
+    );
+    const binding = new Wave3MatterAccessory(
+      harness.matter,
+      accessory,
+      controller,
+      'ambient',
+    );
+
+    controller.emit({
+      availability: 'online',
+      state: { ambientHumidityPercent: 62 },
+      runtimeTemperatures: {},
+    });
+    await drainMicrotasks();
+    assert.equal(
+      harness.stateUpdates.find(update => update.cluster === 'onOff')?.attributes.onOff,
+      false,
+    );
+    assert.equal(
+      harness.stateUpdates.find(update => update.cluster === 'fanControl')?.attributes.percentSetting,
+      0,
+    );
+    assert.equal(
+      harness.stateUpdates.find(
+        update => update.cluster === 'relativeHumidityMeasurement',
+      )?.attributes.measuredValue,
+      6_200,
+    );
+
+    controller.emit(onlineSnapshot());
+    await drainMicrotasks();
+    assert.equal(
+      harness.stateUpdates.filter(update => update.cluster === 'onOff').at(-1)?.attributes.onOff,
+      true,
+    );
+    assert.equal(
+      harness.stateUpdates.filter(
+        update => update.cluster === 'thermostat',
+      ).at(-1)?.attributes.systemMode,
+      MATTER_SYSTEM_MODE.auto,
+    );
+    await binding.stop();
   });
 
   it('does not resume snapshot updates after stop during an awaited update', async () => {

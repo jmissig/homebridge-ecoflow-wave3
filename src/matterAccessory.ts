@@ -983,9 +983,13 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
 
+    if (snapshot.availability !== 'online') {
+      return;
+    }
+
     await this.pushFirmware(snapshot.firmwareVersions?.pd ?? snapshot.firmwareVersions?.iot);
 
-    if (this.stopped || snapshot.availability !== 'online') {
+    if (this.stopped) {
       return;
     }
 

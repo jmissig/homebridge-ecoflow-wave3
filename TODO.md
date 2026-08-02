@@ -162,21 +162,22 @@ error types in the command path.
 
 ## Phase M4: Matter-focused automated verification
 
-- [ ] Replace HAP accessory tests with Matter registration, state, handler, and
-  cache tests.
-- [ ] Test complete and partial snapshot updates, including partial packets
+- [x] Add Matter registration, state, handler, and cache tests while retaining
+  the legacy HAP test suite until its source is deleted in Phase M5.
+- [x] Test complete and partial snapshot updates, including partial packets
   arriving before authoritative startup state.
-- [ ] Test all thermostat system modes, setpoints, fan speeds, humidity,
+- [x] Test all thermostat system modes, setpoints, fan speeds, humidity,
   firmware, and temperature-source variants.
-- [ ] Test composed endpoint/part IDs and ensure fan and humidity parts remain
-  stable across restarts.
-- [ ] Test command-handler error translation, timeout, reconnect during a
+- [x] Test stable endpoint UUIDs and cluster shape across cache restoration and
+  all temperature-source variants; fan and humidity are clusters on the single
+  Room Air Conditioner endpoint, not separately identified child parts.
+- [x] Test command-handler error translation, timeout, reconnect during a
   command, and account/session failure.
-- [ ] Test multiple configured WAVE 3 units, duplicate prevention, metadata
+- [x] Test multiple configured WAVE 3 units, duplicate prevention, metadata
   updates, stale Matter accessory removal, and restart/cache restoration.
-- [ ] Test that the plugin refuses to start device sessions when Matter is not
+- [x] Test that the plugin refuses to start device sessions when Matter is not
   enabled and never registers a HAP accessory.
-- [ ] Keep `npm run verify` network- and hardware-independent.
+- [x] Keep `npm run verify` network- and hardware-independent.
 
 **Phase M4 exit:** the aggregate suite proves the plugin publishes and controls
 only Matter accessories while retaining the existing cloud/controller safety

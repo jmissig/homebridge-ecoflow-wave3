@@ -418,6 +418,7 @@ describe('WAVE 3 Matter accessory', () => {
       const directControl = (binding as unknown as {
         createMatterControl(): {
           setPower(on: boolean, applyMatter: () => Promise<void>): Promise<void>;
+          setSystemMode(value: number): void;
           setHeatingSetpoint(value: number): void;
           setCoolingSetpoint(value: number): void;
           raiseLowerSetpoint(
@@ -444,19 +445,44 @@ describe('WAVE 3 Matter accessory', () => {
 
       await endpoint.act('turn off', agent => agent.onOff.off());
       const commandsBeforeModeWhileOff = controller.commands.length;
-      const errorsBeforeModeWhileOff = errors.length;
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } });
-      await waitUntil(
-        () => errors.length === errorsBeforeModeWhileOff + 1,
-        'system-mode rejection while off',
-      );
+      await endpoint.set({ thermostat: { occupiedHeatingSetpoint: 2_000 } });
+      await drainMicrotasks();
       assert.equal(controller.commands.length, commandsBeforeModeWhileOff);
+      controller.setSnapshot({
+        ...controller.snapshot,
+        state: { ...controller.snapshot.state, ambientHumidityPercent: 55 },
+      });
       await waitUntil(
-        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.auto,
-        'confirmed system mode restored while off',
+        () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat
+          && endpoint.state.thermostat.occupiedHeatingSetpoint === 2_000,
+        'staged off-state thermostat intent survives telemetry',
       );
-      assert.match(errors.at(-1)!, /power control before selecting a system mode/);
       await endpoint.act('turn on', agent => agent.onOff.on());
+      assert.deepEqual(controller.commands.slice(commandsBeforeModeWhileOff), [{
+        type: 'mode',
+        mode: 'heat',
+        targetTemperatureCelsius: 20,
+      }]);
+      assert.equal(controller.snapshot.state.powered, true);
+      assert.equal(controller.snapshot.state.mode, 'heat');
+      assert.equal(controller.snapshot.state.targetTemperatureCelsius, 20);
+
+      await endpoint.act('turn off for automatic startup', agent => agent.onOff.off());
+      const commandsBeforeAutoStartup = controller.commands.length;
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.auto } });
+      await endpoint.set({ thermostat: {
+        occupiedHeatingSetpoint: 1_800,
+        occupiedCoolingSetpoint: 2_300,
+      } });
+      await endpoint.act('turn on in automatic mode', agent => agent.onOff.on());
+      assert.deepEqual(controller.commands.slice(commandsBeforeAutoStartup), [{
+        type: 'mode',
+        mode: 'auto',
+        targetTemperatureLowerCelsius: 18,
+        targetTemperatureUpperCelsius: 23,
+      }]);
+
       const powerBeforeRapidToggle = controller.commands.length;
       await Promise.all([
         directControl.setPower(false, async () => undefined),
@@ -464,7 +490,12 @@ describe('WAVE 3 Matter accessory', () => {
       ]);
       assert.deepEqual(controller.commands.slice(powerBeforeRapidToggle), [
         { type: 'power', on: false },
-        { type: 'power', on: true },
+        {
+          type: 'mode',
+          mode: 'auto',
+          targetTemperatureLowerCelsius: 18,
+          targetTemperatureUpperCelsius: 23,
+        },
       ]);
       for (const [systemMode, expected] of [
         [MATTER_SYSTEM_MODE.cool, { type: 'mode', mode: 'cool' }],
@@ -698,7 +729,7 @@ describe('WAVE 3 Matter accessory', () => {
       );
       assert.deepEqual(controller.commands.slice(0, 2), [
         { type: 'power', on: false },
-        { type: 'power', on: true },
+        { type: 'mode', mode: 'heat', targetTemperatureCelsius: 20 },
       ]);
 
       for (const [fanMode, speed] of [[1, 20], [2, 60], [3, 100]] as const) {
@@ -1124,8 +1155,6 @@ describe('WAVE 3 Matter accessory', () => {
       await node.close();
     }
     assert.deepEqual(errors, [
-      'EcoFlow WAVE 3 Matter system mode command failed: '
-        + 'Use the Room Air Conditioner power control before selecting a system mode',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Cooling setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
@@ -1577,6 +1606,15 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
         state.mode = command.mode;
         state.powered = true;
         state.submode = 0;
+        if (command.targetTemperatureCelsius !== undefined) {
+          state.targetTemperatureCelsius = command.targetTemperatureCelsius;
+        }
+        if (command.targetTemperatureLowerCelsius !== undefined) {
+          state.targetTemperatureLowerCelsius = command.targetTemperatureLowerCelsius;
+        }
+        if (command.targetTemperatureUpperCelsius !== undefined) {
+          state.targetTemperatureUpperCelsius = command.targetTemperatureUpperCelsius;
+        }
         break;
       case 'targetTemperature':
         state.targetTemperatureCelsius = command.celsius;

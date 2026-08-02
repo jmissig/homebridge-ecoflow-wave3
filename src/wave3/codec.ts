@@ -711,9 +711,19 @@ function commandToConfig(command: Wave3Command): Record<string, boolean | number
   case 'power':
     return command.on ? { cfgMainPower: true } : { cfgSysPause: true };
   case 'mode':
+    validateModeCommand(command);
     return {
       cfgMainPower: true,
       cfgWaveOperatingMode: WAVE3_MODE_IDS[command.mode],
+      ...(command.targetTemperatureCelsius === undefined
+        ? {}
+        : { cfgTempSet: command.targetTemperatureCelsius }),
+      ...(command.targetTemperatureLowerCelsius === undefined
+        ? {}
+        : { cfgTempThermostaticLowerLimit: command.targetTemperatureLowerCelsius }),
+      ...(command.targetTemperatureUpperCelsius === undefined
+        ? {}
+        : { cfgTempThermostaticUpperLimit: command.targetTemperatureUpperCelsius }),
     };
   case 'targetTemperature':
     validateTemperature(command.celsius);
@@ -732,6 +742,39 @@ function commandToConfig(command: Wave3Command): Record<string, boolean | number
     return { cfgAirflowSpeed: command.speed };
   case 'submode':
     return { cfgWaveOperatingSubmode: command.submode };
+  }
+}
+
+function validateModeCommand(command: Extract<Wave3Command, { type: 'mode' }>): void {
+  const target = command.targetTemperatureCelsius;
+  const lower = command.targetTemperatureLowerCelsius;
+  const upper = command.targetTemperatureUpperCelsius;
+  if (target !== undefined) {
+    validateTemperature(target);
+  }
+  if (lower !== undefined) {
+    validateTemperature(lower);
+  }
+  if (upper !== undefined) {
+    validateTemperature(upper);
+  }
+  if (command.mode === 'auto') {
+    if ((lower === undefined) !== (upper === undefined)) {
+      throw new RangeError('automatic startup requires both temperature bounds');
+    }
+    if (lower !== undefined && upper !== undefined && lower > upper) {
+      throw new RangeError('automatic temperature lower bound must not exceed upper bound');
+    }
+    if (target !== undefined) {
+      throw new RangeError('automatic startup does not accept a single target temperature');
+    }
+    return;
+  }
+  if (lower !== undefined || upper !== undefined) {
+    throw new RangeError('temperature bounds are only valid for automatic startup');
+  }
+  if (target !== undefined && command.mode !== 'cool' && command.mode !== 'heat') {
+    throw new RangeError('target temperature is only valid for cooling or heating startup');
   }
 }
 

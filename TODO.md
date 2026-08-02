@@ -146,6 +146,9 @@ state, and temperature-source variants.
   coalesce a Matter thermostat transaction's companion setpoint changes into
   one confirmed range command, and invalidate queued fan work immediately when
   power-off is requested even if a Homebridge state update is still pending.
+- [x] Stage Apple Home mode and setpoint writes made while the WAVE is off, then
+  apply power, mode, and the selected target/range in one confirmed startup
+  command instead of starting with the WAVE's saved target.
 - [x] Translate controller outcomes into standard Matter interaction errors
   for awaited Matter commands (`OnOff` and `SetpointRaiseLower`). Reject
   invalid or unavailable thermostat/fan attribute writes synchronously. The
@@ -215,15 +218,15 @@ compatibility path.
   conditions.
 - [x] Confirm the 0.2 package/build contains the Matter adapter and no compiled
   HAP presentation; run `npm run verify` and inspect `npm pack --dry-run`.
-- [ ] Pull/build/install the Matter-only plugin under the Saga account that
+- [x] Pull/build/install the Matter-only plugin under the Saga account that
   runs this Homebridge child bridge.
 - [ ] Stop using the existing HAP pairing and unpair the old EcoFlow WAVE 3
   child bridge from Apple Home.
-- [ ] Disable HAP and enable Matter only for the EcoFlow child bridge; leave all
+- [x] Disable HAP and enable Matter only for the EcoFlow child bridge; leave all
   other bridges and child bridges unchanged.
-- [ ] Restart only the EcoFlow child bridge and confirm Homebridge produces a
+- [x] Restart only the EcoFlow child bridge and confirm Homebridge produces a
   Matter commissioning QR code.
-- [ ] Pair the Matter bridge to Apple Home and accept the expected uncertified
+- [x] Pair the Matter bridge to Apple Home and accept the expected uncertified
   Matter accessory warning if presented.
 - [ ] Reassign the WAVE 3 to its room and deliberately rebuild any desired
   scenes or automations; do not assume HAP identity or automations migrate.
@@ -240,7 +243,7 @@ EcoFlow acknowledgement and resulting telemetry, verify physical behavior,
 and confirm Matter state does not rubber-band.
 
 - [ ] Read-only state, current-temperature source, humidity, and firmware.
-- [ ] Power on and power off.
+- [x] Power on and power off.
 - [ ] Cool mode and cooling setpoint.
 - [ ] Heat mode and heating setpoint.
 - [ ] Auto mode and both thresholds.

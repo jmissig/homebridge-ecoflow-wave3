@@ -66,9 +66,17 @@ export interface Wave3FirmwareVersions {
   bms?: string;
 }
 
+export interface Wave3ModeCommand {
+  type: 'mode';
+  mode: Wave3ControllableMode;
+  targetTemperatureCelsius?: number;
+  targetTemperatureLowerCelsius?: number;
+  targetTemperatureUpperCelsius?: number;
+}
+
 export type Wave3Command =
   | { type: 'power'; on: boolean }
-  | { type: 'mode'; mode: Wave3ControllableMode }
+  | Wave3ModeCommand
   | { type: 'targetTemperature'; celsius: number }
   | { type: 'automaticTemperatureRange'; lowerCelsius: number; upperCelsius: number }
   | { type: 'airflowSpeed'; speed: Wave3AirflowSpeed }

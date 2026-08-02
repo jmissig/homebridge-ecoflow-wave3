@@ -522,6 +522,32 @@ describe('WAVE 3 controller', () => {
         display: { mode: 2 },
       },
       {
+        command: { type: 'mode', mode: 'cool', targetTemperatureCelsius: 20 },
+        acknowledgement: {
+          configOk: true,
+          mainPower: true,
+          mode: 1,
+          targetTemperature: 20,
+        },
+        display: { mode: 1, targetTemperature: 20 },
+      },
+      {
+        command: {
+          type: 'mode',
+          mode: 'auto',
+          targetTemperatureLowerCelsius: 18,
+          targetTemperatureUpperCelsius: 23,
+        },
+        acknowledgement: {
+          configOk: true,
+          mainPower: true,
+          mode: 5,
+          lowerTemperature: 18,
+          upperTemperature: 23,
+        },
+        display: { mode: 5, lowerTemperature: 18, upperTemperature: 23 },
+      },
+      {
         command: { type: 'targetTemperature', celsius: 21 },
         acknowledgement: { configOk: true, targetTemperature: 21 },
         display: { mode: 1, targetTemperature: 21 },
@@ -575,7 +601,11 @@ describe('WAVE 3 controller', () => {
       initialSequence: 91,
     });
     let modeSettled = false;
-    const modeResult = modeController.execute({ type: 'mode', mode: 'heat' })
+    const modeResult = modeController.execute({
+      type: 'mode',
+      mode: 'heat',
+      targetTemperatureCelsius: 20,
+    })
       .then(result => {
         modeSettled = true;
         return result;
@@ -591,7 +621,16 @@ describe('WAVE 3 controller', () => {
       configOk: true,
       mode: 2,
     }));
-    modeSession.emitPacket('property', displayPacket(2, { mode: 2 }));
+    await flushAsyncWork();
+    assert.equal(modeSettled, false);
+    modeSession.emitPacket('setReply', acknowledgementPacket(91, {
+      configOk: true,
+      targetTemperature: 20,
+    }));
+    modeSession.emitPacket('property', displayPacket(2, {
+      mode: 2,
+      targetTemperature: 20,
+    }));
     assert.deepEqual(await modeResult, { status: 'confirmed', sequence: 91 });
 
     const rangeSession = new FakeControllerSession();

@@ -33,7 +33,9 @@ Matter power and setpoint-adjustment commands wait for EcoFlow confirmation.
 Standard thermostat-mode, target-temperature, and fan attributes are committed
 by Matter.js before a cloud round trip can finish; invalid writes reject
 immediately, while later EcoFlow failures are logged and the accessory returns
-to its last confirmed device state.
+to its last confirmed device state. When Apple Home selects a mode or target
+while the WAVE is off, the plugin stages that thermostat intent and applies
+power, mode, and target together when Home subsequently turns the accessory on.
 
 The plugin uses EcoFlow's private, app-facing cloud service. It is not local
 control, requires an internet connection, and may stop working if EcoFlow

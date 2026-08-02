@@ -370,6 +370,24 @@ describe('WAVE 3 codec', () => {
       { command: { type: 'mode', mode: 'fan' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 3 } },
       { command: { type: 'mode', mode: 'dry' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 4 } },
       { command: { type: 'mode', mode: 'auto' }, expected: { cfgMainPower: true, cfgWaveOperatingMode: 5 } },
+      {
+        command: { type: 'mode', mode: 'cool', targetTemperatureCelsius: 20 },
+        expected: { cfgMainPower: true, cfgWaveOperatingMode: 1, cfgTempSet: 20 },
+      },
+      {
+        command: {
+          type: 'mode',
+          mode: 'auto',
+          targetTemperatureLowerCelsius: 18,
+          targetTemperatureUpperCelsius: 23,
+        },
+        expected: {
+          cfgMainPower: true,
+          cfgWaveOperatingMode: 5,
+          cfgTempThermostaticLowerLimit: 18,
+          cfgTempThermostaticUpperLimit: 23,
+        },
+      },
       { command: { type: 'targetTemperature', celsius: 22 }, expected: { cfgTempSet: 22 } },
       {
         command: { type: 'automaticTemperatureRange', lowerCelsius: 19, upperCelsius: 25 },
@@ -442,6 +460,22 @@ describe('WAVE 3 codec', () => {
         upperCelsius: 20,
       }),
       /lower bound/,
+    );
+    assert.throws(
+      () => encodeWave3Command('TEST', 20, {
+        type: 'mode',
+        mode: 'auto',
+        targetTemperatureLowerCelsius: 20,
+      }),
+      /both temperature bounds/,
+    );
+    assert.throws(
+      () => encodeWave3Command('TEST', 20, {
+        type: 'mode',
+        mode: 'fan',
+        targetTemperatureCelsius: 20,
+      }),
+      /only valid for cooling or heating/,
     );
   });
 

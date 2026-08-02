@@ -595,7 +595,20 @@ function acknowledgementMatchesCommand(
   case 'power':
     return command.on ? values.mainPower === true : values.systemPaused === true;
   case 'mode':
-    return values.mainPower === true && values.mode === command.mode;
+    return values.mainPower === true
+      && values.mode === command.mode
+      && optionalCloseEnough(
+        values.targetTemperatureCelsius,
+        command.targetTemperatureCelsius,
+      )
+      && optionalCloseEnough(
+        values.targetTemperatureLowerCelsius,
+        command.targetTemperatureLowerCelsius,
+      )
+      && optionalCloseEnough(
+        values.targetTemperatureUpperCelsius,
+        command.targetTemperatureUpperCelsius,
+      );
   case 'targetTemperature':
     return closeEnough(values.targetTemperatureCelsius, command.celsius);
   case 'automaticTemperatureRange':
@@ -666,7 +679,19 @@ function expectedAcknowledgementValues(
   case 'power':
     return command.on ? { mainPower: true } : { systemPaused: true };
   case 'mode':
-    return { mainPower: true, mode: command.mode };
+    return {
+      mainPower: true,
+      mode: command.mode,
+      ...(command.targetTemperatureCelsius === undefined
+        ? {}
+        : { targetTemperatureCelsius: command.targetTemperatureCelsius }),
+      ...(command.targetTemperatureLowerCelsius === undefined
+        ? {}
+        : { targetTemperatureLowerCelsius: command.targetTemperatureLowerCelsius }),
+      ...(command.targetTemperatureUpperCelsius === undefined
+        ? {}
+        : { targetTemperatureUpperCelsius: command.targetTemperatureUpperCelsius }),
+    };
   case 'targetTemperature':
     return { targetTemperatureCelsius: command.celsius };
   case 'automaticTemperatureRange':
@@ -686,7 +711,20 @@ function stateMatchesCommand(state: Wave3State, command: Wave3Command): boolean 
   case 'power':
     return state.powered === command.on;
   case 'mode':
-    return state.powered === true && state.mode === command.mode;
+    return state.powered === true
+      && state.mode === command.mode
+      && optionalCloseEnough(
+        state.targetTemperatureCelsius,
+        command.targetTemperatureCelsius,
+      )
+      && optionalCloseEnough(
+        state.targetTemperatureLowerCelsius,
+        command.targetTemperatureLowerCelsius,
+      )
+      && optionalCloseEnough(
+        state.targetTemperatureUpperCelsius,
+        command.targetTemperatureUpperCelsius,
+      );
   case 'targetTemperature':
     return closeEnough(state.targetTemperatureCelsius, command.celsius);
   case 'automaticTemperatureRange':
@@ -715,7 +753,13 @@ function updateProvidesCommandEvidence(
         || (update.operatingModeId !== undefined && update.operatingModeId !== 0)
       : update.sleepState === 1 || update.operatingModeId === 0;
   case 'mode':
-    return update.operatingModeId !== undefined;
+    return update.operatingModeId !== undefined
+      && (command.targetTemperatureCelsius === undefined
+        || parameters?.targetTemperatureCelsius !== undefined)
+      && (command.targetTemperatureLowerCelsius === undefined
+        || parameters?.targetTemperatureLowerCelsius !== undefined)
+      && (command.targetTemperatureUpperCelsius === undefined
+        || parameters?.targetTemperatureUpperCelsius !== undefined);
   case 'targetTemperature':
     return parameters?.targetTemperatureCelsius !== undefined;
   case 'automaticTemperatureRange':
@@ -730,6 +774,13 @@ function updateProvidesCommandEvidence(
 
 function closeEnough(actual: number | undefined, expected: number): boolean {
   return actual !== undefined && Math.abs(actual - expected) < 0.01;
+}
+
+function optionalCloseEnough(
+  actual: number | undefined,
+  expected: number | undefined,
+): boolean {
+  return expected === undefined || closeEnough(actual, expected);
 }
 
 function isNewerSequence(candidate: number, previous: number | undefined): boolean {

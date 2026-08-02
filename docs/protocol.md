@@ -327,6 +327,11 @@ publishing a command.
   acknowledgement packets. Matching fragments are accumulated until every
   field in the pending command is acknowledged. Later matching display state
   remains required before confirmation.
+- When Apple Home stages thermostat values while the appliance is off, the
+  subsequent power-on write may combine `cfg_main_power`, mode, and either the
+  single-mode target or both automatic thresholds. The controller must confirm
+  every included field; household acceptance of this composite startup shape
+  remains pending.
 
 ## Household hardware observations
 
@@ -393,6 +398,22 @@ publishing a command.
   account/session failure should report communication failure.
 
 [Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533277123425472562)
+
+**Hardware — 2026-08-02 Matter off-to-on sequencing**
+
+- Apple Home accepted a Cool target of `20 °C` while the WAVE was off, but the
+  plugin rejected that setpoint as inactive and sent only `cfg_main_power =
+  true` when Home subsequently powered the accessory on.
+- The WAVE correctly resumed its saved Cool target of `26 °C`; no `20 °C`
+  configuration write appeared in the EcoFlow diagnostics. Repeating the Home
+  interaction with Auto produced the same sequencing failure.
+- Matter mode and setpoint attributes selected while off must therefore be
+  staged locally. The later authoritative OnOff command sends one composite
+  configuration write containing main power, the staged mode, and its staged
+  target or automatic range. The controller still requires matching positive
+  acknowledgement fragments and later observed state for every included field.
+
+[Source: household Matter/Homebridge diagnostic log and narrated Apple Home actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533508417145147622)
 
 ## Known uncertainty
 

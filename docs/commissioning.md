@@ -34,8 +34,12 @@ git pull --ff-only
 npm install
 npm run verify
 npm run build
-npm install -g .
+npm install -g "./$(npm pack --silent)"
 ```
+
+Use the packed artifact rather than installing the checkout directory. A
+direct global directory install creates a symlink and can load the checkout's
+development Homebridge/Matter.js instance alongside the running global one.
 
 Confirm Homebridge reports plugin version `0.2.0` before commissioning.
 

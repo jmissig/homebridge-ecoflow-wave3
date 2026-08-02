@@ -63,8 +63,13 @@ git clone https://github.com/jmissig/homebridge-ecoflow-wave3.git
 cd homebridge-ecoflow-wave3
 npm install
 npm run verify
-npm install -g .
+npm install -g "./$(npm pack --silent)"
 ```
+
+Install the packed artifact, not the checkout directory itself. A direct
+`npm install -g .` creates a symlink that can expose the checkout's development
+copy of Homebridge/Matter.js to the running plugin. Matter behavior and status
+classes must come from the same runtime instance as global Homebridge.
 
 Add the **EcoFlow WAVE 3** platform in Homebridge UI and enter:
 

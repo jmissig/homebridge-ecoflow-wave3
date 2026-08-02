@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type {
-  API,
-  Logging,
-  MatterAccessory,
-  PlatformConfig,
+import {
+  deviceTypes,
+  type API,
+  type Logging,
+  type MatterAccessory,
+  type MatterAPI,
+  type PlatformConfig,
 } from 'homebridge';
 
 import {
@@ -345,7 +347,10 @@ function cachedMatterAccessory(
     serialNumber,
     manufacturer: 'EcoFlow',
     model: 'WAVE 3',
-    deviceType: wave3RoomAirConditionerDeviceType(currentTemperatureSource),
+    deviceType: wave3RoomAirConditionerDeviceType(
+      { deviceTypes } as unknown as MatterAPI,
+      currentTemperatureSource,
+    ),
     context: {
       schemaVersion: 1,
       serialNumber,
@@ -413,6 +418,7 @@ function platformHarness(
   const api = {
     matter: matterEnabled
       ? {
+        deviceTypes,
         uuid: {
           generate: matterUuidForSeed,
         },

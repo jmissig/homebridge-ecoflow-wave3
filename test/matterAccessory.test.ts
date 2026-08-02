@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { Endpoint, Environment, MockStorageService, ServerNode } from '@matter/main';
 import { BridgedDeviceBasicInformationServer } from '@matter/main/behaviors';
 import { AggregatorEndpoint } from '@matter/main/endpoints/aggregator';
-import { MatterStatus, type MatterAccessory, type MatterAPI } from 'homebridge';
+import { deviceTypes, MatterStatus, type MatterAccessory, type MatterAPI } from 'homebridge';
 
 import {
   createWave3MatterAccessory,
@@ -127,6 +127,22 @@ describe('WAVE 3 Matter accessory', () => {
     assert.equal(fresh.clusters?.relativeHumidityMeasurement?.measuredValue, 6_100);
   });
 
+  it('derives behavior classes from the running Matter API device type', () => {
+    const injectedRoomAirConditioner = deviceTypes.RoomAirConditioner.with(
+      deviceTypes.RoomAirConditioner.requirements.RelativeHumidityMeasurementServer,
+    );
+    const matter = {
+      ...matterHarness().matter,
+      deviceTypes: {
+        ...deviceTypes,
+        RoomAirConditioner: injectedRoomAirConditioner,
+      },
+    } as unknown as MatterAPI;
+
+    const deviceType = wave3RoomAirConditionerDeviceType(matter, 'outlet');
+    assert.ok('relativeHumidityMeasurement' in deviceType.behaviors);
+  });
+
   it('constructs a conformant endpoint with the installed Matter runtime', async () => {
     const harness = matterHarness();
     const accessory = createWave3MatterAccessory(
@@ -159,7 +175,9 @@ describe('WAVE 3 Matter accessory', () => {
       const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-test-aggregator' });
       await node.add(aggregator);
       const endpoint = new Endpoint(
-        wave3RoomAirConditionerDeviceType('ambient').with(BridgedDeviceBasicInformationServer),
+        wave3RoomAirConditionerDeviceType(harness.matter, 'ambient').with(
+          BridgedDeviceBasicInformationServer,
+        ),
         {
           id: accessory.UUID,
           ...accessory.clusters,
@@ -228,7 +246,9 @@ describe('WAVE 3 Matter accessory', () => {
           controller.snapshot,
         );
         const endpoint = new Endpoint(
-          wave3RoomAirConditionerDeviceType(source).with(BridgedDeviceBasicInformationServer),
+          wave3RoomAirConditionerDeviceType(baseMatter, source).with(
+            BridgedDeviceBasicInformationServer,
+          ),
           {
             id: accessory.UUID,
             ...accessory.clusters,
@@ -348,7 +368,9 @@ describe('WAVE 3 Matter accessory', () => {
       const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-controls-aggregator' });
       await node.add(aggregator);
       const endpoint = new Endpoint(
-        wave3RoomAirConditionerDeviceType('ambient').with(BridgedDeviceBasicInformationServer),
+        wave3RoomAirConditionerDeviceType(baseMatter, 'ambient').with(
+          BridgedDeviceBasicInformationServer,
+        ),
         {
           id: accessory.UUID,
           ...accessory.clusters,
@@ -894,7 +916,7 @@ describe('WAVE 3 Matter accessory', () => {
       await assert.rejects(
         async () => endpoint.act(
           'reject invalid setpoint-adjustment mode',
-          agent => agent.thermostat.setpointRaiseLower({ mode: 99, amount: 10 }),
+          agent => agent.thermostat.setpointRaiseLower({ mode: 99 as never, amount: 10 }),
         ),
         error => {
           assert.ok(error instanceof MatterStatus.InvalidInState);
@@ -1424,6 +1446,7 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
   ]);
   return {
     matter: {
+      deviceTypes,
       clusterNames: {
         OnOff: 'onOff',
         Thermostat: 'thermostat',

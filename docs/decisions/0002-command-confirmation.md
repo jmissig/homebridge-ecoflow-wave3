@@ -48,6 +48,12 @@ never changed optimistically. One command deadline covers publication,
 acknowledgement, and observed-state confirmation; timeout or shutdown aborts
 an in-flight publication so it cannot hold the command queue indefinitely.
 
+Debug diagnostics describe this lifecycle semantically: the normalized
+command, publication acceptance, acknowledged and still-waiting fields,
+observed-state confirmation, and the final typed outcome. They deliberately do
+not include serial numbers, account identifiers, MQTT topics, credentials, or
+raw packet bytes.
+
 ## Consequences
 
 - This policy remains fail-closed while accommodating the household device's

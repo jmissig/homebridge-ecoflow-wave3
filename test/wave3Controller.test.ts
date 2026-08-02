@@ -690,6 +690,130 @@ describe('WAVE 3 controller', () => {
     controller.stop();
   });
 
+  it('logs a redacted semantic lifecycle for composite commands', async () => {
+    const session = new FakeControllerSession();
+    const logs: string[] = [];
+    const controller = readyController(session, {
+      initialSequence: 580,
+      logger: {
+        debug: message => logs.push(message),
+        info: message => logs.push(message),
+        warn: message => logs.push(message),
+        error: message => logs.push(message),
+      },
+    });
+    const result = controller.execute({
+      type: 'mode',
+      mode: 'cool',
+      targetTemperatureCelsius: 22,
+    });
+    await flushAsyncWork();
+
+    session.emitPacket('setReply', acknowledgementPacket(580, {
+      configOk: true,
+      mainPower: true,
+    }));
+    session.emitPacket('setReply', acknowledgementPacket(580, {
+      configOk: true,
+      targetTemperature: 22,
+    }));
+    session.emitPacket('property', displayPacket(4, {
+      mode: 1,
+      targetTemperature: 22,
+    }));
+    assert.deepEqual(await result, { status: 'confirmed', sequence: 580 });
+
+    assert.ok(logs.some(message => message.includes(
+      'controller command started sequence=580 command={"type":"mode","mode":"cool","targetTemperatureCelsius":22}',
+    )));
+    assert.ok(logs.some(message => message.includes(
+      'controller command publication accepted sequence=580',
+    )));
+    assert.ok(logs.some(message => message.includes(
+      'acknowledgedFields=["mainPower"] waitingFields=["mode","targetTemperatureCelsius"]',
+    )));
+    assert.ok(logs.some(message => message.includes(
+      'acknowledgedFields=["mainPower","targetTemperatureCelsius"] waitingFields=["mode"]',
+    )));
+    assert.ok(logs.some(message => message.includes(
+      'controller command observed-state confirmation sequence=580',
+    )));
+    assert.ok(logs.some(message => message.includes(
+      'controller command completed sequence=580 outcome=confirmed',
+    )));
+    assert.equal(logs.some(message => message.includes(TEST_SERIAL)), false);
+
+    session.emitState('offline');
+    assert.deepEqual(
+      await controller.execute({ type: 'power', on: false }),
+      { status: 'failed', sequence: 581, reason: 'disconnected' },
+    );
+    assert.ok(logs.some(message => message.includes(
+      'controller command completed sequence=581 outcome=failed:disconnected command={"type":"power","on":false}',
+    )));
+  });
+
+  it('replays delayed M7 Off-to-Cool and Cool-to-Heat command evidence', async () => {
+    const session = new FakeControllerSession();
+    const controller = readyController(session, { initialSequence: 580 });
+    session.emitPacket('property', displayPacket(1, {
+      mode: 1,
+      sleepState: 1,
+      targetTemperature: 22,
+    }));
+    assert.equal(controller.snapshot.state.powered, false);
+
+    const coolResult = controller.execute({
+      type: 'mode',
+      mode: 'cool',
+      targetTemperatureCelsius: 22,
+    });
+    await flushAsyncWork();
+    session.emitPacket('setReply', acknowledgementPacket(580, {
+      configOk: true,
+      mainPower: true,
+    }));
+    session.emitPacket('setReply', acknowledgementPacket(580, {
+      configOk: true,
+      targetTemperature: 22,
+    }));
+    session.emitPacket('property', displayPacket(2, {
+      mode: 1,
+      sleepState: 0,
+      targetTemperature: 22,
+    }));
+    assert.deepEqual(await coolResult, { status: 'confirmed', sequence: 580 });
+
+    let heatSettled = false;
+    const heatResult = controller.execute({
+      type: 'mode',
+      mode: 'heat',
+      targetTemperatureCelsius: 20,
+    }).then(result => {
+      heatSettled = true;
+      return result;
+    });
+    await flushAsyncWork();
+    session.emitPacket('setReply', acknowledgementPacket(581, {
+      configOk: true,
+      mainPower: true,
+    }));
+    session.emitPacket('property', displayPacket(3, {
+      mode: 2,
+      targetTemperature: 26,
+    }));
+    await flushAsyncWork();
+    assert.equal(heatSettled, false, 'remembered Heat/26 state must not confirm requested Heat/20');
+
+    session.emitPacket('property', displayPacket(4, {
+      mode: 2,
+      targetTemperature: 20,
+    }));
+    assert.deepEqual(await heatResult, { status: 'confirmed', sequence: 581 });
+    assert.equal(controller.snapshot.state.mode, 'heat');
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 20);
+  });
+
   it('serializes conflicting commands and times out without optimistic state', async () => {
     const session = new FakeControllerSession();
     const clock = new FakeClock();

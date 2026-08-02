@@ -282,9 +282,9 @@ evidence and stable Apple Home behavior.
 
 ## Phase M8: Matter-only release preparation
 
-- [ ] Update the supported-controls list to distinguish tested, partially
+- [x] Update the supported-controls list to distinguish tested, partially
   tested, and intentionally unexposed behavior.
-- [ ] Add Matter-only installation, commissioning, re-pairing,
+- [x] Add Matter-only installation, commissioning, re-pairing,
   troubleshooting, region, private-API risk, and uncertified-bridge guidance.
 - [ ] Investigate authenticated-account WAVE 3 autodiscovery; retain manual
   serial configuration until it is proven safe and WAVE-3-specific.

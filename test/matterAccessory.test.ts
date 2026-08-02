@@ -468,6 +468,33 @@ describe('WAVE 3 Matter accessory', () => {
       assert.equal(controller.snapshot.state.mode, 'heat');
       assert.equal(controller.snapshot.state.targetTemperatureCelsius, 20);
 
+      await endpoint.act('turn off before delayed mode replay', agent => agent.onOff.off());
+      const commandsBeforeDelayedModeReplay = controller.commands.length;
+      await endpoint.set({ thermostat: {
+        systemMode: MATTER_SYSTEM_MODE.cool,
+        occupiedCoolingSetpoint: 2_200,
+        occupiedHeatingSetpoint: 2_000,
+      } });
+      await endpoint.act('power on before delayed Heat write', agent => agent.onOff.on());
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } });
+      await waitUntil(
+        () => controller.snapshot.state.mode === 'heat'
+          && controller.snapshot.state.targetTemperatureCelsius === 20,
+        'delayed Heat write carries its presented target',
+      );
+      assert.deepEqual(controller.commands.slice(commandsBeforeDelayedModeReplay), [
+        {
+          type: 'mode',
+          mode: 'cool',
+          targetTemperatureCelsius: 22,
+        },
+        {
+          type: 'mode',
+          mode: 'heat',
+          targetTemperatureCelsius: 20,
+        },
+      ]);
+
       await endpoint.act('turn off for automatic startup', agent => agent.onOff.off());
       const commandsBeforeAutoStartup = controller.commands.length;
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.auto } });

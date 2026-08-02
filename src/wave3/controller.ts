@@ -166,14 +166,18 @@ export class Wave3Controller {
 
   private async executeNow(command: Wave3Command): Promise<Wave3CommandResult> {
     const sequence = this.takeSequence();
+    this.logger.debug(
+      `EcoFlow diagnostics: controller command started sequence=${sequence} `
+      + `command=${describeCommand(command)}`,
+    );
     if (this.stopped || this.session.state === 'stopped') {
-      return { status: 'failed', sequence, reason: 'stopped' };
+      return this.immediateCommandFailure(command, sequence, 'stopped');
     }
     if (this.session.state !== 'online' || this.snapshot.availability !== 'online') {
-      return { status: 'failed', sequence, reason: 'disconnected' };
+      return this.immediateCommandFailure(command, sequence, 'disconnected');
     }
     if (this.activePublications.size > 0) {
-      return { status: 'failed', sequence, reason: 'disconnected' };
+      return this.immediateCommandFailure(command, sequence, 'disconnected');
     }
 
     const encoded = encodeWave3Command(this.serialNumber, sequence, command);
@@ -228,6 +232,10 @@ export class Wave3Controller {
       return;
     }
     pending.publicationCompleted = true;
+    this.logger.debug(
+      `EcoFlow diagnostics: controller command publication accepted sequence=${sequence} `
+      + `command=${describeCommand(pending.command)}`,
+    );
     if (pending.acknowledgementRejected) {
       this.settlePending('acknowledgementRejected');
       return;
@@ -407,12 +415,13 @@ export class Wave3Controller {
     );
     pending.acknowledgement = aggregate;
     pending.acknowledgementRevision ??= this.displayRevision;
-    if (!acknowledgementMatchesCommand(aggregate, pending.command)) {
-      this.logger.debug(
-        `EcoFlow diagnostics: controller accumulated partial acknowledgement=${sequence} `
-        + 'and is waiting for remaining acknowledgement or observed-state evidence',
-      );
-    }
+    const progress = acknowledgementProgress(aggregate, pending.command);
+    this.logger.debug(
+      `EcoFlow diagnostics: controller command acknowledgement progress sequence=${sequence} `
+      + `acknowledgedFields=${JSON.stringify(progress.acknowledgedFields)} `
+      + `waitingFields=${JSON.stringify(progress.waitingFields)} `
+      + 'waitingForObservedState=true',
+    );
     if (pending.publicationCompleted) {
       this.applyAcknowledgement(pending);
     }
@@ -451,6 +460,10 @@ export class Wave3Controller {
       return;
     }
     pending.observedStateConfirmed = true;
+    this.logger.debug(
+      `EcoFlow diagnostics: controller command observed-state confirmation sequence=${pending.sequence} `
+      + `command=${describeCommand(pending.command)}`,
+    );
     if (pending.publicationCompleted) {
       this.settlePending(undefined);
     }
@@ -576,50 +589,32 @@ export class Wave3Controller {
     if (!pending.publicationCompleted) {
       pending.publicationController.abort();
     }
+    this.logger.debug(
+      `EcoFlow diagnostics: controller command completed sequence=${pending.sequence} `
+      + `outcome=${reason === undefined ? 'confirmed' : `failed:${reason}`} `
+      + `command=${describeCommand(pending.command)}`,
+    );
     pending.resolve(reason === undefined
       ? { status: 'confirmed', sequence: pending.sequence }
       : { status: 'failed', sequence: pending.sequence, reason });
+  }
+
+  private immediateCommandFailure(
+    command: Wave3Command,
+    sequence: number,
+    reason: Wave3CommandFailure,
+  ): Wave3CommandResult {
+    this.logger.debug(
+      `EcoFlow diagnostics: controller command completed sequence=${sequence} `
+      + `outcome=failed:${reason} command=${describeCommand(command)}`,
+    );
+    return { status: 'failed', sequence, reason };
   }
 
   private takeSequence(): number {
     const sequence = this.nextSequence;
     this.nextSequence = sequence >= 999 ? 10 : sequence + 1;
     return sequence;
-  }
-}
-
-function acknowledgementMatchesCommand(
-  acknowledgement: Wave3Acknowledgement,
-  command: Wave3Command,
-): boolean {
-  const values = acknowledgement.values;
-  switch (command.type) {
-  case 'power':
-    return command.on ? values.mainPower === true : values.systemPaused === true;
-  case 'mode':
-    return values.mainPower === true
-      && values.mode === command.mode
-      && optionalCloseEnough(
-        values.targetTemperatureCelsius,
-        command.targetTemperatureCelsius,
-      )
-      && optionalCloseEnough(
-        values.targetTemperatureLowerCelsius,
-        command.targetTemperatureLowerCelsius,
-      )
-      && optionalCloseEnough(
-        values.targetTemperatureUpperCelsius,
-        command.targetTemperatureUpperCelsius,
-      );
-  case 'targetTemperature':
-    return closeEnough(values.targetTemperatureCelsius, command.celsius);
-  case 'automaticTemperatureRange':
-    return closeEnough(values.targetTemperatureLowerCelsius, command.lowerCelsius)
-      && closeEnough(values.targetTemperatureUpperCelsius, command.upperCelsius);
-  case 'airflowSpeed':
-    return values.airflowSpeed === command.speed;
-  case 'submode':
-    return values.submode === command.submode;
   }
 }
 
@@ -706,6 +701,30 @@ function expectedAcknowledgementValues(
   case 'submode':
     return { submode: command.submode };
   }
+}
+
+function acknowledgementProgress(
+  acknowledgement: Wave3Acknowledgement,
+  command: Wave3Command,
+): { acknowledgedFields: string[]; waitingFields: string[] } {
+  const expectedFields = Object.keys(expectedAcknowledgementValues(command)) as Array<
+    keyof Wave3Acknowledgement['values']
+  >;
+  return {
+    acknowledgedFields: expectedFields.filter(
+      field => acknowledgement.values[field] !== undefined,
+    ),
+    waitingFields: expectedFields.filter(
+      field => acknowledgement.values[field] === undefined,
+    ),
+  };
+}
+
+function describeCommand(command: Wave3Command): string {
+  // WAVE commands contain only bounded mode, setpoint, fan, submode, and power
+  // values. Device/account identifiers and encoded payload bytes never enter
+  // this diagnostic representation.
+  return JSON.stringify(command);
 }
 
 function stateMatchesCommand(state: Wave3State, command: Wave3Command): boolean {

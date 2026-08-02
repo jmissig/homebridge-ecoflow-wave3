@@ -55,6 +55,33 @@ changes that service. Eco, Boost, drainage, battery information, display
 settings, and other secondary features remain unexposed where Matter has no
 honest standard representation.
 
+## Current support status
+
+This project distinguishes code coverage from household-device acceptance:
+
+- **Hardware-verified:** Matter commissioning and cached restoration, EcoFlow
+  authentication/MQTT, live climate telemetry, concurrent EcoFlow-app use,
+  and Matter power on/off.
+- **Observed on hardware; current fixes need a repeat run:** cooling and its
+  target, plus switching into Heat with a selected target. The appliance
+  obeyed the underlying commands, while acceptance exposed and fixed split
+  acknowledgement and delayed-mode-write behavior.
+- **Implemented; Matter hardware acceptance pending:** Auto with both
+  thresholds, all five fan speeds, `outlet` and `none` temperature-source
+  variants, reconnect/power-cycle recovery, and stale-cache action-71 startup
+  acquisition.
+- **Protocol-mapped but hidden by tested controllers:** Fan Only, Dry, and
+  Sleep/Night. Apple Home on the iOS 27 beta and Eve do not present these
+  standard system-mode values for this accessory.
+- **Published but not rendered by Apple Home:** device firmware in standard
+  Matter bridged-device metadata.
+- **Intentionally unexposed:** Eco, Boost, drainage, battery, electrical
+  telemetry, timers, display settings, and other secondary controls whose
+  standard Matter behavior or WAVE semantics are not yet established.
+
+See [Troubleshooting and recovery](docs/troubleshooting.md) for startup,
+No Response, command diagnostics, regional API, and re-pairing guidance.
+
 ## Before you start
 
 You will need:

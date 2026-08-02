@@ -4,6 +4,10 @@ Use this runbook for the first real installation of the 0.2 Matter-only line.
 It prepares only the EcoFlow child bridge; other Homebridge bridges may remain
 paired through HAP.
 
+For an already commissioned bridge, see
+[Troubleshooting and recovery](troubleshooting.md) before resetting or
+re-pairing anything.
+
 The protocol and identity migration is intentional: the previous HAP child
 bridge and the new Matter child bridge are different Apple Home accessories.
 Room assignments, names, scenes, and automations do not migrate automatically.

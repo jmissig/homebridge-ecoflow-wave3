@@ -82,8 +82,8 @@ Before issuing any Apple Home control:
 
 1. Confirm exactly one WAVE 3 accessory appears.
 2. Assign it to the intended room.
-3. Confirm power/mode state, selected current-temperature source, optional
-   humidity, fan state, and firmware are plausible.
+3. Confirm power/mode state, ambient room temperature and humidity, fan state,
+   and firmware are plausible.
 4. Open the EcoFlow app at the same time and confirm both clients continue to
    receive state.
 5. Save the redacted EcoFlow debug section from child-bridge startup through

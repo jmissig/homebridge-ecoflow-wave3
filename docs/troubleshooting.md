@@ -127,16 +127,11 @@ semantics can be validated safely.
 
 ## Temperature or humidity looks wrong
 
-Check the per-device `currentTemperatureSource`:
-
-- `ambient` publishes ambient temperature and humidity.
-- `outlet` publishes the indoor supply-air/outlet temperature and no humidity.
-- `none` publishes neither local temperature nor humidity.
-
-Changing this setting changes the Matter endpoint's cluster shape. Restart the
-child bridge after editing configuration; the plugin re-registers the same
-stable device identity, so routine source changes should not require pairing
-again.
+Matter always publishes the WAVE 3 ambient sensor as current room temperature,
+along with ambient humidity. This is the unit's input-air measurement and its
+best estimate of the room air being conditioned. The colder indoor
+supply-air/outlet reading remains diagnostic telemetry and is never used as
+Matter's room temperature.
 
 The WAVE accepts fractional Celsius targets over its protocol even though its
 physical Celsius display shows whole numbers. Matter has no standard attribute

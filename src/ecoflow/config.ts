@@ -6,18 +6,9 @@ export const REVIEWED_API_HOSTS = [
 
 export type ReviewedApiHost = typeof REVIEWED_API_HOSTS[number];
 
-export const CURRENT_TEMPERATURE_SOURCES = [
-  'ambient',
-  'outlet',
-  'none',
-] as const;
-
-export type CurrentTemperatureSource = typeof CURRENT_TEMPERATURE_SOURCES[number];
-
 export interface Wave3DeviceConfig {
   name: string;
   serialNumber: string;
-  currentTemperatureSource: CurrentTemperatureSource;
 }
 
 export interface EcoFlowWave3Config {
@@ -68,7 +59,7 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
   const seenSerials = new Set<string>();
   const devices = config.devices.map((candidate, index) => {
     const device = requireRecord(candidate, `devices[${index}]`);
-    rejectUnknownKeys(device, ['name', 'serialNumber', 'currentTemperatureSource']);
+    rejectUnknownKeys(device, ['name', 'serialNumber']);
     const deviceName = requireString(device, 'name', { maxLength: 64 });
     validateDisplayName(deviceName, `devices[${index}].name`);
     const serialNumber = requireString(device, 'serialNumber', { maxLength: 64, trim: false });
@@ -79,13 +70,7 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
       throw new ConfigurationError(`devices[${index}].serialNumber is duplicated`);
     }
     seenSerials.add(serialNumber);
-    const currentTemperatureSource = optionalEnum(
-      device,
-      'currentTemperatureSource',
-      CURRENT_TEMPERATURE_SOURCES,
-      'ambient',
-    );
-    return Object.freeze({ name: deviceName, serialNumber, currentTemperatureSource });
+    return Object.freeze({ name: deviceName, serialNumber });
   });
 
   return Object.freeze({
@@ -186,20 +171,4 @@ function optionalString(record: Record<string, unknown>, field: string): string 
     throw new ConfigurationError(`${field} must not contain surrounding whitespace`);
   }
   return value;
-}
-
-function optionalEnum<const T extends readonly string[]>(
-  record: Record<string, unknown>,
-  field: string,
-  values: T,
-  defaultValue: T[number],
-): T[number] {
-  const value = record[field];
-  if (value === undefined) {
-    return defaultValue;
-  }
-  if (typeof value !== 'string' || !values.includes(value)) {
-    throw new ConfigurationError(`${field} must be one of ${values.join(', ')}`);
-  }
-  return value as T[number];
 }

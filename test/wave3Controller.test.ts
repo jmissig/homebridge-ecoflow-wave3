@@ -126,6 +126,156 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.availability, 'stale');
   });
 
+  it('rebases a rebooted device sequence after correlated authoritative state', async () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const logs: string[] = [];
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+      sequenceRebaseTimeoutMilliseconds: 100,
+      logger: {
+        debug: message => logs.push(message),
+        info: message => logs.push(message),
+        warn: message => logs.push(message),
+        error: message => logs.push(message),
+      },
+    });
+
+    session.emitPacket('property', displayPacket(598_447, {
+      mode: 1,
+      sleepState: 0,
+      targetTemperature: 23,
+    }));
+    assert.equal(controller.snapshot.state.powered, true);
+
+    // Captured 2026-08-04 power-cycle shape: the cloud MQTT generation stays
+    // unchanged while the WAVE property sequence restarts in the low double
+    // digits. The first packet is quarantined; a second coherent packet
+    // corroborates the new epoch and requests correlated online state.
+    session.emitPacket('property', displayPacket(44, { sleepState: 1 }));
+    assert.equal(session.requestStateCalls, 0);
+    assert.equal(controller.snapshot.state.powered, true);
+    session.emitPacket('property', displayPacket(46, { ambientTemperature: 25.49 }));
+    await flushAsyncWork();
+    assert.equal(session.requestStateCalls, 1);
+    assert.equal(controller.snapshot.state.powered, true);
+
+    session.emitPacket('getReply', quotaReply({
+      online: 1,
+      quotaMap: {
+        dev_sleep_state: 1,
+        wave_operating_mode: 1,
+        current_temp_set: 23,
+      },
+    }));
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.state.powered, false);
+    assert.equal(controller.snapshot.state.mode, 'off');
+    assert.equal(controller.snapshot.modeProfiles.cool?.targetTemperatureCelsius, 23);
+
+    // Captured app start: positive power acknowledgement at 17:32:50,
+    // sleepState=0 at 17:32:52, then a complete Cool snapshot at 17:33:59.
+    session.emitPacket('setReply', acknowledgementPacket(22, {
+      configOk: true,
+      mainPower: true,
+    }));
+    session.emitPacket('property', displayPacket(1_861, { sleepState: 0 }));
+    session.emitPacket('property', displayPacket(2_121, {
+      mode: 1,
+      sleepState: 0,
+      targetTemperature: 23,
+      ambientTemperature: 25.78,
+    }));
+    assert.equal(controller.snapshot.state.powered, true);
+    assert.equal(controller.snapshot.state.mode, 'cool');
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 23);
+    assert.equal(session.requestStateCalls, 1);
+    assert.ok(logs.some(message => message.includes(
+      'suspected device sequence epoch change (previous=598447, candidate=44)',
+    )));
+    assert.ok(logs.some(message => message.includes(
+      'corroborated device sequence epoch change',
+    )));
+    assert.ok(logs.some(message => message.includes(
+      'authoritative online state confirmed; sequence baselines rebased (displaySequence=46)',
+    )));
+  });
+
+  it('does not rebase from one delayed low-sequence packet', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+      sequenceRebaseTimeoutMilliseconds: 100,
+    });
+    session.emitPacket('property', displayPacket(10_000, {
+      mode: 1,
+      sleepState: 0,
+    }));
+
+    session.emitPacket('property', displayPacket(50, {
+      mode: 2,
+      sleepState: 0,
+    }));
+    assert.equal(session.requestStateCalls, 0);
+    assert.equal(controller.snapshot.state.mode, 'cool');
+    clock.advance(100);
+
+    session.emitPacket('property', displayPacket(10_001, {
+      mode: 1,
+      sleepState: 0,
+      targetTemperature: 21,
+    }));
+    assert.equal(controller.snapshot.state.mode, 'cool');
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 21);
+    assert.equal(session.requestStateCalls, 0);
+  });
+
+  it('accepts a 32-bit sequence wrap without requesting a rebase', () => {
+    const session = new FakeControllerSession();
+    const controller = new Wave3Controller(TEST_SERIAL, session);
+    session.emitPacket('property', displayPacket(0x7fff_fffe, {
+      mode: 1,
+      sleepState: 0,
+      targetTemperature: 23,
+    }));
+    session.emitPacket('property', displayPacket(-0x7fff_ffff, {
+      mode: 1,
+      sleepState: 0,
+      targetTemperature: 21,
+    }));
+
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, 21);
+    assert.equal(session.requestStateCalls, 0);
+  });
+
+  it('abandons sequence-rebase probation on a cloud generation change', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+    });
+    session.emitPacket('property', displayPacket(50_000, {
+      mode: 1,
+      sleepState: 0,
+    }));
+    session.emitPacket('property', displayPacket(40, { sleepState: 1 }));
+
+    session.emitState('offline');
+    session.emitState('online');
+    session.emitPacket('property', displayPacket(41, {
+      mode: 1,
+      sleepState: 1,
+    }));
+
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.state.powered, false);
+    assert.equal(session.requestStateCalls, 0);
+  });
+
   it('does not let sensor, profile, or runtime deltas renew control authority', () => {
     const session = new FakeControllerSession();
     const clock = new FakeClock();
@@ -1194,6 +1344,9 @@ describe('WAVE 3 controller', () => {
     session.emitPacket('property', displayPacket(1, { mode: 1, sleepState: 0 }));
     assert.equal(session.totalListenerCount(), 3);
     assert.equal(clock.taskCount, 1);
+
+    session.emitPacket('property', displayPacket(0, { mode: 2, sleepState: 0 }));
+    assert.equal(clock.taskCount, 2);
 
     session.emitState('stopped');
 

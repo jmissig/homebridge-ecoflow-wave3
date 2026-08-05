@@ -1,6 +1,5 @@
 import type { MatterAccessory } from 'homebridge';
 
-import type { CurrentTemperatureSource } from '../ecoflow/config.js';
 import type { Wave3ControllerSnapshot, Wave3Mode } from '../wave3/domain.js';
 import type { Wave3MatterAccessoryContext } from './context.js';
 import {
@@ -12,7 +11,6 @@ import {
 
 export function clustersForSnapshot(
   snapshot: Wave3ControllerSnapshot,
-  currentTemperatureSource: CurrentTemperatureSource,
   context: Wave3MatterAccessoryContext,
   previous: MatterAccessory['clusters'] = {},
 ): NonNullable<MatterAccessory['clusters']> {
@@ -21,11 +19,7 @@ export function clustersForSnapshot(
   const previousFan = previous?.fanControl ?? {};
   const previousThermostatUi = previous?.thermostatUserInterfaceConfiguration ?? {};
   const profiles = snapshot.modeProfiles;
-  const temperature = currentTemperatureSource === 'ambient'
-    ? state.ambientTemperatureCelsius
-    : currentTemperatureSource === 'outlet'
-      ? state.outletTemperatureCelsius
-      : undefined;
+  const temperature = state.ambientTemperatureCelsius;
   const coolingSetpoint = state.mode === 'auto'
     ? state.targetTemperatureUpperCelsius
     : state.mode === 'cool'
@@ -78,11 +72,9 @@ export function clustersForSnapshot(
     onOff: { onOff: powered },
     thermostat: {
       ...previousThermostat,
-      localTemperature: currentTemperatureSource === 'none'
-        ? null
-        : temperature === undefined
-          ? nullableNumber(previousThermostat.localTemperature)
-          : centidegrees(temperature),
+      localTemperature: temperature === undefined
+        ? nullableNumber(previousThermostat.localTemperature)
+        : centidegrees(temperature),
       occupiedCoolingSetpoint: projectedCoolingSetpoint,
       occupiedHeatingSetpoint: projectedHeatingSetpoint,
       absMinHeatSetpointLimit: 1_600,
@@ -123,17 +115,13 @@ export function clustersForSnapshot(
   // Auto feature is no longer advertised.
   delete clusters.thermostat?.minSetpointDeadBand;
 
-  if (currentTemperatureSource === 'ambient') {
-    clusters.relativeHumidityMeasurement = {
-      measuredValue: state.ambientHumidityPercent === undefined
-        ? nullableNumber(previous?.relativeHumidityMeasurement?.measuredValue)
-        : centipercent(state.ambientHumidityPercent),
-      minMeasuredValue: 0,
-      maxMeasuredValue: 10_000,
-    };
-  } else {
-    delete clusters.relativeHumidityMeasurement;
-  }
+  clusters.relativeHumidityMeasurement = {
+    measuredValue: state.ambientHumidityPercent === undefined
+      ? nullableNumber(previous?.relativeHumidityMeasurement?.measuredValue)
+      : centipercent(state.ambientHumidityPercent),
+    minMeasuredValue: 0,
+    maxMeasuredValue: 10_000,
+  };
 
   return clusters;
 }

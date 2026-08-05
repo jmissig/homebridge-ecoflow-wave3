@@ -41,6 +41,7 @@ export interface Wave3AccessoryController {
 
 export interface Wave3ControllerOptions {
   commandTimeoutMilliseconds?: number;
+  sequenceRebaseTimeoutMilliseconds?: number;
   staleAfterMilliseconds?: number;
   now?: () => number;
   schedule?: (callback: () => void, delayMilliseconds: number) => () => void;
@@ -64,7 +65,17 @@ interface PendingCommand {
   cancelTimeout: () => void;
 }
 
+interface PendingSequenceRebase {
+  previousSequence: number;
+  firstCandidateSequence: number;
+  lastCandidateSequence: number;
+  controlEvidenceObserved: boolean;
+  refreshRequested: boolean;
+  cancelTimeout: () => void;
+}
+
 const DEFAULT_COMMAND_TIMEOUT_MILLISECONDS = 10_000;
+const DEFAULT_SEQUENCE_REBASE_TIMEOUT_MILLISECONDS = 10_000;
 const DEFAULT_STALE_AFTER_MILLISECONDS = 300_000;
 const NOOP_LOGGER: CloudSessionLogger = {
   debug: () => undefined,
@@ -87,6 +98,7 @@ export class Wave3Controller {
   private displayRevision = 0;
   private lastDisplaySequence?: number;
   private lastRuntimeSequence?: number;
+  private sequenceRebase?: PendingSequenceRebase;
   private activeGeneration?: number;
   private nextSequence: number;
   private stopped = false;
@@ -96,6 +108,7 @@ export class Wave3Controller {
   public snapshot: Wave3ControllerSnapshot;
 
   private readonly commandTimeoutMilliseconds: number;
+  private readonly sequenceRebaseTimeoutMilliseconds: number;
   private readonly staleAfterMilliseconds: number;
   private readonly now: () => number;
   private readonly logger: CloudSessionLogger;
@@ -111,6 +124,8 @@ export class Wave3Controller {
   ) {
     this.commandTimeoutMilliseconds = options.commandTimeoutMilliseconds
       ?? DEFAULT_COMMAND_TIMEOUT_MILLISECONDS;
+    this.sequenceRebaseTimeoutMilliseconds = options.sequenceRebaseTimeoutMilliseconds
+      ?? DEFAULT_SEQUENCE_REBASE_TIMEOUT_MILLISECONDS;
     this.staleAfterMilliseconds = options.staleAfterMilliseconds
       ?? DEFAULT_STALE_AFTER_MILLISECONDS;
     this.now = options.now ?? Date.now;
@@ -155,6 +170,7 @@ export class Wave3Controller {
     }
     this.cancelStaleTimer?.();
     this.cancelStaleTimer = undefined;
+    this.clearSequenceRebase();
     this.settlePending('stopped');
     this.updateSnapshot('stopped');
   }
@@ -277,12 +293,16 @@ export class Wave3Controller {
         return;
       }
       if (!isNewerSequence(decoded.sequence, this.lastDisplaySequence)) {
+        if (this.considerSequenceRebase(decoded.sequence, decoded.update)) {
+          return;
+        }
         this.logger.debug(
           `EcoFlow diagnostics: controller rejected display property sequence=${decoded.sequence} `
           + `because lastAcceptedSequence=${this.lastDisplaySequence ?? '<none>'}`,
         );
         return;
       }
+      this.clearSequenceRebase();
       this.lastDisplaySequence = decoded.sequence;
       this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
       this.displayRevision += 1;
@@ -344,6 +364,7 @@ export class Wave3Controller {
     }
     this.deviceReportedOnline = decoded.deviceOnline;
     if (!decoded.deviceOnline) {
+      this.clearSequenceRebase();
       this.logger.debug('EcoFlow diagnostics: latestQuotas reports the WAVE 3 offline');
       this.hasCurrentGenerationState = false;
       this.cancelStaleTimer?.();
@@ -358,6 +379,17 @@ export class Wave3Controller {
       );
       this.updateFreshnessForOnlineSession();
       return;
+    }
+    if (this.sequenceRebase?.refreshRequested === true
+      && hasWave3ControlStateEvidence(decoded.update)) {
+      const rebasedSequence = this.sequenceRebase.lastCandidateSequence;
+      this.clearSequenceRebase();
+      this.lastDisplaySequence = rebasedSequence;
+      this.lastRuntimeSequence = undefined;
+      this.logger.debug(
+        'EcoFlow diagnostics: authoritative online state confirmed; sequence baselines rebased '
+        + `(displaySequence=${rebasedSequence})`,
+      );
     }
     this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
     this.displayRevision += 1;
@@ -533,7 +565,97 @@ export class Wave3Controller {
     this.displayRevision = 0;
     this.lastDisplaySequence = undefined;
     this.lastRuntimeSequence = undefined;
+    this.clearSequenceRebase();
     this.activeGeneration = undefined;
+  }
+
+  private considerSequenceRebase(
+    candidateSequence: number,
+    update: Wave3DisplayUpdate,
+  ): boolean {
+    const previousSequence = this.lastDisplaySequence;
+    if (previousSequence === undefined || candidateSequence === previousSequence) {
+      return false;
+    }
+
+    // A reset candidate may arrive as the WAVE's normal split startup burst:
+    // sleep state, temperatures, and active mode are separate packets. Either
+    // active-mode fragment is sufficient here because the correlated quota
+    // reply, not this packet, is what authorizes the eventual rebase.
+    const controlEvidence = hasSequenceEpochControlEvidence(update);
+    const pending = this.sequenceRebase;
+    if (pending === undefined
+      || pending.previousSequence !== previousSequence
+      || !isNewerSequence(candidateSequence, pending.lastCandidateSequence)) {
+      this.clearSequenceRebase();
+      this.sequenceRebase = this.createSequenceRebaseCandidate(
+        previousSequence,
+        candidateSequence,
+        controlEvidence,
+      );
+      this.logger.debug(
+        'EcoFlow diagnostics: suspected device sequence epoch change '
+        + `(previous=${previousSequence}, candidate=${candidateSequence}); awaiting corroboration`,
+      );
+      return true;
+    }
+
+    pending.lastCandidateSequence = candidateSequence;
+    pending.controlEvidenceObserved ||= controlEvidence;
+    if (!pending.controlEvidenceObserved || pending.refreshRequested) {
+      return true;
+    }
+
+    pending.refreshRequested = true;
+    this.resetSequenceRebaseTimeout(pending);
+    this.logger.debug(
+      'EcoFlow diagnostics: corroborated device sequence epoch change '
+      + `(previous=${previousSequence}, firstCandidate=${pending.firstCandidateSequence}, `
+      + `latestCandidate=${candidateSequence}); requesting authoritative state before sequence rebase`,
+    );
+    void this.session.requestState(this.serialNumber).catch(() => {
+      if (this.sequenceRebase === pending) {
+        this.logger.warn(
+          'EcoFlow diagnostics: sequence rebase state request failed; remaining on the prior sequence epoch',
+        );
+        this.clearSequenceRebase();
+      }
+    });
+    return true;
+  }
+
+  private createSequenceRebaseCandidate(
+    previousSequence: number,
+    candidateSequence: number,
+    controlEvidenceObserved: boolean,
+  ): PendingSequenceRebase {
+    const pending: PendingSequenceRebase = {
+      previousSequence,
+      firstCandidateSequence: candidateSequence,
+      lastCandidateSequence: candidateSequence,
+      controlEvidenceObserved,
+      refreshRequested: false,
+      cancelTimeout: () => undefined,
+    };
+    this.resetSequenceRebaseTimeout(pending);
+    return pending;
+  }
+
+  private resetSequenceRebaseTimeout(pending: PendingSequenceRebase): void {
+    pending.cancelTimeout();
+    pending.cancelTimeout = this.schedule(() => {
+      if (this.sequenceRebase === pending) {
+        this.logger.debug(
+          'EcoFlow diagnostics: sequence rebase evidence expired without authoritative confirmation',
+        );
+        this.sequenceRebase = undefined;
+      }
+    }, this.sequenceRebaseTimeoutMilliseconds);
+  }
+
+  private clearSequenceRebase(): void {
+    this.sequenceRebase?.cancelTimeout();
+    this.sequenceRebase = undefined;
   }
 
   private markStateFresh(): void {
@@ -919,6 +1041,10 @@ function isNewerSequence(candidate: number, previous: number | undefined): boole
   }
   const difference = (candidate - previous) >>> 0;
   return difference > 0 && difference < 0x8000_0000;
+}
+
+function hasSequenceEpochControlEvidence(update: Wave3DisplayUpdate): boolean {
+  return update.sleepState !== undefined || update.operatingModeId !== undefined;
 }
 
 function availabilityForSession(

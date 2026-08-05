@@ -74,7 +74,10 @@ export class EcoFlowCloudSession {
     string,
     { requestId: string; generation: number }
   >();
-  private readonly lastDisplaySequenceByDevice = new Map<string, number>();
+  // This watermark only decides whether live property traffic supersedes a
+  // pending quota refresh. The controller remains the sole owner of telemetry
+  // acceptance and resets its epoch only after an authoritative quota reply.
+  private readonly refreshSupersessionSequenceByDevice = new Map<string, number>();
   private readonly authoritativeRefreshRetries = new Map<
     string,
     AuthoritativeRefreshRetry
@@ -322,7 +325,7 @@ export class EcoFlowCloudSession {
     this.authenticated = undefined;
     this.clearAuthoritativeRefreshRetries();
     this.pendingRefreshes.clear();
-    this.lastDisplaySequenceByDevice.clear();
+    this.refreshSupersessionSequenceByDevice.clear();
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
@@ -358,7 +361,7 @@ export class EcoFlowCloudSession {
         this.connectionGeneration += 1;
         this.clearAuthoritativeRefreshRetries();
         this.pendingRefreshes.clear();
-        this.lastDisplaySequenceByDevice.clear();
+        this.refreshSupersessionSequenceByDevice.clear();
         this.logger.debug(
           `EcoFlow diagnostics: MQTT connected event received; advancing to generation=${this.connectionGeneration}`,
         );
@@ -373,7 +376,7 @@ export class EcoFlowCloudSession {
           this.abortPublicOperations();
           this.clearAuthoritativeRefreshRetries();
           this.pendingRefreshes.clear();
-          this.lastDisplaySequenceByDevice.clear();
+          this.refreshSupersessionSequenceByDevice.clear();
           this.mqttConnected = false;
           this.setState('offline');
           this.logger.warn('EcoFlow MQTT connection was interrupted');
@@ -604,6 +607,7 @@ export class EcoFlowCloudSession {
           this.logQuotaReply(label, decoded);
           if (isAuthoritativeQuotaReply(decoded)) {
             this.completeAuthoritativeRefresh(device.serialNumber);
+            this.refreshSupersessionSequenceByDevice.delete(device.serialNumber);
           }
           inbound = {
             serialNumber: device.serialNumber,
@@ -672,7 +676,7 @@ export class EcoFlowCloudSession {
     this.authenticated = undefined;
     this.clearAuthoritativeRefreshRetries();
     this.pendingRefreshes.clear();
-    this.lastDisplaySequenceByDevice.clear();
+    this.refreshSupersessionSequenceByDevice.clear();
     if (connection !== undefined) {
       await this.closeWithTimeout(connection);
     }
@@ -848,11 +852,11 @@ export class EcoFlowCloudSession {
       || !hasWave3ControlStateEvidence(decoded.update)
       || !isNewerSequence(
         decoded.sequence,
-        this.lastDisplaySequenceByDevice.get(serialNumber),
+        this.refreshSupersessionSequenceByDevice.get(serialNumber),
       )) {
       return false;
     }
-    this.lastDisplaySequenceByDevice.set(serialNumber, decoded.sequence);
+    this.refreshSupersessionSequenceByDevice.set(serialNumber, decoded.sequence);
     return true;
   }
 

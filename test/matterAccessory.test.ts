@@ -58,7 +58,7 @@ describe('WAVE 3 Matter accessory', () => {
       const accessory = createWave3MatterAccessory(
         harness.matter,
         `matter-mode-${index}`,
-        device('ambient'),
+        device(),
         snapshot,
       );
       assert.equal(accessory.clusters?.onOff?.onOff, value.powered);
@@ -79,7 +79,7 @@ describe('WAVE 3 Matter accessory', () => {
     const cool = createWave3MatterAccessory(
       harness.matter,
       'matter-profile-sync-cool',
-      device('ambient'),
+      device(),
       {
         availability: 'online',
         state: { powered: true, mode: 'cool', targetTemperatureCelsius: 22 },
@@ -93,7 +93,7 @@ describe('WAVE 3 Matter accessory', () => {
     const heat = createWave3MatterAccessory(
       harness.matter,
       'matter-profile-sync-heat',
-      device('ambient'),
+      device(),
       {
         availability: 'online',
         state: { powered: true, mode: 'heat', targetTemperatureCelsius: 25.5 },
@@ -109,7 +109,7 @@ describe('WAVE 3 Matter accessory', () => {
     });
   });
 
-  it('preserves cached control state and complete endpoint shape for every temperature source', () => {
+  it('preserves cached control state and the ambient sensor endpoint shape', () => {
     const harness = matterHarness();
     const partial: Wave3ControllerSnapshot = {
       availability: 'online',
@@ -118,52 +118,44 @@ describe('WAVE 3 Matter accessory', () => {
       runtimeTemperatures: {},
     };
 
-    for (const source of ['ambient', 'outlet', 'none'] as const) {
-      const cached = createWave3MatterAccessory(
-        harness.matter,
-        `matter-partial-cache-${source}`,
-        device(source),
-        onlineSnapshot(),
-      );
-      // Exercise migration from a cache written while Auto was advertised.
-      cached.context.lastSystemMode = MATTER_SYSTEM_MODE.auto;
-      cached.clusters!.thermostat!.minSetpointDeadBand = 0;
-      const restored = createWave3MatterAccessory(
-        harness.matter,
-        cached.UUID,
-        device(source),
-        partial,
-        cached,
-      );
-      assert.equal(restored.clusters?.onOff?.onOff, true);
-      assert.equal(restored.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.cool);
-      assert.equal(restored.clusters?.thermostat?.minSetpointDeadBand, undefined);
-      assert.equal(restored.clusters?.thermostat?.occupiedHeatingSetpoint, 1_900);
-      assert.equal(restored.clusters?.thermostat?.occupiedCoolingSetpoint, 2_400);
-      assert.equal(restored.clusters?.fanControl?.percentSetting, 60);
-      assert.equal(
-        restored.clusters?.thermostat?.localTemperature,
-        source === 'ambient' ? 2_123 : source === 'outlet' ? 1_655 : null,
-      );
-      assert.equal(
-        restored.clusters?.relativeHumidityMeasurement?.measuredValue,
-        source === 'ambient' ? 6_100 : undefined,
-      );
-      assert.equal(restored.firmwareRevision, '1.1.0.104');
-      assert.deepEqual(
-        Object.keys(restored.clusters ?? {}).sort(),
-        Object.keys(cached.clusters ?? {}).sort(),
-      );
-      assert.deepEqual(
-        Object.keys(restored.deviceType.behaviors).sort(),
-        Object.keys(cached.deviceType.behaviors).sort(),
-      );
-    }
+    const cached = createWave3MatterAccessory(
+      harness.matter,
+      'matter-partial-cache',
+      device(),
+      onlineSnapshot(),
+    );
+    // Exercise migration from a cache written while Auto was advertised.
+    cached.context.lastSystemMode = MATTER_SYSTEM_MODE.auto;
+    cached.clusters!.thermostat!.minSetpointDeadBand = 0;
+    const restored = createWave3MatterAccessory(
+      harness.matter,
+      cached.UUID,
+      device(),
+      partial,
+      cached,
+    );
+    assert.equal(restored.clusters?.onOff?.onOff, true);
+    assert.equal(restored.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.cool);
+    assert.equal(restored.clusters?.thermostat?.minSetpointDeadBand, undefined);
+    assert.equal(restored.clusters?.thermostat?.occupiedHeatingSetpoint, 1_900);
+    assert.equal(restored.clusters?.thermostat?.occupiedCoolingSetpoint, 2_400);
+    assert.equal(restored.clusters?.fanControl?.percentSetting, 60);
+    assert.equal(restored.clusters?.thermostat?.localTemperature, 2_123);
+    assert.equal(restored.clusters?.relativeHumidityMeasurement?.measuredValue, 6_100);
+    assert.equal(restored.firmwareRevision, '1.1.0.104');
+    assert.deepEqual(
+      Object.keys(restored.clusters ?? {}).sort(),
+      Object.keys(cached.clusters ?? {}).sort(),
+    );
+    assert.deepEqual(
+      Object.keys(restored.deviceType.behaviors).sort(),
+      Object.keys(cached.deviceType.behaviors).sort(),
+    );
 
     const fresh = createWave3MatterAccessory(
       harness.matter,
       'matter-partial-fresh',
-      device('ambient'),
+      device(),
       partial,
     );
     assert.equal(fresh.clusters?.onOff?.onOff, false);
@@ -185,7 +177,7 @@ describe('WAVE 3 Matter accessory', () => {
       },
     } as unknown as MatterAPI;
 
-    const deviceType = wave3RoomAirConditionerDeviceType(matter, 'outlet');
+    const deviceType = wave3RoomAirConditionerDeviceType(matter);
     assert.ok('relativeHumidityMeasurement' in deviceType.behaviors);
   });
 
@@ -194,7 +186,7 @@ describe('WAVE 3 Matter accessory', () => {
     const accessory = createWave3MatterAccessory(
       harness.matter,
       'matter-runtime-probe',
-      device('ambient'),
+      device(),
       onlineSnapshot(),
     );
     const environment = new Environment('wave3-matter-accessory-test', Environment.default);
@@ -221,7 +213,7 @@ describe('WAVE 3 Matter accessory', () => {
       const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-test-aggregator' });
       await node.add(aggregator);
       const endpoint = new Endpoint(
-        wave3RoomAirConditionerDeviceType(harness.matter, 'ambient').with(
+        wave3RoomAirConditionerDeviceType(harness.matter).with(
           BridgedDeviceBasicInformationServer,
         ),
         {
@@ -264,7 +256,7 @@ describe('WAVE 3 Matter accessory', () => {
     }
   });
 
-  it('applies crossing heat and cool snapshots for every temperature shape in Matter', async () => {
+  it('applies crossing heat and cool snapshots with ambient room sensing in Matter', async () => {
     const baseMatter = matterHarness().matter;
     const environment = new Environment('wave3-matter-transition-test', Environment.default);
     new MockStorageService(environment);
@@ -289,95 +281,81 @@ describe('WAVE 3 Matter accessory', () => {
     try {
       const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-transition-aggregator' });
       await node.add(aggregator);
-      for (const source of ['ambient', 'outlet', 'none'] as const) {
-        const controller = fakeController(offlineSnapshot());
-        const accessory = createWave3MatterAccessory(
-          baseMatter,
-          `matter-runtime-transition-${source}`,
-          device(source),
-          controller.snapshot,
-        );
-        const endpoint = new Endpoint(
-          wave3RoomAirConditionerDeviceType(baseMatter, source).with(
-            BridgedDeviceBasicInformationServer,
-          ),
-          {
-            id: accessory.UUID,
-            ...accessory.clusters,
-            bridgedDeviceBasicInformation: {
-              vendorName: 'EcoFlow',
-              nodeLabel: accessory.displayName,
-              productName: 'WAVE 3',
-              productLabel: 'WAVE 3',
-              serialNumber: `redacted-transition-${source}`,
-              reachable: true,
-            },
-          } as never,
-        );
-        await aggregator.add(endpoint);
-        const endpointState = () => endpoint.state as unknown as {
-          onOff: { onOff: boolean };
-          thermostat: {
-            localTemperature: number | null;
-            systemMode: number;
-            thermostatRunningMode?: number;
-            occupiedCoolingSetpoint: number;
-            occupiedHeatingSetpoint: number;
-          };
-          fanControl: { percentSetting: number | null };
-          relativeHumidityMeasurement?: { measuredValue: number | null };
+      const controller = fakeController(offlineSnapshot());
+      const accessory = createWave3MatterAccessory(
+        baseMatter,
+        'matter-runtime-transition',
+        device(),
+        controller.snapshot,
+      );
+      const endpoint = new Endpoint(
+        wave3RoomAirConditionerDeviceType(baseMatter).with(
+          BridgedDeviceBasicInformationServer,
+        ),
+        {
+          id: accessory.UUID,
+          ...accessory.clusters,
+          bridgedDeviceBasicInformation: {
+            vendorName: 'EcoFlow',
+            nodeLabel: accessory.displayName,
+            productName: 'WAVE 3',
+            productLabel: 'WAVE 3',
+            serialNumber: 'redacted-transition',
+            reachable: true,
+          },
+        } as never,
+      );
+      await aggregator.add(endpoint);
+      const endpointState = () => endpoint.state as unknown as {
+        onOff: { onOff: boolean };
+        thermostat: {
+          localTemperature: number | null;
+          systemMode: number;
+          thermostatRunningMode?: number;
+          occupiedCoolingSetpoint: number;
+          occupiedHeatingSetpoint: number;
         };
-        const runtimeMatter = {
-          ...baseMatter,
-          updateAccessoryState: async (
-            _uuid: string,
-            cluster: string,
-            attributes: Record<string, unknown>,
-          ) => {
-            void endpoint.set({ [cluster]: attributes } as never);
-          },
-          getAccessoryState: async (_uuid: string, cluster: string) => {
-            const state = endpoint.state as unknown as Record<string, Record<string, unknown>>;
-            return state[cluster];
-          },
-        } as MatterAPI;
-        const binding = new Wave3MatterAccessory(
-          runtimeMatter,
-          accessory,
-          controller,
-          source,
-        );
+        fanControl: { percentSetting: number | null };
+        relativeHumidityMeasurement: { measuredValue: number | null };
+      };
+      const runtimeMatter = {
+        ...baseMatter,
+        updateAccessoryState: async (
+          _uuid: string,
+          cluster: string,
+          attributes: Record<string, unknown>,
+        ) => {
+          void endpoint.set({ [cluster]: attributes } as never);
+        },
+        getAccessoryState: async (_uuid: string, cluster: string) => {
+          const state = endpoint.state as unknown as Record<string, Record<string, unknown>>;
+          return state[cluster];
+        },
+      } as MatterAPI;
+      const binding = new Wave3MatterAccessory(runtimeMatter, accessory, controller);
 
-        controller.emit(runtimeSnapshot('cool', 18, 40, 55));
-        await waitUntil(
-          () => endpointState().thermostat.systemMode === MATTER_SYSTEM_MODE.cool
-            && endpointState().fanControl.percentSetting === 40,
-        );
-        assert.equal(endpointState().thermostat.occupiedCoolingSetpoint, 1_800);
-        assert.equal(endpointState().thermostat.occupiedHeatingSetpoint, 1_800);
+      controller.emit(runtimeSnapshot('cool', 18, 40, 55));
+      await waitUntil(
+        () => endpointState().thermostat.systemMode === MATTER_SYSTEM_MODE.cool
+          && endpointState().fanControl.percentSetting === 40,
+      );
+      assert.equal(endpointState().thermostat.occupiedCoolingSetpoint, 1_800);
+      assert.equal(endpointState().thermostat.occupiedHeatingSetpoint, 1_800);
 
-        controller.emit(runtimeSnapshot('heat', 23, 60, 56));
-        await waitUntil(
-          () => endpointState().thermostat.systemMode === MATTER_SYSTEM_MODE.heat
-            && endpointState().fanControl.percentSetting === 60
-            && (source !== 'ambient'
-              || endpointState().relativeHumidityMeasurement?.measuredValue === 5_600),
-        );
-        await binding.stop();
+      controller.emit(runtimeSnapshot('heat', 23, 60, 56));
+      await waitUntil(
+        () => endpointState().thermostat.systemMode === MATTER_SYSTEM_MODE.heat
+          && endpointState().fanControl.percentSetting === 60
+          && endpointState().relativeHumidityMeasurement.measuredValue === 5_600,
+      );
+      await binding.stop();
 
-        assert.equal(endpointState().onOff.onOff, true);
-        assert.equal(endpointState().thermostat.occupiedCoolingSetpoint, 2_300);
-        assert.equal(endpointState().thermostat.occupiedHeatingSetpoint, 2_300);
-        assert.equal(endpointState().thermostat.thermostatRunningMode, undefined);
-        assert.equal(
-          endpointState().thermostat.localTemperature,
-          source === 'ambient' ? 2_300 : source === 'outlet' ? 1_700 : null,
-        );
-        assert.equal(
-          endpointState().relativeHumidityMeasurement?.measuredValue,
-          source === 'ambient' ? 5_600 : undefined,
-        );
-      }
+      assert.equal(endpointState().onOff.onOff, true);
+      assert.equal(endpointState().thermostat.occupiedCoolingSetpoint, 2_300);
+      assert.equal(endpointState().thermostat.occupiedHeatingSetpoint, 2_300);
+      assert.equal(endpointState().thermostat.thermostatRunningMode, undefined);
+      assert.equal(endpointState().thermostat.localTemperature, 2_300);
+      assert.equal(endpointState().relativeHumidityMeasurement.measuredValue, 5_600);
     } finally {
       await node.close();
     }
@@ -391,7 +369,7 @@ describe('WAVE 3 Matter accessory', () => {
     const accessory = createWave3MatterAccessory(
       baseMatter,
       'matter-runtime-controls',
-      device('ambient'),
+      device(),
       controller.snapshot,
     );
     const environment = new Environment('wave3-matter-controls-test', Environment.default);
@@ -419,7 +397,7 @@ describe('WAVE 3 Matter accessory', () => {
       const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-controls-aggregator' });
       await node.add(aggregator);
       const endpoint = new Endpoint(
-        wave3RoomAirConditionerDeviceType(baseMatter, 'ambient').with(
+        wave3RoomAirConditionerDeviceType(baseMatter).with(
           BridgedDeviceBasicInformationServer,
         ),
         {
@@ -463,7 +441,6 @@ describe('WAVE 3 Matter accessory', () => {
         runtimeMatter,
         accessory,
         controller,
-        'ambient',
         {
           debug: message => diagnostics.push(message),
           error: message => errors.push(message),
@@ -1409,7 +1386,7 @@ describe('WAVE 3 Matter accessory', () => {
     const accessory = createWave3MatterAccessory(
       harness.matter,
       'matter-uuid:first',
-      device('ambient'),
+      device(),
       onlineSnapshot(),
     );
 
@@ -1466,40 +1443,12 @@ describe('WAVE 3 Matter accessory', () => {
     assert.equal(accessory.handlers, undefined);
   });
 
-  it('preserves the outlet and no-temperature endpoint contracts', () => {
+  it('keeps the ambient sensor endpoint shape while the WAVE is offline', () => {
     const harness = matterHarness();
-    const outlet = createWave3MatterAccessory(
-      harness.matter,
-      'matter-uuid:outlet',
-      device('outlet'),
-      onlineSnapshot(),
-    );
-    assert.equal(outlet.clusters?.thermostat?.localTemperature, 1_655);
-    assert.equal(outlet.clusters?.relativeHumidityMeasurement, undefined);
-    assert.equal(
-      (outlet.deviceType.behaviors.thermostat as unknown as { features: Record<string, boolean> }).features
-        .localTemperatureNotExposed,
-      false,
-    );
-
-    const none = createWave3MatterAccessory(
-      harness.matter,
-      'matter-uuid:none',
-      device('none'),
-      onlineSnapshot(),
-    );
-    assert.equal(none.clusters?.thermostat?.localTemperature, null);
-    assert.equal(none.clusters?.relativeHumidityMeasurement, undefined);
-    assert.equal(
-      (none.deviceType.behaviors.thermostat as unknown as { features: Record<string, boolean> }).features
-        .localTemperatureNotExposed,
-      true,
-    );
-
     const off = createWave3MatterAccessory(
       harness.matter,
       'matter-uuid:off',
-      device('ambient'),
+      device(),
       offlineSnapshot(),
     );
     assert.deepEqual(off.clusters?.fanControl, {
@@ -1511,6 +1460,17 @@ describe('WAVE 3 Matter accessory', () => {
       speedSetting: 0,
       speedCurrent: 0,
     });
+    assert.equal(off.clusters?.thermostat?.localTemperature, null);
+    assert.deepEqual(off.clusters?.relativeHumidityMeasurement, {
+      measuredValue: null,
+      minMeasuredValue: 0,
+      maxMeasuredValue: 10_000,
+    });
+    assert.equal(
+      (off.deviceType.behaviors.thermostat as unknown as { features: Record<string, boolean> }).features
+        .localTemperatureNotExposed,
+      false,
+    );
   });
 
   it('updates external state and metadata only from controller snapshots', async () => {
@@ -1519,14 +1479,13 @@ describe('WAVE 3 Matter accessory', () => {
     const accessory = createWave3MatterAccessory(
       harness.matter,
       'matter-uuid:first',
-      device('ambient'),
+      device(),
       controller.snapshot,
     );
     const binding = new Wave3MatterAccessory(
       harness.matter,
       accessory,
       controller,
-      'ambient',
     );
 
     await drainMicrotasks();
@@ -1647,13 +1606,13 @@ describe('WAVE 3 Matter accessory', () => {
     const cached = createWave3MatterAccessory(
       harness.matter,
       'matter-recent-cache',
-      device('ambient'),
+      device(),
       { ...onlineSnapshot(), updatedAt: 995 },
     );
     const restored = createWave3MatterAccessory(
       harness.matter,
       cached.UUID,
-      device('ambient'),
+      device(),
       offlineSnapshot(),
       cached,
     );
@@ -1663,7 +1622,6 @@ describe('WAVE 3 Matter accessory', () => {
       harness.matter,
       restored,
       controller,
-      'ambient',
       { error: () => undefined },
       () => now,
       10,
@@ -1709,14 +1667,13 @@ describe('WAVE 3 Matter accessory', () => {
     const accessory = createWave3MatterAccessory(
       harness.matter,
       'matter-partial-binding',
-      device('ambient'),
+      device(),
       controller.snapshot,
     );
     const binding = new Wave3MatterAccessory(
       harness.matter,
       accessory,
       controller,
-      'ambient',
     );
 
     controller.emit({
@@ -1754,14 +1711,13 @@ describe('WAVE 3 Matter accessory', () => {
     const accessory = createWave3MatterAccessory(
       harness.matter,
       'matter-uuid:stopping',
-      device('ambient'),
+      device(),
       controller.snapshot,
     );
     const binding = new Wave3MatterAccessory(
       harness.matter,
       accessory,
       controller,
-      'ambient',
     );
 
     controller.emit(onlineSnapshot());
@@ -1992,11 +1948,10 @@ function recordingController(initial: Wave3ControllerSnapshot): Wave3AccessoryCo
   };
 }
 
-function device(currentTemperatureSource: 'ambient' | 'outlet' | 'none') {
+function device() {
   return {
     name: 'Bedroom WAVE 3',
     serialNumber: 'FIRST1234',
-    currentTemperatureSource,
   } as const;
 }
 

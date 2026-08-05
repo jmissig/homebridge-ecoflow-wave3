@@ -81,7 +81,6 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
     matter,
     accessory,
     controller,
-    device.currentTemperatureSource,
     logger,
   ),
 };
@@ -240,10 +239,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       const uuid = this.uuidForSerial(device.serialNumber);
       const cachedAccessory = this.matterAccessories.get(uuid);
       const endpointShapeChanged = cachedAccessory !== undefined
-        && (
-          cachedAccessory.context.schemaVersion !== MATTER_ACCESSORY_SCHEMA_VERSION
-          || cachedAccessory.context.currentTemperatureSource !== device.currentTemperatureSource
-        );
+        && cachedAccessory.context.schemaVersion !== MATTER_ACCESSORY_SCHEMA_VERSION;
       if (endpointShapeChanged
         || !isRecentCachedState(cachedAccessory?.context.lastConfirmedAt)) {
         devicesNeedingFullDisplayState.push(device.serialNumber);
@@ -419,18 +415,16 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
           }
           continue;
         }
-        if (accessory.context.currentTemperatureSource === 'ambient') {
-          const humidity = await this.matter!.getAccessoryState(
-            accessory.UUID,
-            this.matter!.clusterNames.RelativeHumidityMeasurement,
-          );
-          if (humidity === undefined) {
-            attempts += 1;
-            if (attempts === 30) {
-              this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
-            }
-            continue;
+        const humidity = await this.matter!.getAccessoryState(
+          accessory.UUID,
+          this.matter!.clusterNames.RelativeHumidityMeasurement,
+        );
+        if (humidity === undefined) {
+          attempts += 1;
+          if (attempts === 30) {
+            this.log.warn('Still waiting for Homebridge to finish Matter endpoint registration');
           }
+          continue;
         }
         return true;
       } catch {

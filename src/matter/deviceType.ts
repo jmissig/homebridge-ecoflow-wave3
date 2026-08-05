@@ -1,6 +1,5 @@
 import type { MatterAPI } from 'homebridge';
 
-import type { CurrentTemperatureSource } from '../ecoflow/config.js';
 import { MATTER_FAN_MODE } from './constants.js';
 import {
   forgetDesiredCluster,
@@ -11,10 +10,7 @@ import {
 import { MATTER_THERMOSTAT_UI_CLUSTER } from './constants.js';
 import { fanModeForAirflow } from './projection.js';
 
-export function wave3RoomAirConditionerDeviceType(
-  matter: MatterAPI,
-  currentTemperatureSource: CurrentTemperatureSource,
-) {
+export function wave3RoomAirConditionerDeviceType(matter: MatterAPI) {
   // Device and behavior classes must come from the running Homebridge process.
   // A development `npm install -g .` symlinks this clone, whose dev dependency
   // may otherwise load a second Matter.js instance with incompatible class identity.
@@ -24,11 +20,6 @@ export function wave3RoomAirConditionerDeviceType(
   const Wave3ThermostatBase = requirements.ThermostatServer.with(
     'Heating',
     'Cooling',
-  );
-  const Wave3NoTemperatureThermostatBase = requirements.ThermostatServer.with(
-    'Heating',
-    'Cooling',
-    'LocalTemperatureNotExposed',
   );
   const MultiSpeedFanControlServer = requirements.FanControlServer.with('MultiSpeed');
   const Wave3ThermostatUiBase = requirements.ThermostatUserInterfaceConfigurationServer;
@@ -219,76 +210,13 @@ export function wave3RoomAirConditionerDeviceType(
     }
   }
 
-  class Wave3NoTemperatureThermostatServer extends Wave3NoTemperatureThermostatBase {
-    override initialize(): void {
-      super.initialize();
-      this.reactTo(
-        this.events.systemMode$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'systemMode',
-            value,
-            control => control.setSystemMode(value),
-          );
-        },
-      );
-      this.reactTo(
-        this.events.occupiedHeatingSetpoint$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'occupiedHeatingSetpoint',
-            value,
-            control => control.setHeatingSetpoint(value),
-          );
-        },
-      );
-      this.reactTo(
-        this.events.occupiedCoolingSetpoint$Changing,
-        value => {
-          requireDesiredValueOrControl(
-            this.endpoint.id,
-            'thermostat',
-            'occupiedCoolingSetpoint',
-            value,
-            control => control.setCoolingSetpoint(value),
-          );
-        },
-      );
-    }
-
-    override async setpointRaiseLower(request: { mode: number; amount: number }): Promise<void> {
-      await requireMatterControl(this.endpoint.id).raiseLowerSetpoint(
-        request.mode,
-        request.amount,
-        async () => {
-          await super.setpointRaiseLower(request);
-        },
-      );
-    }
-  }
-
-  const thermostat = currentTemperatureSource === 'none'
-    ? Wave3NoTemperatureThermostatServer
-    : Wave3ThermostatServer;
-
-  return currentTemperatureSource === 'ambient'
-    ? roomAirConditioner.with(
-      Wave3OnOffServer,
-      thermostat,
-      Wave3FanControlServer,
-      Wave3ThermostatUserInterfaceConfigurationServer,
-      requirements.RelativeHumidityMeasurementServer,
-    )
-    : roomAirConditioner.with(
-      Wave3OnOffServer,
-      thermostat,
-      Wave3FanControlServer,
-      Wave3ThermostatUserInterfaceConfigurationServer,
-    );
+  return roomAirConditioner.with(
+    Wave3OnOffServer,
+    Wave3ThermostatServer,
+    Wave3FanControlServer,
+    Wave3ThermostatUserInterfaceConfigurationServer,
+    requirements.RelativeHumidityMeasurementServer,
+  );
 }
 
 function percentForFanMode(fanMode: number): number | undefined {

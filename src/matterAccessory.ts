@@ -4,7 +4,7 @@ import {
   type MatterAPI,
 } from 'homebridge';
 
-import type { CurrentTemperatureSource, Wave3DeviceConfig } from './ecoflow/config.js';
+import type { Wave3DeviceConfig } from './ecoflow/config.js';
 import {
   CACHED_STATE_MAX_AGE_MILLISECONDS,
   isRecentCachedState,
@@ -105,7 +105,6 @@ export function createWave3MatterAccessory(
   const context: Wave3MatterAccessoryContext = {
     schemaVersion: MATTER_ACCESSORY_SCHEMA_VERSION,
     serialNumber: device.serialNumber,
-    currentTemperatureSource: device.currentTemperatureSource,
     lastSystemMode: validSystemMode(cachedContext?.lastSystemMode)
       ?? MATTER_SYSTEM_MODE.cool,
     ...(
@@ -120,7 +119,6 @@ export function createWave3MatterAccessory(
   updateLastSystemMode(context, snapshot);
   const clusters = clustersForSnapshot(
     snapshot,
-    device.currentTemperatureSource,
     context,
     cached?.clusters,
   );
@@ -128,7 +126,7 @@ export function createWave3MatterAccessory(
   return {
     UUID: uuid,
     displayName: device.name,
-    deviceType: wave3RoomAirConditionerDeviceType(matter, device.currentTemperatureSource),
+    deviceType: wave3RoomAirConditionerDeviceType(matter),
     manufacturer: 'EcoFlow',
     model: 'WAVE 3',
     serialNumber: device.serialNumber,
@@ -166,7 +164,6 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     private readonly matter: MatterAPI,
     private readonly accessory: MatterAccessory<Wave3MatterAccessoryContext>,
     private readonly controller: Wave3AccessoryController,
-    private readonly currentTemperatureSource: CurrentTemperatureSource,
     private readonly logger: MatterAccessoryLogger = {
       debug: () => undefined,
       error: () => undefined,
@@ -813,13 +810,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       this.matter.clusterNames.FanControl,
       clusters.fanControl ?? {},
     );
-    if (this.currentTemperatureSource === 'ambient') {
-      await this.updateState(
-        this.accessory.UUID,
-        this.matter.clusterNames.RelativeHumidityMeasurement,
-        clusters.relativeHumidityMeasurement ?? {},
-      );
-    }
+    await this.updateState(
+      this.accessory.UUID,
+      this.matter.clusterNames.RelativeHumidityMeasurement,
+      clusters.relativeHumidityMeasurement ?? {},
+    );
     await this.pushReachability(true);
     this.accessory.context.lastConfirmedAt = this.now();
   }
@@ -1132,7 +1127,6 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     updateLastSystemMode(this.accessory.context, snapshot);
     const clusters = clustersForSnapshot(
       snapshot,
-      this.currentTemperatureSource,
       this.accessory.context,
       this.accessory.clusters,
     );

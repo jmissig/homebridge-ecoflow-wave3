@@ -98,9 +98,9 @@ The primary Matter surface should be climate-first:
   selects the active HVAC mode and does not replace the power cluster
 - Off, Cool, Heat, Fan Only, Dry, and Sleep system modes where behavior is
   verified; revisit Matter Auto after controller interoperability improves
-- current temperature and cooling/heating setpoints appropriate to the selected
-  per-device temperature source
-- ambient humidity only when the ambient temperature source is selected
+- current room/input-air temperature from the WAVE 3 ambient sensor plus
+  cooling/heating setpoints
+- ambient humidity
 - firmware revision in standard Matter bridged-device metadata
 
 WAVE 3 behaviors known from the Home Assistant implementation include cool, heat, dry, fan, and auto modes, temperature and humidity targets, drainage controls, beeper, display settings, timers, power telemetry, battery telemetry, temperatures, and condensate state.
@@ -186,6 +186,9 @@ Matter/Apple Home naming.
 - Support the regional EcoFlow API host when required; do not silently send credentials to an arbitrary host.
 - Require explicit WAVE 3 serials because the pinned private API path exposes
   no device-list endpoint.
+- Always use the WAVE 3 ambient/input-air reading as Matter's room temperature.
+  Outlet/supply-air temperature remains decoded telemetry and is not a
+  user-selectable room-temperature source.
 - Treat configured serials as WAVE 3 at this evidence level; hardware
   validation must confirm the household unit before release.
 - Never log passwords, bearer tokens, MQTT usernames/passwords, authorization headers, full device serial numbers, or identifying raw payloads.

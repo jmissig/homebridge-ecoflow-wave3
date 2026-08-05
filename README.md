@@ -53,8 +53,6 @@ In Homebridge UI, add the **EcoFlow WAVE 3** platform and enter:
 1. Your EcoFlow account email and password.
 2. The API region used by your account.
 3. A display name and serial number for each WAVE 3.
-4. Optionally, which sensor each unit should publish as its current
-   temperature.
 
 Each configured unit becomes its own Matter air-conditioner accessory.
 
@@ -70,8 +68,7 @@ If you edit `config.json` directly, use this shape:
   "devices": [
     {
       "name": "Bedroom WAVE 3",
-      "serialNumber": "YOUR_WAVE_3_SERIAL",
-      "currentTemperatureSource": "ambient"
+      "serialNumber": "YOUR_WAVE_3_SERIAL"
     }
   ]
 }
@@ -88,19 +85,6 @@ password.
 
 Choose the same region your EcoFlow account uses. Authentication usually fails
 if the region is wrong.
-
-### Current-temperature source
-
-`currentTemperatureSource` is optional for each device and defaults to
-`ambient`:
-
-- `ambient` — publish the WAVE 3 ambient temperature and ambient humidity.
-- `outlet` — publish the indoor supply-air/outlet temperature; do not publish
-  ambient humidity.
-- `none` — publish no Matter current-temperature or humidity measurement.
-
-This option is useful when the WAVE 3 sits outdoors and its ambient sensor does
-not represent the room being conditioned.
 
 ## Enable Matter and pair with your controller
 
@@ -145,8 +129,8 @@ placeholders.
 - Cooling and heating modes
 - Target temperature
 - Five fan-speed steps
-- Current temperature from the configured sensor
-- Ambient humidity when using the ambient-temperature source
+- Current room/input-air temperature reported by the WAVE 3 ambient sensor
+- Ambient humidity
 - Celsius/Fahrenheit display preference through Matter's standard thermostat
   UI configuration
 - Live changes made in the official EcoFlow app

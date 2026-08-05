@@ -92,6 +92,46 @@ in [Household WAVE 3 packet evidence — 2026-08-01](hardware-packet-evidence-20
 - Account discovery should be added only if a later, pinned private endpoint
   provides reliable WAVE 3 identity evidence.
 
+### Official Developer API boundary
+
+EcoFlow separately publishes an authenticated Developer API. Its general
+protocol documents:
+
+- `GET /iot-open/sign/device/list`, whose response includes each bound
+  device's serial number and an `online` flag;
+- per-device `/open/{certificateAccount}/{sn}/status` MQTT reports; and
+- MQTT credentials obtained from `/iot-open/sign/certification`.
+
+Those HTTP calls require a Developer-platform `accessKey` and HMAC signature
+made with its `secretKey`; the returned MQTT account is likewise specific to
+the Developer API. The EcoFlow app login and private `/app/...` MQTT
+credentials used by this plugin do not provide those capabilities. See
+[EcoFlow's general Developer API protocol](https://developer.ecoflow.com/us/document/root?id=2058828162669383681).
+
+EcoFlow's published product documentation currently names only
+[WAVE Air Conditioner](https://developer.ecoflow.com/us/document/PP1?id=2058839655007817730)
+and describes a JSON protocol materially different from the observed WAVE 3
+protobuf traffic. It is therefore not yet known whether a WAVE 3 can be bound
+to a Developer account or returned by the public device-list and status APIs.
+Until a read-only compatibility probe proves that support, the public API is
+neither an automatic-discovery source nor an availability side channel for
+this plugin.
+
+**Desired future direction**
+
+- Add automatic WAVE 3 discovery if either a stable private app endpoint or
+  confirmed Developer API support supplies reliable device identity.
+- Prefer an explicit device-status event for prompt offline detection. On the
+  current private path, a correlated `latestQuotas` reply with `online == 0`
+  is authoritative, but a powered-off WAVE may simply stop publishing while
+  the Homebridge-to-cloud MQTT session stays connected. Sustained silence can
+  become stale/unreachable, but it does not reveal the exact disconnect time.
+- Before adding Developer API credentials or a second MQTT session, test
+  whether the household WAVE 3 appears in `/iot-open/sign/device/list` and
+  receives `/open/.../status` reports.
+
+[Desired direction: Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534363766039515189)
+
 ## MQTT session
 
 **Upstream**
@@ -166,6 +206,21 @@ A matching get reply contains `data.online` and `data.quotaMap`.
   connection generation. Runtime, sensor-only, saved-mode-parameter-only,
   malformed, unsupported-only, duplicate, and out-of-order property packets do
   not consume the pending refresh.
+- The property sequence belongs to the WAVE, not the Homebridge-to-cloud MQTT
+  connection. A WAVE power cycle can therefore restart the property sequence
+  while the MQTT generation remains unchanged. The controller quarantines a
+  backward sequence run until two coherent low-epoch packets arrive and at
+  least one contains a sleep-state or operating-mode fragment. It then requests
+  correlated `latestQuotas` state. A matching online reply with complete
+  control evidence is the epoch barrier: the controller accepts that snapshot,
+  rebases display ordering to the corroborated low sequence, and clears runtime
+  ordering. An offline reply wins immediately; malformed, incomplete, failed,
+  or timed-out refreshes do not rebase. One delayed low packet cannot reset the
+  epoch. Valid 32-bit sequence wrap remains ordinary forward progress.
+- The session's property-sequence watermark is limited to deciding whether live
+  authoritative traffic supersedes a pending quota reply. A matched
+  authoritative quota reply clears that watermark. Telemetry acceptance and
+  device epoch ownership remain in the controller.
 - Inbound packets are ignored while MQTT is disconnected. Each clean-session
   connection is assigned a generation, and the controller discards its prior
   generation accumulator before accepting new device evidence.
@@ -334,9 +389,10 @@ header's unrelated protocol `version=3` with device firmware.
 
 - Household incremental packets reported field 494 falling from about
   `20.13 °C` to `16.60 °C` as cooling ramped. The pinned upstream schema names
-  the same field `temp_indoor_supply_air`, so the plugin provisionally exposes
-  it as the outlet current-temperature source pending a Home app check.
-  [decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
+  the same field `temp_indoor_supply_air`; it remains decoded outlet telemetry
+  and is not used as Matter's room-temperature measurement.
+  [Superseded decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
+  [Current decision: Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534364952511512646)
 - `dev_sleep_state`, not only `wave_operating_mode`, should govern whether the
   normalized device is powered.
 - Display uploads can be incremental. Preserve the reported sleep state,
@@ -552,6 +608,23 @@ publishing a command.
 [Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533514045766897795), superseding the broader 2026-08-01 cached-availability rule.
 [Freshness decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533535457453932654)
 
+**Hardware — 2026-08-04 power-cycle sequence reset and app recovery**
+
+- Cutting WAVE power around `17:10` stopped ordinary device property traffic,
+  but Homebridge's EcoFlow cloud MQTT connection stayed in generation `0`.
+- When the WAVE returned at `17:24:11`, its property sequence restarted at
+  `43`; sequence `44` reported `dev_sleep_state = 1` and sequence `47` restored
+  the saved Cool profile. The running controller still held sequence `598447`
+  and rejected the restarted stream.
+- The official app received `cfg_main_power = true` acknowledgement at
+  `17:32:50`. Sequence `1861` reported `dev_sleep_state = 0` two seconds later,
+  and sequence `2121` supplied a complete powered-on Cool/`23 °C` snapshot at
+  `17:33:59`. These packets prove both the reset shape and the desired recovery
+  result; the rebase implementation still requires a second controlled
+  power-cycle validation after deployment.
+
+[Source: household Homebridge diagnostics and narrated power/app actions shared by Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534359710805921934)
+
 **Hardware — 2026-08-02 Matter off-to-on sequencing**
 
 - Apple Home accepted a Cool target of `20 °C` while the WAVE was off, but the
@@ -610,6 +683,10 @@ publishing a command.
 ## Known uncertainty
 
 - No private device-list endpoint is evidenced by the pinned upstream code.
+- WAVE 3 support in EcoFlow's public Developer API is unverified. Automatic
+  discovery and explicit public online/offline events remain unavailable
+  without both Developer credentials and a successful WAVE 3 compatibility
+  probe.
 - The exact semantics of `actionId`, `configOk`, and acknowledgement sequence
   correlation remain unverified beyond the mapped climate fields. The
   official-app time/config action IDs `6`, `7`, `135`, and `136` remain partly
@@ -620,8 +697,10 @@ publishing a command.
 - Upstream discussion reports that some WAVE 3 installations stop accepting
   commands after an extended session. The cause and safe recovery behavior
   remain unverified.
-- Basic official-app and plugin connection coexistence has been observed once;
-  reconnect and extended-session reliability remain unverified.
+- Basic official-app and plugin connection coexistence has been observed. One
+  WAVE power-cycle/rejoin without a Homebridge cloud-MQTT reconnect is captured;
+  the new sequence-rebase behavior and extended-session reliability remain to
+  be validated on hardware.
 - All field meanings remain reverse-engineered until household hardware
   validation.
 

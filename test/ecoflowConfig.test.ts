@@ -25,36 +25,17 @@ describe('EcoFlow WAVE 3 configuration', () => {
 
     assert.equal(config.apiHost, 'api-a.ecoflow.com');
     assert.equal(config.devices.length, 2);
-    assert.equal(config.devices[0]?.currentTemperatureSource, 'ambient');
     assert.equal(Object.isFrozen(config), true);
     assert.equal(Object.isFrozen(config.devices), true);
   });
 
-  it('accepts a per-device current-temperature source and rejects unknown values', () => {
-    const config = parseEcoFlowWave3Config(baseConfig({
-      devices: [
-        {
-          name: 'Bedroom',
-          serialNumber: 'TESTWAVE30001',
-          currentTemperatureSource: 'outlet',
-        },
-        {
-          name: 'Office',
-          serialNumber: 'TESTWAVE30002',
-          currentTemperatureSource: 'none',
-        },
-      ],
-    }));
-    assert.deepEqual(
-      config.devices.map(device => device.currentTemperatureSource),
-      ['outlet', 'none'],
-    );
+  it('rejects the removed current-temperature source preference', () => {
     assert.throws(
       () => parseEcoFlowWave3Config(baseConfig({
         devices: [{
           name: 'Bedroom',
           serialNumber: 'TESTWAVE30001',
-          currentTemperatureSource: 'condenser',
+          currentTemperatureSource: 'outlet',
         }],
       })),
       /currentTemperatureSource/,
@@ -123,17 +104,6 @@ describe('EcoFlow WAVE 3 configuration', () => {
       runtimeAccepted: boolean;
     }> = [
       { candidate: baseConfig(), schemaAccepted: true, runtimeAccepted: true },
-      {
-        candidate: baseConfig({
-          devices: [{
-            name: 'Bedroom',
-            serialNumber: 'TESTWAVE30001',
-            currentTemperatureSource: 'outlet',
-          }],
-        }),
-        schemaAccepted: true,
-        runtimeAccepted: true,
-      },
       {
         candidate: baseConfig({
           devices: [{

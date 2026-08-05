@@ -260,6 +260,41 @@ describe('EcoFlow cloud session', () => {
     });
     assert.equal(controller.snapshot.availability, 'offline');
 
+    // A matched authoritative quota reply is a refresh-ordering barrier. It
+    // clears the session's supersession watermark so a low property sequence
+    // from a rebooted WAVE can supersede the next pending refresh.
+    await session.requestState('TESTWAVE30001');
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        id: '999910007',
+        operateType: 'latestQuotas',
+        data: {
+          online: 1,
+          quotaMap: {
+            dev_sleep_state: 1,
+            wave_operating_mode: 1,
+            current_temp_set: 22,
+          },
+        },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'online');
+    await session.requestState('TESTWAVE30001');
+    connection.emitMessage({
+      topic: propertyTopic,
+      payload: displayPacket(1, 1, 24, 22),
+    });
+    connection.emitMessage({
+      topic: getReply,
+      payload: jsonBytes({
+        id: '999910008',
+        operateType: 'latestQuotas',
+        data: { online: 0 },
+      }),
+    });
+    assert.equal(controller.snapshot.availability, 'online');
+
     controller.stop();
     await session.stop();
   });

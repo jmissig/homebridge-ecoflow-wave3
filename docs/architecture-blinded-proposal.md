@@ -337,7 +337,7 @@ capabilities where the installed API supports them:
 - heating/cooling and automatic-range setpoints;
 - fan control;
 - relative humidity;
-- configured current-temperature source;
+- ambient input-air temperature as the room-temperature measurement;
 - bridged reachability and basic information/firmware.
 
 Keep protocol support and controller visibility separate. Fan Only, Dry, and

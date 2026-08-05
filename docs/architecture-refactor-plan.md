@@ -214,8 +214,8 @@ This is the only planned phase that intentionally changes runtime policy.
   - operational authority: power/system-pause and active operating mode;
   - saved profile authority: target/range, airflow, submode, and humidity per
     WAVE mode;
-  - presentation sensors: ambient temperature, outlet temperature, and
-    humidity;
+  - presentation sensors: ambient input-air temperature and humidity, with
+    outlet temperature retained only as decoded telemetry;
   - runtime/device information: internal temperatures and firmware.
 - Only an update carrying operational control evidence renews the existing
   five-minute authority deadline. Sensor, saved-profile-only, and runtime
@@ -310,7 +310,7 @@ the contract.
 
 - Accessory UUIDs, endpoint composition, feature flags, cluster attributes,
   cache schema, and Homebridge registration calls are unchanged.
-- All ambient/outlet/none endpoint-shape tests pass.
+- The ambient-temperature and humidity endpoint-shape tests pass.
 - Apple Home delayed-write, setpoint crossing, fan coalescing, duplicate
   suppression, cache recovery, firmware, and shutdown tests pass unchanged.
 - Installed-runtime Matter probes still use the running Homebridge/Matter.js

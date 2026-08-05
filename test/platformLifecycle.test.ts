@@ -70,12 +70,13 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const restored = harness.platform.matterAccessories.get(expectedFirstUuid)!;
     assert.equal(restored.displayName, 'Bedroom WAVE 3');
     assert.deepEqual(restored.context, {
-      schemaVersion: 3,
+      schemaVersion: 4,
       serialNumber: 'FIRST1234',
       lastSystemMode: 0x04,
     });
     assert.equal(harness.updated.length, 0);
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
+    assert.deepEqual(harness.controllerFreshnessTimeouts, [300_000, 300_000]);
     assert.equal(harness.platform.matterAccessories.size, 2);
     assert.deepEqual(harness.fullDisplayStateRequests, ['FIRST1234', 'SECOND5678']);
 
@@ -121,7 +122,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.doesNotMatch(logs, /token|password|authorization/i);
   });
 
-  it('re-registers a cached Matter endpoint from the configurable-source schema', async () => {
+  it('re-registers a cached Matter endpoint from a pre-electrical schema', async () => {
     const config = validConfig();
     config.devices = [{ name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234' }];
     const harness = platformHarness(config);
@@ -137,8 +138,11 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await harness.signalDidFinishLaunching();
     assert.deepEqual(harness.unregistered, [cached]);
     assert.equal(harness.registered.length, 1);
-    assert.equal(harness.registered[0]?.context.schemaVersion, 3);
+    assert.equal(harness.registered[0]?.context.schemaVersion, 4);
     assert.notEqual(harness.registered[0]?.clusters?.relativeHumidityMeasurement, undefined);
+    assert.deepEqual(harness.registered[0]?.clusters?.electricalPowerMeasurement, {
+      activePower: null,
+    });
   });
 
   it('re-registers an older cached Matter endpoint before a feature-shape migration', async () => {
@@ -159,7 +163,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
 
     assert.deepEqual(harness.unregistered, [cached]);
     const replacement = harness.registered.find(accessory => accessory.UUID === cached.UUID);
-    assert.equal(replacement?.context.schemaVersion, 3);
+    assert.equal(replacement?.context.schemaVersion, 4);
     assert.equal(replacement?.clusters?.thermostat?.systemMode, 0x03);
   });
 
@@ -365,7 +369,7 @@ function cachedMatterAccessory(
     model: 'WAVE 3',
     deviceType: wave3RoomAirConditionerDeviceType({ deviceTypes } as unknown as MatterAPI),
     context: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       serialNumber,
     },
     clusters: {
@@ -394,6 +398,7 @@ function platformHarness(
   updated: MatterAccessory[];
   unregistered: MatterAccessory[];
   boundSerials: string[];
+  controllerFreshnessTimeouts: number[];
   fullDisplayStateRequests: string[];
   stateReadClusters: string[];
   events: string[];
@@ -408,6 +413,7 @@ function platformHarness(
   const updated: MatterAccessory[] = [];
   const unregistered: MatterAccessory[] = [];
   const boundSerials: string[] = [];
+  const controllerFreshnessTimeouts: number[] = [];
   const fullDisplayStateRequests: string[] = [];
   const stateReadClusters: string[] = [];
   const events: string[] = [];
@@ -526,8 +532,9 @@ function platformHarness(
         },
       } satisfies PlatformCloudSession;
     },
-    createController: serialNumber => {
+    createController: (serialNumber, _session, _logger, freshnessTimeoutMilliseconds) => {
       boundSerials.push(serialNumber);
+      controllerFreshnessTimeouts.push(freshnessTimeoutMilliseconds);
       return {
         snapshot: {
           availability: 'offline',
@@ -581,6 +588,7 @@ function platformHarness(
     updated,
     unregistered,
     boundSerials,
+    controllerFreshnessTimeouts,
     fullDisplayStateRequests,
     stateReadClusters,
     events,

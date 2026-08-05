@@ -16,8 +16,11 @@ export interface EcoFlowWave3Config {
   email: string;
   password: string;
   apiHost: string;
+  freshnessTimeoutMinutes: number;
   devices: readonly Wave3DeviceConfig[];
 }
+
+export const DEFAULT_FRESHNESS_TIMEOUT_MINUTES = 5;
 
 export class ConfigurationError extends Error {
   constructor(message: string) {
@@ -37,6 +40,7 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
     'password',
     'apiHost',
     'advancedApiHostOverride',
+    'freshnessTimeoutMinutes',
     'devices',
     'platform',
   ]);
@@ -51,6 +55,12 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
   const reviewedHost = requireString(config, 'apiHost', { trim: false });
   const advancedOverride = optionalString(config, 'advancedApiHostOverride');
   const apiHost = validateApiHost(reviewedHost, advancedOverride);
+  const freshnessTimeoutMinutes = optionalInteger(
+    config,
+    'freshnessTimeoutMinutes',
+    1,
+    60,
+  ) ?? DEFAULT_FRESHNESS_TIMEOUT_MINUTES;
 
   if (!Array.isArray(config.devices) || config.devices.length === 0) {
     throw new ConfigurationError('devices must contain at least one explicitly configured WAVE 3');
@@ -78,6 +88,7 @@ export function parseEcoFlowWave3Config(value: unknown): EcoFlowWave3Config {
     email,
     password,
     apiHost,
+    freshnessTimeoutMinutes,
     devices: Object.freeze(devices),
   });
 }
@@ -171,4 +182,20 @@ function optionalString(record: Record<string, unknown>, field: string): string 
     throw new ConfigurationError(`${field} must not contain surrounding whitespace`);
   }
   return value;
+}
+
+function optionalInteger(
+  record: Record<string, unknown>,
+  field: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  const value = record[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new ConfigurationError(`${field} must be an integer from ${minimum} through ${maximum}`);
+  }
+  return value as number;
 }

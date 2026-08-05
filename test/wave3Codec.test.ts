@@ -112,6 +112,37 @@ describe('WAVE 3 codec', () => {
     }
   });
 
+  it('decodes field 53 as nonnegative AC active power without inventing self-consumption', () => {
+    const display = create(Wave3DisplayPropertyUploadSchema, {
+      powGetAc: 347.625,
+    });
+    const decoded = decodeWave3Message(envelope(
+      21,
+      46,
+      toBinary(Wave3DisplayPropertyUploadSchema, display),
+    ));
+
+    assert.equal(decoded.kind, 'display');
+    if (decoded.kind === 'display') {
+      assert.equal(decoded.update.acPowerWatts, 347.625);
+      assert.equal(mergeWave3DisplayUpdate(undefined, decoded.update).acPowerWatts, 347.625);
+    }
+
+    const invalid = create(Wave3DisplayPropertyUploadSchema, { powGetAc: -1 });
+    const invalidDecoded = decodeWave3Message(envelope(
+      21,
+      47,
+      toBinary(Wave3DisplayPropertyUploadSchema, invalid),
+    ));
+    assert.equal(invalidDecoded.kind, 'display');
+    if (invalidDecoded.kind === 'display') {
+      assert.equal(invalidDecoded.update.acPowerWatts, undefined);
+      assert.deepEqual(invalidDecoded.diagnostic.unsupportedValues, [
+        { field: 'pow_get_ac', value: -1 },
+      ]);
+    }
+  });
+
   it('decodes the observed WAVE temperature-display preference without converting temperatures', () => {
     for (const [wireUnit, expected] of [
       [UserTempUnitType.C, 'celsius'],
@@ -258,6 +289,7 @@ describe('WAVE 3 codec', () => {
         quotaMap: {
           dev_sleep_state: 0,
           wave_operating_mode: 5,
+          pow_get_ac: 412.5,
           temp_ambient: 23,
           humi_ambient: 48,
           temp_indoor_supply_air: 18,
@@ -274,6 +306,7 @@ describe('WAVE 3 codec', () => {
       update: {
         sleepState: 0,
         operatingModeId: 5,
+        acPowerWatts: 412.5,
         ambientTemperatureCelsius: 23,
         ambientHumidityPercent: 48,
         outletTemperatureCelsius: 18,

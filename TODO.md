@@ -10,6 +10,7 @@ Current architecture and evidence:
 
 - [Matter-only decision](docs/decisions/0003-matter-only.md)
 - [Auto-mode interoperability decision](docs/decisions/0004-defer-matter-auto.md)
+- [Electrical power decision](docs/decisions/0006-electrical-power.md)
 - [Architecture comparison](docs/architecture-comparison.md)
 - [Protocol dossier](docs/protocol.md)
 - [Hardware evidence](docs/hardware-packet-evidence-2026-08-01.md)
@@ -102,8 +103,6 @@ and controller reconciliation.
 
 ## Matter presentation follow-up
 
-- [ ] Verify `ambient`, `outlet`, and `none` current-temperature configurations
-  on household hardware.
 - [ ] Verify the standard Celsius/Fahrenheit thermostat UI attribute with a
   controller that exposes it; keep all actual temperatures canonical in
   Celsius.
@@ -114,6 +113,34 @@ and controller reconciliation.
   programming or preset surface is available.
 - [ ] Continue omitting optional running-mode/compressor state until direct
   protocol evidence can distinguish actual compressor activity.
+
+## Next — standard Matter electrical power
+
+- [x] Add WAVE display field `53` (`pow_get_ac`) to the pinned protobuf subset
+  and normalize it as AC active power in watts. Do not substitute field `777`
+  (`pow_get_self_consume`), which can include power drawn from an attached
+  battery.
+- [x] Accept sparse power-only packets as supplemental measurement evidence.
+  They must not renew operational power/mode authority, rebase command state,
+  or confirm a command.
+- [x] Declare `electricalPowerMeasurement.activePower` on the existing Room Air
+  Conditioner accessory. Let Homebridge 2.2.1 apply its standard
+  `PowerTopology(TreeTopology)` and Electrical Sensor utility-device handling;
+  do not create a separate composed child endpoint.
+- [x] Convert finite nonnegative WAVE watts to Matter milliwatts and publish
+  `null` when the measurement is unknown or stale. Publish zero only when the
+  WAVE reports zero.
+- [x] Add one optional advanced `freshnessTimeoutMinutes` setting, defaulting
+  to five minutes. Use that single duration for independently timestamped
+  categories of live cloud-derived knowledge, including operational authority,
+  environmental telemetry, saved profiles, and electrical power; one category
+  must not refresh another. Keep static firmware metadata, the ten-second
+  command deadline, and the separate startup cache-restoration grace outside
+  this setting.
+- [x] Cover protobuf decoding, sparse merge behavior, independent freshness,
+  explicit offline/account-error clearing, W-to-mW conversion, cache shape,
+  Homebridge electrical-cluster defaults, and descriptor advertisement in
+  tests before household validation.
 
 ## Release readiness
 
@@ -130,12 +157,6 @@ and controller reconciliation.
 
 ## Later / outside the first release
 
-- [ ] Publish instantaneous electrical power through standard Matter
-  electrical telemetry after identifying the authoritative source among
-  observed fields `53` and `777` and proving the duplicate trace is not
-  double-counted.
-- [ ] Publish cumulative energy only after identifying a real device counter;
-  do not synthesize accounting-grade energy from intermittent cloud samples.
 - [ ] Consider optional per-device Night and Eco composed switch endpoints,
   disabled by default and derived only from confirmed device state.
 - [ ] Add battery/charging state when an add-on battery is present.
@@ -145,5 +166,10 @@ and controller reconciliation.
   only when a concrete standard Matter use case is approved.
 - [ ] Treat local MQTT redirection, Bluetooth, or LAN control as separate
   experiments after Matter-backed cloud control is stable.
+- [ ] Explore integrated cumulative energy from sampled AC power only after
+  instantaneous power is proven. Treat it as an explicitly estimated,
+  persisted counter with defined gap, restart, reset, clock-jump, and offline
+  semantics—not as device-lifetime or accounting-grade energy. Prefer a real
+  device Wh/kWh counter if one is identified first.
 - [ ] Do not add other EcoFlow products or older WAVE generations to this
   repository.

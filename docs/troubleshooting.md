@@ -52,10 +52,13 @@ order:
 Partial temperature or humidity packets prove the device is publishing but do
 not make control safe by themselves.
 
-After authoritative startup state arrives, the plugin allows five minutes
-without another recognized state update before setting reachability false.
+After authoritative startup state arrives, the plugin allows five minutes by
+default without another recognized state update before setting reachability false.
 This covers one missed WAVE full-display upload plus normal timing jitter;
-command confirmation still uses its separate ten-second deadline.
+command confirmation still uses its separate ten-second deadline. The advanced
+optional `freshnessTimeoutMinutes` setting changes the live-state horizon for
+independently tracked operational, environmental, profile, runtime-temperature,
+and electrical-power evidence.
 
 ## Authentication or regional API failure
 
@@ -99,6 +102,8 @@ Ordinary temperature, humidity, saved-profile, and runtime packets do not keep
 control authority alive by themselves. The bridge needs a current-generation
 power/mode upload within the five-minute operational freshness window; this is
 independent of the ten-second evidence deadline for an individual command.
+Electrical-power-only packets similarly update the Matter measurement without
+renewing control authority.
 
 ## The WAVE selected its remembered 26°C target
 

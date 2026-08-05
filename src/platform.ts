@@ -53,6 +53,7 @@ export interface EcoFlowWave3PlatformDependencies {
     serialNumber: string,
     session: PlatformCloudSession,
     logger: CloudSessionLogger,
+    freshnessTimeoutMilliseconds: number,
   ): Wave3AccessoryController;
   bindMatterAccessory(
     matter: MatterAPI,
@@ -72,10 +73,10 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
     new MqttJsTransport(),
     logger,
   ),
-  createController: (serialNumber, session, logger) => new Wave3Controller(
+  createController: (serialNumber, session, logger, freshnessTimeoutMilliseconds) => new Wave3Controller(
     serialNumber,
     session,
-    { logger },
+    { logger, staleAfterMilliseconds: freshnessTimeoutMilliseconds },
   ),
   bindMatterAccessory: (matter, accessory, controller, device, logger) => new Wave3MatterAccessory(
     matter,
@@ -264,7 +265,12 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         }
       }
 
-      const controller = this.dependencies.createController(device.serialNumber, session, logger);
+      const controller = this.dependencies.createController(
+        device.serialNumber,
+        session,
+        logger,
+        this.parsedConfig.freshnessTimeoutMinutes * 60_000,
+      );
       this.controllers.set(uuid, controller);
       const accessory = createWave3MatterAccessory(
         this.matter!,

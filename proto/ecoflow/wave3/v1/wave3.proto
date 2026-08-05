@@ -28,6 +28,7 @@ message Wave3WaveOperatingModeParamList {
 }
 
 message Wave3DisplayPropertyUpload {
+  optional float pow_get_ac = 53;
   optional uint32 dev_sleep_state = 212;
   optional float temp_ambient = 484;
   optional float humi_ambient = 485;

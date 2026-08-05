@@ -229,6 +229,7 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
     const update: Wave3DisplayUpdate = { modeParameters: {} };
     assignQuotaNumber(quotaMap, 'dev_sleep_state', update, 'sleepState');
     assignQuotaNumber(quotaMap, 'wave_operating_mode', update, 'operatingModeId');
+    assignQuotaNumber(quotaMap, 'pow_get_ac', update, 'acPowerWatts');
     assignQuotaNumber(
       quotaMap,
       'temp_ambient',
@@ -258,6 +259,9 @@ export function decodeWave3QuotaReply(bytes: Uint8Array): DecodedWave3QuotaReply
     if (update.outletTemperatureCelsius !== undefined
       && !isSupportedAmbientTemperature(update.outletTemperatureCelsius)) {
       throw new TypeError('quota outlet temperature is unsupported');
+    }
+    if (update.acPowerWatts !== undefined && !isSupportedAcPower(update.acPowerWatts)) {
+      throw new TypeError('quota AC power is unsupported');
     }
     if (update.sleepState !== undefined && update.sleepState !== 0 && update.sleepState !== 1) {
       throw new TypeError('quota sleep state is unsupported');
@@ -487,6 +491,7 @@ export function mergeWave3DisplayUpdate(
   }
 
   return {
+    acPowerWatts: update.acPowerWatts ?? previous?.acPowerWatts,
     sleepState,
     operatingModeId,
     modeParameters,
@@ -495,7 +500,8 @@ export function mergeWave3DisplayUpdate(
 }
 
 export function hasWave3DisplayEvidence(update: Wave3DisplayUpdate): boolean {
-  return update.sleepState !== undefined
+  return update.acPowerWatts !== undefined
+    || update.sleepState !== undefined
     || update.operatingModeId !== undefined
     || update.ambientTemperatureCelsius !== undefined
     || update.ambientHumidityPercent !== undefined
@@ -524,6 +530,14 @@ function normalizeDisplayUpdate(
   const update: Wave3DisplayUpdate = { modeParameters: {} };
   const unsupportedValues: Array<{ field: string; value: number }> = [];
 
+  if (has(display, Wave3DisplayPropertyUploadSchema, 'powGetAc')) {
+    const power = display.powGetAc!;
+    if (isSupportedAcPower(power)) {
+      update.acPowerWatts = power;
+    } else {
+      addUnsupportedValue(unsupportedValues, 'pow_get_ac', power);
+    }
+  }
   if (has(display, Wave3DisplayPropertyUploadSchema, 'devSleepState')) {
     const sleepState = display.devSleepState!;
     if (sleepState === 0 || sleepState === 1) {
@@ -1040,6 +1054,10 @@ function addUnsupportedValue(
 
 function isSupportedAmbientTemperature(value: number): boolean {
   return Number.isFinite(value) && value >= -270 && value <= 100;
+}
+
+function isSupportedAcPower(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 5_000;
 }
 
 function isSupportedTargetTemperature(value: number): boolean {

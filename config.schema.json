@@ -50,6 +50,14 @@
           }
         ]
       },
+      "freshnessTimeoutMinutes": {
+        "title": "Advanced: Live State Freshness (Minutes)",
+        "description": "How long independently tracked live EcoFlow state remains current without supporting telemetry. The default is 5 minutes.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 60,
+        "default": 5
+      },
       "devices": {
         "title": "WAVE 3 Units",
         "description": "Each WAVE 3 serial number must be unique; cross-item serial uniqueness is enforced at runtime.",

@@ -77,6 +77,12 @@ If you edit `config.json` directly, use this shape:
 Keep your Homebridge configuration private: it contains your EcoFlow account
 password.
 
+The advanced optional `freshnessTimeoutMinutes` setting controls how long live
+EcoFlow state remains current without supporting telemetry. It defaults to `5`
+minutes and accepts whole values from `1` through `60`. Evidence categories are
+tracked independently, so an electrical-power update does not keep climate
+control authority alive.
+
 ### API regions
 
 - `api.ecoflow.com` — Global
@@ -131,6 +137,8 @@ placeholders.
 - Five fan-speed steps
 - Current room/input-air temperature reported by the WAVE 3 ambient sensor
 - Ambient humidity
+- Current AC active power through Matter's standard Electrical Power
+  Measurement cluster
 - Celsius/Fahrenheit display preference through Matter's standard thermostat
   UI configuration
 - Live changes made in the official EcoFlow app
@@ -162,7 +170,7 @@ Apple Home also does not currently display the published firmware revision.
 Its UI may hide the standard Celsius/Fahrenheit preference even though the
 attribute remains available to Matter controllers.
 
-Eco, Boost, drainage, battery and electrical telemetry, timers, display
+Eco, Boost, drainage, battery telemetry, cumulative energy, timers, display
 brightness, beeper controls, Pet Care, and charge limits are not currently
 exposed.
 

@@ -33,6 +33,7 @@ import { wave3RoomAirConditionerDeviceType } from './matter/deviceType.js';
 import {
   centidegrees,
   clustersForSnapshot,
+  electricalPowerMeasurementForSnapshot,
   normalizedAirflow,
   numberOrUndefined,
   systemModeForState,
@@ -150,6 +151,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private updateTail: Promise<void> = Promise.resolve();
   private lastConfirmedSnapshot?: Wave3ControllerSnapshot;
   private presentedFirmwareRevision?: string;
+  private presentedActivePower: number | null;
   private snapshot: Wave3ControllerSnapshot;
   private pendingFanWrite?: PendingFanWrite;
   private pendingTemperatureWrite?: PendingTemperatureWrite;
@@ -172,6 +174,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     private readonly cachedStateMaxAgeMilliseconds = CACHED_STATE_MAX_AGE_MILLISECONDS,
   ) {
     this.snapshot = controller.snapshot;
+    this.presentedActivePower = nullableFiniteNumber(
+      accessory.clusters?.electricalPowerMeasurement?.activePower,
+    );
     if (controller.snapshot.availability === 'online') {
       this.lastConfirmedSnapshot = controller.snapshot;
     }
@@ -180,12 +185,12 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     // as permanent exemptions for later controller writes.
     forgetDesiredState(accessory.UUID);
     registerMatterControl(accessory.UUID, this.createMatterControl());
-    this.updateTail = this.pushFirmware(
+    this.updateTail = this.pushElectricalPower(controller.snapshot).then(() => this.pushFirmware(
       controller.snapshot.firmwareVersions?.pd
       ?? controller.snapshot.firmwareVersions?.iot
       ?? accessory.context.firmwareRevision
       ?? accessory.firmwareRevision,
-    ).then(async () => {
+    )).then(async () => {
       await this.initializeReachability(controller.snapshot);
     }).catch(error => {
       this.logger.error(`EcoFlow WAVE 3 Matter startup state update failed: ${errorMessage(error)}`);
@@ -779,6 +784,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
 
+    await this.pushElectricalPower(snapshot);
+
     if (snapshot.availability !== 'online') {
       await this.reconcileUnavailableSnapshot(snapshot);
       return;
@@ -843,6 +850,27 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
         remaining,
       );
     }
+  }
+
+  private async pushElectricalPower(snapshot: Wave3ControllerSnapshot): Promise<void> {
+    const attributes = electricalPowerMeasurementForSnapshot(snapshot);
+    const activePower = attributes.activePower;
+    if (Object.is(activePower, this.presentedActivePower)) {
+      return;
+    }
+    this.accessory.clusters = {
+      ...this.accessory.clusters,
+      electricalPowerMeasurement: {
+        ...this.accessory.clusters?.electricalPowerMeasurement,
+        ...attributes,
+      },
+    };
+    await this.updateState(
+      this.accessory.UUID,
+      this.matter.clusterNames.ElectricalPowerMeasurement,
+      attributes,
+    );
+    this.presentedActivePower = activePower;
   }
 
   private async initializeReachability(snapshot: Wave3ControllerSnapshot): Promise<void> {
@@ -1232,6 +1260,10 @@ function attributesMatch(
   expected: Record<string, unknown>,
 ): boolean {
   return Object.entries(expected).every(([attribute, value]) => Object.is(current[attribute], value));
+}
+
+function nullableFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function changedAttributes(

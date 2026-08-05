@@ -76,6 +76,10 @@ describe('WAVE 3 controller', () => {
 
     clock.advance(100);
     assert.equal(controller.snapshot.availability, 'stale');
+    assert.equal(controller.snapshot.state.ambientTemperatureCelsius, undefined);
+    assert.equal(controller.snapshot.environmentTelemetryFresh, false);
+    assert.equal(controller.snapshot.state.targetTemperatureCelsius, undefined);
+    assert.equal(controller.snapshot.state.airflowSpeed, undefined);
 
     session.emitState('offline');
     assert.equal(controller.snapshot.availability, 'reconnecting');
@@ -124,6 +128,39 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.availability, 'online');
     clock.advance(1);
     assert.equal(controller.snapshot.availability, 'stale');
+  });
+
+  it('uses the shared horizon for AC power without letting power refresh operational authority', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+      staleAfterMilliseconds: 100,
+    });
+
+    session.emitPacket('property', displayPacket(1, { acPowerWatts: 150.25 }));
+    assert.equal(controller.snapshot.availability, 'stale');
+    assert.equal(controller.snapshot.acPowerWatts, 150.25);
+
+    clock.advance(50);
+    session.emitPacket('property', displayPacket(2, { mode: 1, sleepState: 0 }));
+    assert.equal(controller.snapshot.availability, 'online');
+
+    clock.advance(50);
+    assert.equal(controller.snapshot.availability, 'online');
+    assert.equal(controller.snapshot.acPowerWatts, undefined);
+
+    clock.advance(10);
+    session.emitPacket('property', displayPacket(3, { acPowerWatts: 225.5 }));
+    assert.equal(controller.snapshot.acPowerWatts, 225.5);
+    clock.advance(40);
+    assert.equal(controller.snapshot.availability, 'stale');
+    assert.equal(controller.snapshot.acPowerWatts, 225.5);
+
+    session.emitPacket('getReply', quotaReply({ online: 0 }));
+    assert.equal(controller.snapshot.availability, 'offline');
+    assert.equal(controller.snapshot.acPowerWatts, undefined);
   });
 
   it('rebases a rebooted device sequence after correlated authoritative state', async () => {
@@ -1510,6 +1547,7 @@ class FakeClock {
 function displayPacket(
   sequence: number,
   values: {
+    acPowerWatts?: number;
     mode?: number;
     modeParametersOnly?: boolean;
     sleepState?: number;
@@ -1532,6 +1570,7 @@ function displayPacket(
     submode: values.submode,
   };
   const display = create(Wave3DisplayPropertyUploadSchema, {
+    ...(values.acPowerWatts === undefined ? {} : { powGetAc: values.acPowerWatts }),
     ...(!values.modeParametersOnly && values.mode !== undefined
       ? { waveOperatingMode: values.mode }
       : {}),

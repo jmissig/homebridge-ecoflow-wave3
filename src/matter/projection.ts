@@ -20,6 +20,8 @@ export function clustersForSnapshot(
   const previousThermostatUi = previous?.thermostatUserInterfaceConfiguration ?? {};
   const profiles = snapshot.modeProfiles;
   const temperature = state.ambientTemperatureCelsius;
+  const environmentUnavailable = snapshot.availability === 'online'
+    && snapshot.environmentTelemetryFresh === false;
   const coolingSetpoint = state.mode === 'auto'
     ? state.targetTemperatureUpperCelsius
     : state.mode === 'cool'
@@ -72,9 +74,11 @@ export function clustersForSnapshot(
     onOff: { onOff: powered },
     thermostat: {
       ...previousThermostat,
-      localTemperature: temperature === undefined
-        ? nullableNumber(previousThermostat.localTemperature)
-        : centidegrees(temperature),
+      localTemperature: environmentUnavailable
+        ? null
+        : temperature === undefined
+          ? nullableNumber(previousThermostat.localTemperature)
+          : centidegrees(temperature),
       occupiedCoolingSetpoint: projectedCoolingSetpoint,
       occupiedHeatingSetpoint: projectedHeatingSetpoint,
       absMinHeatSetpointLimit: 1_600,
@@ -116,14 +120,31 @@ export function clustersForSnapshot(
   delete clusters.thermostat?.minSetpointDeadBand;
 
   clusters.relativeHumidityMeasurement = {
-    measuredValue: state.ambientHumidityPercent === undefined
-      ? nullableNumber(previous?.relativeHumidityMeasurement?.measuredValue)
-      : centipercent(state.ambientHumidityPercent),
+    measuredValue: environmentUnavailable
+      ? null
+      : state.ambientHumidityPercent === undefined
+        ? nullableNumber(previous?.relativeHumidityMeasurement?.measuredValue)
+        : centipercent(state.ambientHumidityPercent),
     minMeasuredValue: 0,
     maxMeasuredValue: 10_000,
   };
 
+  clusters.electricalPowerMeasurement = {
+    ...previous?.electricalPowerMeasurement,
+    ...electricalPowerMeasurementForSnapshot(snapshot),
+  };
+
   return clusters;
+}
+
+export function electricalPowerMeasurementForSnapshot(
+  snapshot: Wave3ControllerSnapshot,
+): Record<string, number | null> {
+  return {
+    activePower: snapshot.acPowerWatts === undefined
+      ? null
+      : Math.round(snapshot.acPowerWatts * 1_000),
+  };
 }
 
 export function systemModeForState(

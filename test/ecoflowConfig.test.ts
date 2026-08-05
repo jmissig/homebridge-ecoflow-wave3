@@ -24,9 +24,24 @@ describe('EcoFlow WAVE 3 configuration', () => {
     });
 
     assert.equal(config.apiHost, 'api-a.ecoflow.com');
+    assert.equal(config.freshnessTimeoutMinutes, 5);
     assert.equal(config.devices.length, 2);
     assert.equal(Object.isFrozen(config), true);
     assert.equal(Object.isFrozen(config.devices), true);
+  });
+
+  it('accepts an optional bounded live-state freshness timeout', () => {
+    assert.equal(
+      parseEcoFlowWave3Config(baseConfig({ freshnessTimeoutMinutes: 12 }))
+        .freshnessTimeoutMinutes,
+      12,
+    );
+    for (const value of [0, 1.5, 61, '5']) {
+      assert.throws(
+        () => parseEcoFlowWave3Config(baseConfig({ freshnessTimeoutMinutes: value })),
+        /freshnessTimeoutMinutes/,
+      );
+    }
   });
 
   it('rejects the removed current-temperature source preference', () => {
@@ -104,6 +119,21 @@ describe('EcoFlow WAVE 3 configuration', () => {
       runtimeAccepted: boolean;
     }> = [
       { candidate: baseConfig(), schemaAccepted: true, runtimeAccepted: true },
+      {
+        candidate: baseConfig({ freshnessTimeoutMinutes: 12 }),
+        schemaAccepted: true,
+        runtimeAccepted: true,
+      },
+      {
+        candidate: baseConfig({ freshnessTimeoutMinutes: 0 }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
+      {
+        candidate: baseConfig({ freshnessTimeoutMinutes: 1.5 }),
+        schemaAccepted: false,
+        runtimeAccepted: false,
+      },
       {
         candidate: baseConfig({
           devices: [{

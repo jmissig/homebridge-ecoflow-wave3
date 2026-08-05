@@ -95,6 +95,10 @@ export class Wave3Controller {
   private cancelStaleTimer?: () => void;
   private readonly activePublications = new Set<Promise<void>>();
   private updatedAt?: number;
+  private environmentUpdatedAt?: number;
+  private profilesUpdatedAt?: number;
+  private acPowerUpdatedAt?: number;
+  private runtimeTemperaturesUpdatedAt?: number;
   private displayRevision = 0;
   private lastDisplaySequence?: number;
   private lastRuntimeSequence?: number;
@@ -134,6 +138,7 @@ export class Wave3Controller {
     this.nextSequence = options.initialSequence ?? randomInt(10, 1_000);
     this.snapshot = freezeSnapshot({
       availability: availabilityForSession(session.state, false),
+      environmentTelemetryFresh: false,
       state: {},
       modeProfiles: {},
       runtimeTemperatures: {},
@@ -305,6 +310,7 @@ export class Wave3Controller {
       this.clearSequenceRebase();
       this.lastDisplaySequence = decoded.sequence;
       this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
+      this.recordDisplayFreshness(decoded.update);
       this.displayRevision += 1;
       this.logger.debug(
         `EcoFlow diagnostics: controller accepted display property sequence=${decoded.sequence} update=${JSON.stringify(decoded.update)}`,
@@ -334,6 +340,9 @@ export class Wave3Controller {
         ...this.runtimeTemperatures,
         ...decoded.temperatures,
       };
+      if (Object.keys(decoded.temperatures).length > 0) {
+        this.runtimeTemperaturesUpdatedAt = this.now();
+      }
       this.firmwareVersions = {
         ...this.firmwareVersions,
         ...decoded.firmwareVersions,
@@ -367,6 +376,7 @@ export class Wave3Controller {
       this.clearSequenceRebase();
       this.logger.debug('EcoFlow diagnostics: latestQuotas reports the WAVE 3 offline');
       this.hasCurrentGenerationState = false;
+      this.clearAcPowerMeasurement();
       this.cancelStaleTimer?.();
       this.cancelStaleTimer = undefined;
       this.settlePending('disconnected');
@@ -392,6 +402,7 @@ export class Wave3Controller {
       );
     }
     this.displayState = mergeWave3DisplayUpdate(this.displayState, decoded.update);
+    this.recordDisplayFreshness(decoded.update);
     this.displayRevision += 1;
     this.logger.debug(
       `EcoFlow diagnostics: controller accepted latestQuotas update=${JSON.stringify(decoded.update)}`,
@@ -562,6 +573,10 @@ export class Wave3Controller {
     this.runtimeTemperatures = {};
     this.firmwareVersions = {};
     this.updatedAt = undefined;
+    this.environmentUpdatedAt = undefined;
+    this.profilesUpdatedAt = undefined;
+    this.acPowerUpdatedAt = undefined;
+    this.runtimeTemperaturesUpdatedAt = undefined;
     this.displayRevision = 0;
     this.lastDisplaySequence = undefined;
     this.lastRuntimeSequence = undefined;
@@ -671,6 +686,8 @@ export class Wave3Controller {
   private updateFreshnessForOnlineSession(): void {
     this.cancelStaleTimer?.();
     this.cancelStaleTimer = undefined;
+    const now = this.now();
+    this.expireSupplementalKnowledge(now);
     if (this.session.state === 'online' && this.deviceReportedOnline === false) {
       this.updateSnapshot('offline');
       return;
@@ -678,26 +695,29 @@ export class Wave3Controller {
     if (this.session.state !== 'online'
       || !this.hasCurrentGenerationState
       || this.updatedAt === undefined) {
+      if (this.session.state === 'online') {
+        this.scheduleNextFreshnessExpiry(now, []);
+      }
       this.updateSnapshot(this.session.state === 'online' ? 'stale' : 'reconnecting');
       return;
     }
-    const remaining = this.staleAfterMilliseconds - (this.now() - this.updatedAt);
-    if (remaining <= 0) {
-      this.updateSnapshot('stale');
-      return;
-    }
-    this.cancelStaleTimer = this.schedule(() => {
-      if (!this.stopped && this.session.state === 'online') {
-        this.updateSnapshot('stale');
-      }
-    }, remaining);
-    this.updateSnapshot('online');
+    const operationalRemaining = this.staleAfterMilliseconds - (now - this.updatedAt);
+    const availability = operationalRemaining <= 0 ? 'stale' : 'online';
+    this.scheduleNextFreshnessExpiry(
+      now,
+      operationalRemaining <= 0 ? [] : [operationalRemaining],
+    );
+    this.updateSnapshot(availability);
   }
 
   private updateSnapshot(availability: Wave3ControllerSnapshot['availability']): void {
     const previousAvailability = this.snapshot.availability;
     this.snapshot = freezeSnapshot({
       availability,
+      ...(this.displayState?.acPowerWatts === undefined
+        ? {}
+        : { acPowerWatts: this.displayState.acPowerWatts }),
+      environmentTelemetryFresh: this.environmentUpdatedAt !== undefined,
       state: this.displayState?.state ?? {},
       modeProfiles: modeProfilesForDisplayState(this.displayState),
       runtimeTemperatures: this.runtimeTemperatures,
@@ -712,6 +732,89 @@ export class Wave3Controller {
     );
     for (const listener of this.snapshotListeners) {
       listener(this.snapshot);
+    }
+  }
+
+  private recordDisplayFreshness(update: Wave3DisplayUpdate): void {
+    const observedAt = this.now();
+    if (update.ambientTemperatureCelsius !== undefined
+      || update.ambientHumidityPercent !== undefined
+      || update.outletTemperatureCelsius !== undefined) {
+      this.environmentUpdatedAt = observedAt;
+    }
+    if (Object.keys(update.modeParameters).length > 0) {
+      this.profilesUpdatedAt = observedAt;
+    }
+    if (update.acPowerWatts !== undefined) {
+      this.acPowerUpdatedAt = observedAt;
+    }
+  }
+
+  private supplementalFreshnessTimestamps(): number[] {
+    return [
+      this.environmentUpdatedAt,
+      this.profilesUpdatedAt,
+      this.acPowerUpdatedAt,
+      this.runtimeTemperaturesUpdatedAt,
+    ].filter((value): value is number => value !== undefined);
+  }
+
+  private scheduleNextFreshnessExpiry(now: number, additionalRemaining: number[]): void {
+    const remainingTimes = [
+      ...additionalRemaining,
+      ...this.supplementalFreshnessTimestamps().map(
+        timestamp => this.staleAfterMilliseconds - (now - timestamp),
+      ).filter(remaining => remaining > 0),
+    ];
+    const nextExpiry = remainingTimes.length === 0 ? undefined : Math.min(...remainingTimes);
+    if (nextExpiry === undefined) {
+      return;
+    }
+    this.cancelStaleTimer = this.schedule(() => {
+      if (!this.stopped && this.session.state === 'online') {
+        this.updateFreshnessForOnlineSession();
+      }
+    }, nextExpiry);
+  }
+
+  private expireSupplementalKnowledge(now: number): void {
+    if (isExpired(this.environmentUpdatedAt, now, this.staleAfterMilliseconds)) {
+      this.environmentUpdatedAt = undefined;
+      if (this.displayState !== undefined) {
+        const state = { ...this.displayState.state };
+        delete state.ambientHumidityPercent;
+        delete state.ambientTemperatureCelsius;
+        delete state.outletTemperatureCelsius;
+        this.displayState = { ...this.displayState, state };
+      }
+    }
+    if (isExpired(this.profilesUpdatedAt, now, this.staleAfterMilliseconds)) {
+      this.profilesUpdatedAt = undefined;
+      if (this.displayState !== undefined) {
+        const state = { ...this.displayState.state };
+        delete state.airflowSpeed;
+        delete state.submode;
+        delete state.targetTemperatureCelsius;
+        delete state.targetTemperatureLowerCelsius;
+        delete state.targetTemperatureUpperCelsius;
+        this.displayState = { ...this.displayState, modeParameters: {}, state };
+      }
+    }
+    if (isExpired(this.acPowerUpdatedAt, now, this.staleAfterMilliseconds)) {
+      this.clearAcPowerMeasurement();
+    }
+    if (isExpired(this.runtimeTemperaturesUpdatedAt, now, this.staleAfterMilliseconds)) {
+      this.runtimeTemperaturesUpdatedAt = undefined;
+      this.runtimeTemperatures = {};
+    }
+  }
+
+  private clearAcPowerMeasurement(): void {
+    this.acPowerUpdatedAt = undefined;
+    if (this.displayState !== undefined) {
+      const displayState = { ...this.displayState };
+      delete displayState.acPowerWatts;
+      this.displayState = displayState;
     }
   }
 
@@ -1026,6 +1129,14 @@ function displayFieldMatchesExpected(
 
 function closeEnough(actual: number | undefined, expected: number): boolean {
   return actual !== undefined && Math.abs(actual - expected) < 0.01;
+}
+
+function isExpired(
+  updatedAt: number | undefined,
+  now: number,
+  freshnessTimeoutMilliseconds: number,
+): boolean {
+  return updatedAt !== undefined && now - updatedAt >= freshnessTimeoutMilliseconds;
 }
 
 function optionalCloseEnough(

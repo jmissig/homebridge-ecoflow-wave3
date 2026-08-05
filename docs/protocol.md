@@ -295,6 +295,7 @@ implementation.
 | Normalized meaning | Protobuf evidence |
 | --- | --- |
 | Powered/sleeping | `Wave3DisplayPropertyUpload.dev_sleep_state` (field 212; `1` is treated as off) |
+| AC active power | `pow_get_ac` (field 53), watts |
 | Operating mode | `wave_operating_mode` (field 486) |
 | Ambient temperature | `temp_ambient` (field 484) |
 | Ambient humidity | `humi_ambient` (field 485) |
@@ -485,8 +486,10 @@ publishing a command.
   assumption.
 - A later full display upload supplied sleep state, cool operating mode,
   ambient temperature, ambient humidity, and complete per-mode parameters.
-- Display fields `53` and `777` moved together and match upstream power
-  telemetry definitions; mode-item field `4` matches the upstream humidity
+- Display fields `53` and `777` moved together in the household no-battery
+  trace. Field `53` is AC power and is the Matter active-power authority;
+  field `777` is self-consumption and may include battery-supplied power, so it
+  is not decoded as a fallback. Mode-item field `4` matches the upstream humidity
   target. Neither is required for the first Matter climate slice.
 
 [Source: household Homebridge diagnostic log and narrated app actions shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
@@ -597,13 +600,16 @@ publishing a command.
   reachability and starts a new cache window. Explicit device-offline and
   account/session-error evidence bypasses the grace period and becomes
   unreachable immediately.
-- Once current-generation state is established, allow five minutes without
+- Once current-generation state is established, allow five minutes by default without
   recognized **operational control evidence** before marking it stale. The
   household WAVE normally sends a full display upload about every two minutes;
   the longer window avoids racing that cadence while still detecting sustained
-  silence. Ambient/outlet temperature, humidity, saved-profile-only, and
-  runtime/firmware deltas update their own state but do not renew power/mode
-  authority. Command confirmation retains its independent ten-second deadline.
+  silence. The optional `freshnessTimeoutMinutes` setting controls this shared
+  live-evidence horizon. Ambient/outlet temperature, humidity,
+  saved-profile-only, runtime-temperature, and AC-power deltas have independent
+  timestamps and do not renew power/mode authority or one another. Static
+  firmware metadata and command confirmation's ten-second deadline are outside
+  this setting.
 
 [Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533514045766897795), superseding the broader 2026-08-01 cached-availability rule.
 [Freshness decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533535457453932654)

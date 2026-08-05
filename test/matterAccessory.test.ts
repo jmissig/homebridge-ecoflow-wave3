@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { Endpoint, Environment, MockStorageService, ServerNode } from '@matter/main';
-import { BridgedDeviceBasicInformationServer } from '@matter/main/behaviors';
+import { BridgedDeviceBasicInformationServer, DescriptorServer } from '@matter/main/behaviors';
 import { AggregatorEndpoint } from '@matter/main/endpoints/aggregator';
 import { deviceTypes, MatterStatus, type MatterAccessory, type MatterAPI } from 'homebridge';
 
@@ -165,6 +165,107 @@ describe('WAVE 3 Matter accessory', () => {
     assert.equal(fresh.clusters?.relativeHumidityMeasurement?.measuredValue, 6_100);
   });
 
+  it('declares AC active power on the existing Room Air Conditioner endpoint', () => {
+    const harness = matterHarness();
+    const snapshot: Wave3ControllerSnapshot = {
+      ...onlineSnapshot(),
+      acPowerWatts: 347.625,
+    };
+    const accessory = createWave3MatterAccessory(
+      harness.matter,
+      'matter-electrical-power',
+      device(),
+      snapshot,
+    );
+
+    assert.equal(accessory.deviceType.deviceType, deviceTypes.RoomAirConditioner.deviceType);
+    assert.equal(accessory.parts, undefined);
+    assert.deepEqual(accessory.clusters?.electricalPowerMeasurement, {
+      activePower: 347_625,
+    });
+
+    const restored = createWave3MatterAccessory(
+      harness.matter,
+      accessory.UUID,
+      device(),
+      { ...offlineSnapshot(), availability: 'stale' },
+      accessory,
+    );
+    assert.equal(restored.clusters?.electricalPowerMeasurement?.activePower, null);
+  });
+
+  it('publishes null environmental measurements when their shared category expires', () => {
+    const harness = matterHarness();
+    const cached = createWave3MatterAccessory(
+      harness.matter,
+      'matter-expired-environment',
+      device(),
+      onlineSnapshot(),
+    );
+    const expired = createWave3MatterAccessory(
+      harness.matter,
+      cached.UUID,
+      device(),
+      {
+        ...onlineSnapshot(),
+        environmentTelemetryFresh: false,
+        state: { powered: true, mode: 'cool' },
+      },
+      cached,
+    );
+    assert.equal(expired.clusters?.thermostat?.localTemperature, null);
+    assert.equal(expired.clusters?.relativeHumidityMeasurement?.measuredValue, null);
+  });
+
+  it('updates and clears Matter active power independently of reachability', async () => {
+    const harness = matterHarness();
+    const controller = fakeController(onlineSnapshot());
+    const accessory = createWave3MatterAccessory(
+      harness.matter,
+      'matter-electrical-power-updates',
+      device(),
+      controller.snapshot,
+    );
+    const binding = new Wave3MatterAccessory(harness.matter, accessory, controller);
+
+    controller.emit({ ...onlineSnapshot(), acPowerWatts: 125.125 });
+    await drainMicrotasks();
+    assert.deepEqual(
+      harness.stateUpdates.find(update => update.cluster === 'electricalPowerMeasurement'),
+      { cluster: 'electricalPowerMeasurement', attributes: { activePower: 125_125 } },
+    );
+
+    controller.emit(offlineSnapshot());
+    await drainMicrotasks();
+    assert.deepEqual(
+      harness.stateUpdates.filter(update => update.cluster === 'electricalPowerMeasurement').at(-1),
+      { cluster: 'electricalPowerMeasurement', attributes: { activePower: null } },
+    );
+    await binding.stop();
+  });
+
+  it('clears a Homebridge-restored cached power measurement at startup', async () => {
+    const harness = matterHarness();
+    const controller = fakeController(offlineSnapshot());
+    const accessory = createWave3MatterAccessory(
+      harness.matter,
+      'matter-electrical-power-cached',
+      device(),
+      controller.snapshot,
+    );
+    // Homebridge restores cached cluster attributes during registration after
+    // plugin construction. A prior power reading must not survive as current.
+    accessory.clusters!.electricalPowerMeasurement!.activePower = 250_000;
+    const binding = new Wave3MatterAccessory(harness.matter, accessory, controller);
+
+    await drainMicrotasks();
+    assert.deepEqual(
+      harness.stateUpdates.find(update => update.cluster === 'electricalPowerMeasurement'),
+      { cluster: 'electricalPowerMeasurement', attributes: { activePower: null } },
+    );
+    await binding.stop();
+  });
+
   it('derives behavior classes from the running Matter API device type', () => {
     const injectedRoomAirConditioner = deviceTypes.RoomAirConditioner.with(
       deviceTypes.RoomAirConditioner.requirements.RelativeHumidityMeasurementServer,
@@ -210,12 +311,24 @@ describe('WAVE 3 Matter accessory', () => {
       },
     } as never);
     try {
-      const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-test-aggregator' });
-      await node.add(aggregator);
-      const endpoint = new Endpoint(
+      const {
+        applyElectricalMeasurementClusters,
+        applyElectricalMeasurementDefaults,
+        detectElectricalMeasurementClusters,
+      } = await import('../node_modules/homebridge/dist/matter/serverHelpers.js');
+      const electricalDetection = detectElectricalMeasurementClusters(accessory);
+      applyElectricalMeasurementDefaults(accessory, electricalDetection);
+      const endpointType = applyElectricalMeasurementClusters(
         wave3RoomAirConditionerDeviceType(harness.matter).with(
           BridgedDeviceBasicInformationServer,
         ),
+        accessory,
+        electricalDetection,
+      );
+      const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-test-aggregator' });
+      await node.add(aggregator);
+      const endpoint = new Endpoint(
+        endpointType,
         {
           id: accessory.UUID,
           ...accessory.clusters,
@@ -231,6 +344,7 @@ describe('WAVE 3 Matter accessory', () => {
       );
 
       await aggregator.add(endpoint);
+      await endpoint.act(agent => agent.get(DescriptorServer).addDeviceTypes('ElectricalSensor'));
       const supported = endpoint.behaviors.supported as unknown as Record<
         string,
         { features: Record<string, boolean> }
@@ -239,18 +353,37 @@ describe('WAVE 3 Matter accessory', () => {
       assert.equal(supported.onOff?.features.deadFrontBehavior, true);
       assert.equal(supported.thermostat?.features.autoMode, false);
       assert.equal(supported.fanControl?.features.multiSpeed, true);
+      assert.equal(supported.powerTopology?.features.treeTopology, true);
+      assert.equal('electricalPowerMeasurement' in supported, true);
       assert.equal('thermostatUserInterfaceConfiguration' in supported, true);
+      const state = endpoint.state as unknown as {
+        descriptor: { deviceTypeList: Array<{ deviceType: number }> };
+        electricalPowerMeasurement: { activePower: number | bigint | null; powerMode: number };
+        fanControl: { percentSetting: number | null };
+        onOff: { onOff: boolean };
+        thermostat: { systemMode: number };
+        thermostatUserInterfaceConfiguration: { temperatureDisplayMode: number };
+      };
       assert.equal(
-        endpoint.state.thermostatUserInterfaceConfiguration.temperatureDisplayMode,
+        state.thermostatUserInterfaceConfiguration.temperatureDisplayMode,
         MATTER_TEMPERATURE_DISPLAY_MODE.celsius,
       );
       await assert.rejects(
-        async () => endpoint.act('reject unbound power command', agent => agent.onOff.on()),
+        async () => endpoint.act(
+          'reject unbound power command',
+          agent => (agent as unknown as { onOff: { on(): Promise<void> } }).onOff.on(),
+        ),
         /unavailable until command mapping/,
       );
-      assert.equal(endpoint.state.onOff.onOff, true);
-      assert.equal(endpoint.state.thermostat.systemMode, MATTER_SYSTEM_MODE.cool);
-      assert.equal(endpoint.state.fanControl.percentSetting, 60);
+      assert.equal(state.onOff.onOff, true);
+      assert.equal(state.thermostat.systemMode, MATTER_SYSTEM_MODE.cool);
+      assert.equal(state.fanControl.percentSetting, 60);
+      assert.equal(state.electricalPowerMeasurement.activePower, null);
+      assert.equal(state.electricalPowerMeasurement.powerMode, 2);
+      assert.equal(
+        state.descriptor.deviceTypeList.some(deviceType => deviceType.deviceType === 0x0510),
+        true,
+      );
     } finally {
       await node.close();
     }
@@ -1750,6 +1883,7 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
         Thermostat: 'thermostat',
         FanControl: 'fanControl',
         RelativeHumidityMeasurement: 'relativeHumidityMeasurement',
+        ElectricalPowerMeasurement: 'electricalPowerMeasurement',
         BridgedDeviceBasicInformation: 'bridgedDeviceBasicInformation',
       },
       updateAccessoryState: async (

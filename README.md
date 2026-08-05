@@ -202,16 +202,6 @@ without enabling verbose logging for the rest of Homebridge.
 Credentials, account identifiers, serial numbers, full MQTT topics, and raw
 payload bytes are redacted from normal and debug logs.
 
-## Project status
-
-This is an unpublished, pre-release plugin currently being validated against
-real WAVE 3 hardware. Do not rely on it as the sole control for unattended or
-safety-critical climate operation.
-
-Protocol research, architecture records, contributor commands, and detailed
-hardware evidence live in [`docs/`](docs/) and [`TODO.md`](TODO.md). Third-party
-attribution is in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-
 ## License
 
 Original work is licensed under the [BSD 3-Clause License](LICENSE).

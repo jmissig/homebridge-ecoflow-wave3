@@ -13,7 +13,7 @@ The indoor supply-air/outlet temperature remains decoded telemetry. It is not
 a candidate for Matter's local temperature because it measures conditioned air
 leaving the appliance rather than the room air entering it.
 
-[Decision: Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534364952511512646)
+Decision: Julian · 2026-08-04
 
 ## Consequences
 

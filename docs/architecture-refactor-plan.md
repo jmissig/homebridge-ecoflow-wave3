@@ -12,7 +12,7 @@ recovery boundary; the implementation does not require artificial pause or
 rollback checkpoints between mechanical extractions.
 
 The work was requested after reviewing the current implementation against the
-blinded proposal. [told: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533552019430965520)
+blinded proposal. told: Julian · 2026-08-02
 
 ## Objectives
 

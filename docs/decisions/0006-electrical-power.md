@@ -22,7 +22,7 @@ positive values represent imported power and `null` means that power cannot
 currently be measured. Convert WAVE watts to milliwatts, publish reported zero
 as zero, and publish `null` when the measurement is unavailable or stale.
 
-[Decision and field semantics: Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534370588624158741)
+Decision and field semantics: Julian · 2026-08-04
 
 ## Freshness
 
@@ -42,7 +42,7 @@ Static firmware metadata, the existing ten-second command-confirmation
 deadline, and the separate startup cache-restoration grace are different
 mechanisms and remain outside this configuration value.
 
-[Freshness direction: Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534370588624158741)
+Freshness direction: Julian · 2026-08-04
 
 ## Homebridge and Matter evidence
 

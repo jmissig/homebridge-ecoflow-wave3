@@ -29,11 +29,11 @@ stable account identifiers.
 - Extended app-coexistence traffic, full display state, runtime telemetry, and
   non-JSON get replies.[^src-app-coexistence]
 
-[^src-initial]: [Household Homebridge diagnostic paste · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533270401684082809)
-[^src-app-controls]: [Household Homebridge diagnostic paste and narrated app actions · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
-[^src-homekit-controls]: [Household Homebridge diagnostic paste and physical observation · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533275994385813545)
-[^src-partial-startup]: [Household Homebridge startup diagnostic paste · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533281252147466311)
-[^src-app-coexistence]: [Household Homebridge app-coexistence diagnostic paste · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533281795536195604)
+[^src-initial]: Household Homebridge diagnostic paste · 2026-08-01
+[^src-app-controls]: Household Homebridge diagnostic paste and narrated app actions · 2026-08-01
+[^src-homekit-controls]: Household Homebridge diagnostic paste and physical observation · 2026-08-01
+[^src-partial-startup]: Household Homebridge startup diagnostic paste · 2026-08-01
+[^src-app-coexistence]: Household Homebridge app-coexistence diagnostic paste · 2026-08-01
 
 ## Transport and routing
 
@@ -279,7 +279,7 @@ stable account identifiers.
   ambient/input-air temperature and ambient humidity. Outlet temperature
   remains decoded telemetry rather than room-temperature authority.
 
-[Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
+Decision: Julian · 2026-08-01
 
 [Superseded by Decision 0005 · 2026-08-04](decisions/0005-ambient-room-temperature.md)
 
@@ -302,7 +302,7 @@ stable account identifiers.
   All five component versions remain separately normalized internally; zero
   means absent and is not presented as `0.0.0.0`.
 
-[Decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
+Decision: Julian · 2026-08-01
 
 ## 2026-08-02 mode-profile and Auto follow-up
 
@@ -326,7 +326,7 @@ stable account identifiers.
   `16–30 °C`. Enforce this in the WAVE planner rather than Matter's global
   deadband, which also constrains inactive single-mode companion values.
 
-[Source: Julian's narrated Apple Home/EcoFlow/WAVE tests · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533563322539049151)
+Source: Julian's narrated Apple Home/EcoFlow/WAVE tests · 2026-08-02
 
 ## Evidence still missing
 

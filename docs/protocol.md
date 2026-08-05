@@ -130,7 +130,7 @@ this plugin.
   whether the household WAVE 3 appears in `/iot-open/sign/device/list` and
   receives `/open/.../status` reports.
 
-[Desired direction: Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534363766039515189)
+Desired direction: Julian · 2026-08-04
 
 ## MQTT session
 
@@ -188,7 +188,7 @@ A matching get reply contains `data.online` and `data.quotaMap`.
   `active_display_property_full_upload = true` (action `71`). A recent cache
   suppresses this trigger. The request does not modify periodic upload
   intervals and is not part of the `latestQuotas` retry loop.
-  [Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533518835838222407)
+  Decision: Julian · 2026-08-02
 - Action `71` is defined by the
   [pinned upstream WAVE 3 schema](https://github.com/tolwi/hassio-ecoflow-cloud/blob/95dc51eb12562c49be9067052814d5960cc0829f/custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto#L288-L293).
   Its ability to provoke the expected immediate full `cmd_id = 21` property
@@ -328,8 +328,8 @@ accepts and reports fractional targets such as `20.5 °C`, `20.8 °C`, and
 mode. The physical display therefore must not be treated as evidence that the
 protocol only supports whole-degree targets.
 
-[Source: household packet evidence shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
-[Told: physical Celsius display observation from Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533523821397545122)
+Source: household packet evidence shared by Julian · 2026-08-01
+Told: physical Celsius display observation from Julian · 2026-08-02
 
 Matter Thermostat represents setpoints in `0.01 °C` units and its
 `SetpointRaiseLower` command uses `0.1 °C` units, but the standard cluster has
@@ -357,7 +357,7 @@ authoritative state. Temperatures stay canonical Celsius internally and at the
 Matter Thermostat boundary regardless of the display preference.
 
 [Source: pinned upstream WAVE 3 schema fields 512 and 166](https://github.com/tolwi/hassio-ecoflow-cloud/blob/95dc51eb12562c49be9067052814d5960cc0829f/custom_components/ecoflow_cloud/devices/internal/proto/wave3.proto)
-[Told: household C -> F -> C app observation from Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533575308517572688)
+Told: household C -> F -> C app observation from Julian · 2026-08-02
 
 [Source: installed Matter v1.6 Thermostat cluster model · inspected 2026-08-02](../package-lock.json)
 
@@ -384,7 +384,7 @@ Decode a nonzero value as four big-endian version bytes. The household value
 `16842856` is `0x01010068`, therefore `1.1.0.104`. Matter bridged-device
 metadata uses PD first and IoT as a fallback; it does not conflate the envelope
 header's unrelated protocol `version=3` with device firmware.
-[decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533305130429059072)
+decision: Julian · 2026-08-01
 
 **Inference**
 
@@ -392,8 +392,8 @@ header's unrelated protocol `version=3` with device firmware.
   `20.13 °C` to `16.60 °C` as cooling ramped. The pinned upstream schema names
   the same field `temp_indoor_supply_air`; it remains decoded outlet telemetry
   and is not used as Matter's room-temperature measurement.
-  [Superseded decision: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533304877189431447)
-  [Current decision: Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534364952511512646)
+  Superseded decision: Julian · 2026-08-01
+  Current decision: Julian · 2026-08-04
 - `dev_sleep_state`, not only `wave_operating_mode`, should govern whether the
   normalized device is powered.
 - Display uploads can be incremental. Preserve the reported sleep state,
@@ -473,7 +473,7 @@ publishing a command.
   first-slice evidence, so the controller rejected it without regressing the
   previously accepted state.
 
-[Source: household Homebridge diagnostic log shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533270401684082809)
+Source: household Homebridge diagnostic log shared by Julian · 2026-08-01
 
 **Hardware — 2026-08-01 official-app setting changes**
 
@@ -492,7 +492,7 @@ publishing a command.
   is not decoded as a fallback. Mode-item field `4` matches the upstream humidity
   target. Neither is required for the first Matter climate slice.
 
-[Source: household Homebridge diagnostic log and narrated app actions shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533272688766877849)
+Source: household Homebridge diagnostic log and narrated app actions shared by Julian · 2026-08-01
 
 **Hardware — 2026-08-02 composite startup confirmation**
 
@@ -507,7 +507,7 @@ publishing a command.
   display state must be allowed to satisfy composite fields omitted from
   positive acknowledgements.
 
-[Source: household Apple Home/Matter diagnostic log shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533523474449039422)
+Source: household Apple Home/Matter diagnostic log shared by Julian · 2026-08-02
 
 **Hardware — 2026-08-02 delayed mode write and remembered target**
 
@@ -522,7 +522,7 @@ publishing a command.
   after the destination mode is confirmed; otherwise the WAVE's confirmed
   saved profile remains authoritative.
 
-[Source: household Apple Home/Matter diagnostic log and narrated target selection shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533524342313451610)
+Source: household Apple Home/Matter diagnostic log and narrated target selection shared by Julian · 2026-08-02
 
 **Hardware — 2026-08-02 saved profiles, wake sequencing, and Auto range**
 
@@ -547,8 +547,8 @@ publishing a command.
   WAVE's `16–30 °C` Cool/Heat range. The Matter attribute remains zero and the
   semantic WAVE planner enforces the four-degree Auto minimum before publish.
 
-[Source: household Apple Home, EcoFlow app, and WAVE 3 observations shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533563322539049151)
-[Auto-range observation: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533565811455692810)
+Source: household Apple Home, EcoFlow app, and WAVE 3 observations shared by Julian · 2026-08-02
+Auto-range observation: Julian · 2026-08-02
 
 **Matter interoperability — Auto temporarily not advertised**
 
@@ -580,7 +580,7 @@ publishing a command.
 - Fan-slider writes therefore require latest-value coalescing and duplicate
   suppression before further hardware testing.
 
-[Source: household Homebridge diagnostic log and physical observation shared by Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533275994385813545)
+Source: household Homebridge diagnostic log and physical observation shared by Julian · 2026-08-01
 
 **Inference**
 
@@ -611,8 +611,8 @@ publishing a command.
   firmware metadata and command confirmation's ten-second deadline are outside
   this setting.
 
-[Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533514045766897795), superseding the broader 2026-08-01 cached-availability rule.
-[Freshness decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533535457453932654)
+Decision: Julian · 2026-08-02, superseding the broader 2026-08-01 cached-availability rule.
+Freshness decision: Julian · 2026-08-02
 
 **Hardware — 2026-08-04 power-cycle sequence reset and app recovery**
 
@@ -629,7 +629,7 @@ publishing a command.
   result; the rebase implementation still requires a second controlled
   power-cycle validation after deployment.
 
-[Source: household Homebridge diagnostics and narrated power/app actions shared by Julian · 2026-08-04](https://discord.com/channels/1499872194610598249/1531866537185640448/1534359710805921934)
+Source: household Homebridge diagnostics and narrated power/app actions shared by Julian · 2026-08-04
 
 **Hardware — 2026-08-02 Matter off-to-on sequencing**
 
@@ -646,7 +646,7 @@ publishing a command.
   target/range after the saved destination profile is observed. Each command
   retains the normal acknowledgement and observed-state policy.
 
-[Source: household Matter/Homebridge diagnostic log and narrated Apple Home actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533508417145147622)
+Source: household Matter/Homebridge diagnostic log and narrated Apple Home actions shared by Julian · 2026-08-02
 
 **Hardware — 2026-08-02 complete composite acknowledgement**
 
@@ -664,7 +664,7 @@ publishing a command.
   `cfg_sys_pause = true` acknowledgement and `dev_sleep_state = 1` display
   update; Matter state reconciled to Off without a plugin command.
 
-[Source: household Homebridge diagnostics and narrated Home/EcoFlow actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533539611412922458)
+Source: household Homebridge diagnostics and narrated Home/EcoFlow actions shared by Julian · 2026-08-02
 
 **Hardware — 2026-08-02 incremental confirmation and app coexistence**
 
@@ -684,7 +684,7 @@ publishing a command.
   later command-relevant display deltas. A single complete reply or display
   packet is not a protocol invariant.
 
-[Source: household Homebridge diagnostics and narrated Home/EcoFlow actions shared by Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533542417222074570)
+Source: household Homebridge diagnostics and narrated Home/EcoFlow actions shared by Julian · 2026-08-02
 
 ## Known uncertainty
 

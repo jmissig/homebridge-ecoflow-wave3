@@ -51,8 +51,8 @@ per-mode profiles.
 - [x] Keep mode-only writes mode-only. Let the WAVE restore its independent
   destination profile, then mirror that confirmed active target into both
   constrained Matter setpoint attributes. Do not copy the source target into
-  the destination WAVE profile. [source: household Cool→Heat trace and
-  Julian's profile-sync model · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533603717259985056)
+  the destination WAVE profile. Source: household Cool→Heat trace and
+  Julian's profile-sync model · 2026-08-02
 - [x] Track which target/range values came from an explicit controller write
   versus projection needed only to keep Matter attributes transactionally
   valid.

@@ -31,8 +31,8 @@ standard contract:
 - In two isolated household tests, Apple Home displayed Auto but did not write
   `SystemMode.Auto`; it sent power and later Cooling setpoint traffic instead.
   Apple Home also failed to render an authoritative Auto report that its Matter
-  controller acknowledged. [source: household Matter diagnostics and Julian's
-  narrated test · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533586574414184649)
+  controller acknowledged. Source: household Matter diagnostics and Julian's
+  narrated test · 2026-08-02
 
 ## Consequences
 

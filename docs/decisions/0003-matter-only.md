@@ -3,7 +3,7 @@
 - **Date:** 2026-08-01
 - **Status:** accepted
 - **Decision owner:** Julian
-- **Source:** [Discord project thread · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533330071866310766)
+- **Source:** Discord project thread · 2026-08-01
 
 Implementation status: completed through the Matter-only source cleanup on
 2026-08-02.
@@ -52,7 +52,7 @@ Power and active HVAC mode are separate Matter concerns:
 
 The first five mappings were provided as implementation guidance by Julian and
 verified against the Matter enum shipped with Homebridge 2.2.1. Dry and Sleep
-are also present in that same enum. [told: Julian · 2026-08-01](https://discord.com/channels/1499872194610598249/1531866537185640448/1533331816684196001)
+are also present in that same enum. told: Julian · 2026-08-01
 
 Although `Thermostat.SystemMode.Off` (`0x00`) exists, the Room Air Conditioner
 device's `OnOff` cluster remains the canonical power surface. Retain the last
@@ -111,7 +111,7 @@ supplies authoritative state. Missing or expired cache sets the standard
 `BridgedDeviceBasicInformation.reachable` attribute to false; fresh state sets
 it true and renews the timestamp. Explicit offline or account/session-error
 evidence becomes unreachable immediately rather than consuming the grace
-period. [Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533514045766897795)
+period. Decision: Julian · 2026-08-02
 
 After startup has established current-generation state, the controller allows
 five minutes without recognized authoritative telemetry before marking the
@@ -119,7 +119,7 @@ device stale. Household logs show that the WAVE's normal full display upload
 arrives approximately every two minutes; the prior two-minute deadline raced
 that upload and briefly toggled reachability. Five minutes tolerates one
 missed upload plus delivery jitter without weakening per-command confirmation.
-[Decision: Julian · 2026-08-02](https://discord.com/channels/1499872194610598249/1531866537185640448/1533535457453932654)
+Decision: Julian · 2026-08-02
 
 Homebridge's generic handler wrappers replace required Room Air Conditioner
 behavior features, including OnOff Dead Front Behavior and Fan Control Multi

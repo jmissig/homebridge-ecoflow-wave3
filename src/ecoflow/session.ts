@@ -1139,7 +1139,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number):
       () => reject(new Error('operation timed out')),
       timeoutMilliseconds,
     );
-    timer.unref();
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -1159,7 +1158,6 @@ async function withAbortAndTimeout<T>(
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<typeof timeoutMarker>(resolve => {
     timer = setTimeout(() => resolve(timeoutMarker), timeoutMilliseconds);
-    timer.unref();
   });
   try {
     const outcome = await Promise.race([promise, timeout]);
@@ -1197,7 +1195,6 @@ async function withSignalAndTimeout<T>(
       () => reject(new Error('operation timed out')),
       timeoutMilliseconds,
     );
-    timer.unref();
   });
   try {
     return await Promise.race([

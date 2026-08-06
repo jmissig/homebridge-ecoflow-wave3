@@ -41,50 +41,58 @@ export class NodeHttpsTransport implements HttpTransport {
 
   async request(request: HttpRequest, signal?: AbortSignal): Promise<HttpResponse> {
     const prepared = prepareHttpRequest(request);
-    const deadline = AbortSignal.timeout(this.timeoutMilliseconds);
+    const deadlineController = new AbortController();
+    const deadlineTimer = setTimeout(
+      () => deadlineController.abort(new Error('request deadline reached')),
+      this.timeoutMilliseconds,
+    );
     const requestSignal = signal === undefined
-      ? deadline
-      : AbortSignal.any([signal, deadline]);
+      ? deadlineController.signal
+      : AbortSignal.any([signal, deadlineController.signal]);
 
-    return new Promise<HttpResponse>((resolve, reject) => {
-      const clientRequest = this.requester(prepared.url, {
-        method: prepared.method,
-        headers: prepared.headers,
-        rejectUnauthorized: true,
-        signal: requestSignal,
-      }, response => {
-        const chunks: Buffer[] = [];
-        let receivedBytes = 0;
+    try {
+      return await new Promise<HttpResponse>((resolve, reject) => {
+        const clientRequest = this.requester(prepared.url, {
+          method: prepared.method,
+          headers: prepared.headers,
+          rejectUnauthorized: true,
+          signal: requestSignal,
+        }, response => {
+          const chunks: Buffer[] = [];
+          let receivedBytes = 0;
 
-        response.on('data', (chunk: Buffer) => {
-          receivedBytes += chunk.length;
-          if (receivedBytes > this.maximumResponseBytes) {
-            clientRequest.destroy(new Error('response too large'));
-            return;
-          }
-          chunks.push(chunk);
+          response.on('data', (chunk: Buffer) => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > this.maximumResponseBytes) {
+              clientRequest.destroy(new Error('response too large'));
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.on('end', () => {
+            try {
+              const text = Buffer.concat(chunks).toString('utf8');
+              resolve({
+                status: response.statusCode ?? 0,
+                json: JSON.parse(text) as unknown,
+              });
+            } catch {
+              reject(new Error('invalid JSON response'));
+            }
+          });
+          response.on('aborted', () => reject(new Error('response aborted')));
+          response.on('error', reject);
         });
-        response.on('end', () => {
-          try {
-            const text = Buffer.concat(chunks).toString('utf8');
-            resolve({
-              status: response.statusCode ?? 0,
-              json: JSON.parse(text) as unknown,
-            });
-          } catch {
-            reject(new Error('invalid JSON response'));
-          }
-        });
-        response.on('aborted', () => reject(new Error('response aborted')));
-        response.on('error', reject);
+
+        clientRequest.on('error', reject);
+        if (prepared.body !== undefined) {
+          clientRequest.write(prepared.body);
+        }
+        clientRequest.end();
       });
-
-      clientRequest.on('error', reject);
-      if (prepared.body !== undefined) {
-        clientRequest.write(prepared.body);
-      }
-      clientRequest.end();
-    });
+    } finally {
+      clearTimeout(deadlineTimer);
+    }
   }
 }
 

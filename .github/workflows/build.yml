@@ -6,6 +6,9 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "15 9 * * 6"
+      timezone: America/Los_Angeles
 
 permissions:
   contents: read
@@ -17,6 +20,7 @@ concurrency:
 jobs:
   verify:
     name: Node ${{ matrix.node-version }}
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -41,4 +45,25 @@ jobs:
 
       - name: Verify
         run: npm run verify
-        
+
+  latest-compatible:
+    name: Latest allowed dependencies
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Use Node.js 26.x
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.x
+          cache: npm
+
+      - name: Install latest allowed dependencies
+        run: npm update
+
+      - name: Verify
+        run: npm run verify

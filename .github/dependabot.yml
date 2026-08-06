@@ -9,15 +9,7 @@ updates:
       time: "09:00"
       timezone: America/Los_Angeles
     open-pull-requests-limit: 2
-    groups:
-      routine-npm-updates:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-    ignore:
+    allow:
       - dependency-name: "*"
         update-types:
           - version-update:semver-major
@@ -34,3 +26,4 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+

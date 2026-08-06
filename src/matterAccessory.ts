@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   MatterStatus,
   type MatterAccessory,
@@ -155,6 +157,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private snapshot: Wave3ControllerSnapshot;
   private pendingFanWrite?: PendingFanWrite;
   private pendingTemperatureWrite?: PendingTemperatureWrite;
+  private pendingPresentationUpdates = 1;
+  private presentationRetryPending = false;
+  private skippedSnapshotWhilePresentationPending?: Wave3ControllerSnapshot;
   private stagedThermostatIntent?: StagedThermostatIntent;
   private thermostatIntentRevision = 0;
   private thermostatCoordinator?: Promise<void>;
@@ -192,14 +197,27 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       ?? accessory.firmwareRevision,
     )).then(async () => {
       await this.initializeReachability(controller.snapshot);
+    }).then(() => {
+      this.presentationRetryPending = false;
     }).catch(error => {
+      this.presentationRetryPending = true;
       this.logger.error(`EcoFlow WAVE 3 Matter startup state update failed: ${errorMessage(error)}`);
-    });
+    }).finally(() => this.finishPresentationUpdate());
     this.detachSnapshot = controller.onSnapshot(snapshot => {
+      const previousSnapshot = this.snapshot;
       this.snapshot = snapshot;
       if (snapshot.availability === 'online') {
         this.lastConfirmedSnapshot = snapshot;
       }
+      if (!this.presentationRetryPending
+        && !matterPresentationChanged(previousSnapshot, snapshot)
+        && !this.hasUnpresentedTrackedState(snapshot)) {
+        if (this.pendingPresentationUpdates > 0) {
+          this.skippedSnapshotWhilePresentationPending = snapshot;
+        }
+        return;
+      }
+      this.skippedSnapshotWhilePresentationPending = undefined;
       if (this.interactiveCommandDepth > 0) {
         this.deferredSnapshot = snapshot;
       } else {
@@ -659,13 +677,46 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private enqueueSnapshot(snapshot: Wave3ControllerSnapshot): void {
+    this.pendingPresentationUpdates += 1;
     this.updateTail = this.updateTail
-      .then(() => this.pushSnapshot(snapshot))
+      .then(async () => {
+        try {
+          await this.pushSnapshot(snapshot);
+          this.presentationRetryPending = false;
+        } catch (error) {
+          this.presentationRetryPending = true;
+          throw error;
+        }
+      })
       .catch(error => {
         if (!this.stopped && this.snapshot === snapshot) {
           this.logger.error(`EcoFlow WAVE 3 Matter state update failed: ${errorMessage(error)}`);
         }
-      });
+      })
+      .finally(() => this.finishPresentationUpdate());
+  }
+
+  private finishPresentationUpdate(): void {
+    this.pendingPresentationUpdates -= 1;
+    if (this.pendingPresentationUpdates > 0) {
+      return;
+    }
+    const skippedSnapshot = this.skippedSnapshotWhilePresentationPending;
+    this.skippedSnapshotWhilePresentationPending = undefined;
+    if (!this.stopped && this.presentationRetryPending && skippedSnapshot !== undefined) {
+      this.enqueueSnapshot(skippedSnapshot);
+    }
+  }
+
+  private hasUnpresentedTrackedState(snapshot: Wave3ControllerSnapshot): boolean {
+    const firmwareRevision = snapshot.firmwareVersions?.pd ?? snapshot.firmwareVersions?.iot;
+    if (firmwareRevision !== undefined && firmwareRevision !== this.presentedFirmwareRevision) {
+      return true;
+    }
+    return !Object.is(
+      electricalPowerMeasurementForSnapshot(snapshot).activePower,
+      this.presentedActivePower,
+    );
   }
 
   private scheduleFan(speed: Wave3AirflowSpeed): Promise<void> {
@@ -1260,6 +1311,19 @@ function attributesMatch(
   expected: Record<string, unknown>,
 ): boolean {
   return Object.entries(expected).every(([attribute, value]) => Object.is(current[attribute], value));
+}
+
+function matterPresentationChanged(
+  previous: Wave3ControllerSnapshot,
+  next: Wave3ControllerSnapshot,
+): boolean {
+  return previous.availability !== next.availability
+    || previous.acPowerWatts !== next.acPowerWatts
+    || previous.environmentTelemetryFresh !== next.environmentTelemetryFresh
+    || previous.updatedAt !== next.updatedAt
+    || !isDeepStrictEqual(previous.state, next.state)
+    || !isDeepStrictEqual(previous.modeProfiles, next.modeProfiles)
+    || !isDeepStrictEqual(previous.firmwareVersions, next.firmwareVersions);
 }
 
 function nullableFiniteNumber(value: unknown): number | null {

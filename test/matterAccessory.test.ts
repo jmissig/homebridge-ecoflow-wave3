@@ -54,6 +54,7 @@ describe('WAVE 3 Matter accessory', () => {
         },
         modeProfiles: {},
         runtimeTemperatures: {},
+        runtimeTemperaturesFresh: false,
       };
       const accessory = createWave3MatterAccessory(
         harness.matter,
@@ -85,6 +86,7 @@ describe('WAVE 3 Matter accessory', () => {
         state: { powered: true, mode: 'cool', targetTemperatureCelsius: 22 },
         modeProfiles: profiles,
         runtimeTemperatures: {},
+        runtimeTemperaturesFresh: false,
       },
     );
     assert.equal(cool.clusters?.thermostat?.occupiedCoolingSetpoint, 2_200);
@@ -99,6 +101,7 @@ describe('WAVE 3 Matter accessory', () => {
         state: { powered: true, mode: 'heat', targetTemperatureCelsius: 25.5 },
         modeProfiles: profiles,
         runtimeTemperatures: {},
+        runtimeTemperaturesFresh: false,
       },
     );
     assert.equal(heat.clusters?.thermostat?.occupiedCoolingSetpoint, 2_550);
@@ -116,6 +119,7 @@ describe('WAVE 3 Matter accessory', () => {
       state: { ambientHumidityPercent: 61 },
       modeProfiles: {},
       runtimeTemperatures: {},
+      runtimeTemperaturesFresh: false,
     };
 
     const cached = createWave3MatterAccessory(
@@ -1700,6 +1704,26 @@ describe('WAVE 3 Matter accessory', () => {
 
     controller.emit({
       ...onlineSnapshot(),
+      runtimeTemperatures: { indoorReturnAirCelsius: 22 },
+      runtimeTemperaturesFresh: true,
+      runtimeTemperaturesObservedAt: 300_000,
+      firmwareVersions: { pd: '1.1.0.106' },
+    });
+    await drainMicrotasks();
+    assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
+
+    controller.emit({
+      ...onlineSnapshot(),
+      runtimeTemperatures: { indoorReturnAirCelsius: 22 },
+      runtimeTemperaturesFresh: false,
+      runtimeTemperaturesObservedAt: 300_000,
+      firmwareVersions: { pd: '1.1.0.106' },
+    });
+    await drainMicrotasks();
+    assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
+
+    controller.emit({
+      ...onlineSnapshot(),
       availability: 'stale',
       state: { powered: false },
     });
@@ -1711,6 +1735,7 @@ describe('WAVE 3 Matter accessory', () => {
       state: { powered: false },
       modeProfiles: {},
       runtimeTemperatures: {},
+      runtimeTemperaturesFresh: false,
     });
     await drainMicrotasks();
     assert.equal(harness.stateUpdates.length, afterFirmwareUpdate);
@@ -1720,6 +1745,7 @@ describe('WAVE 3 Matter accessory', () => {
       state: { powered: false },
       modeProfiles: {},
       runtimeTemperatures: {},
+      runtimeTemperaturesFresh: false,
     });
     await drainMicrotasks();
     assert.deepEqual(harness.stateUpdates.at(-1), {
@@ -1794,6 +1820,41 @@ describe('WAVE 3 Matter accessory', () => {
     await binding.stop();
   });
 
+  it('replays a coalesced runtime-only snapshot after an in-flight Matter update fails', async () => {
+    const harness = matterHarness();
+    const controller = fakeController(offlineSnapshot());
+    const accessory = createWave3MatterAccessory(
+      harness.matter,
+      'matter-runtime-retry',
+      device(),
+      controller.snapshot,
+    );
+    const binding = new Wave3MatterAccessory(harness.matter, accessory, controller);
+
+    await drainMicrotasks();
+    controller.emit(onlineSnapshot());
+    await waitUntil(() => accessory.context.firmwareRevision === '1.1.0.104');
+
+    harness.failNextStateUpdate();
+    const heatSnapshot: Wave3ControllerSnapshot = {
+      ...onlineSnapshot(),
+      state: { ...onlineSnapshot().state, mode: 'heat', targetTemperatureCelsius: 23 },
+    };
+    controller.emit(heatSnapshot);
+    controller.emit({
+      ...heatSnapshot,
+      runtimeTemperatures: { indoorReturnAirCelsius: 22 },
+      runtimeTemperaturesFresh: true,
+      runtimeTemperaturesObservedAt: 300_000,
+    });
+
+    await waitUntil(() => harness.stateUpdates.some(
+      update => update.cluster === 'thermostat'
+        && update.attributes.systemMode === MATTER_SYSTEM_MODE.heat,
+    ));
+    await binding.stop();
+  });
+
   it('ignores stale partial startup telemetry until authoritative state arrives', async () => {
     const harness = matterHarness();
     const controller = fakeController(offlineSnapshot());
@@ -1814,6 +1875,7 @@ describe('WAVE 3 Matter accessory', () => {
       state: { ambientHumidityPercent: 62 },
       modeProfiles: {},
       runtimeTemperatures: {},
+      runtimeTemperaturesFresh: false,
     });
     await drainMicrotasks();
     assert.equal(harness.stateUpdates.length, 1);
@@ -1865,6 +1927,7 @@ describe('WAVE 3 Matter accessory', () => {
 
 function matterHarness(updateGate?: ReturnType<typeof deferred>): {
   dropNextFirmwareUpdate(): void;
+  failNextStateUpdate(): void;
   matter: MatterAPI;
   stateUpdates: Array<{ cluster: string; attributes: Record<string, unknown> }>;
   metadataUpdates: MatterAccessory[];
@@ -1872,6 +1935,7 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
   const stateUpdates: Array<{ cluster: string; attributes: Record<string, unknown> }> = [];
   const metadataUpdates: MatterAccessory[] = [];
   let dropNextFirmwareUpdate = false;
+  let failNextStateUpdate = false;
   const clusterState = new Map<string, Record<string, unknown>>([
     ['bridgedDeviceBasicInformation', {}],
   ]);
@@ -1892,6 +1956,10 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
         attributes: Record<string, unknown>,
       ) => {
         stateUpdates.push({ cluster, attributes });
+        if (failNextStateUpdate) {
+          failNextStateUpdate = false;
+          throw new Error('simulated Matter update failure');
+        }
         if (cluster === 'bridgedDeviceBasicInformation' && dropNextFirmwareUpdate) {
           dropNextFirmwareUpdate = false;
           return;
@@ -1912,6 +1980,9 @@ function matterHarness(updateGate?: ReturnType<typeof deferred>): {
     } as unknown as MatterAPI,
     dropNextFirmwareUpdate: () => {
       dropNextFirmwareUpdate = true;
+    },
+    failNextStateUpdate: () => {
+      failNextStateUpdate = true;
     },
     stateUpdates,
     metadataUpdates,
@@ -2095,6 +2166,7 @@ function offlineSnapshot(): Wave3ControllerSnapshot {
     state: {},
     modeProfiles: {},
     runtimeTemperatures: {},
+    runtimeTemperaturesFresh: false,
   };
 }
 
@@ -2121,6 +2193,7 @@ function onlineSnapshot(): Wave3ControllerSnapshot {
       },
     },
     runtimeTemperatures: {},
+    runtimeTemperaturesFresh: false,
     firmwareVersions: { pd: '1.1.0.104' },
     updatedAt: 1,
   };
@@ -2147,6 +2220,7 @@ function runtimeSnapshot(
       [mode]: { targetTemperatureCelsius, airflowSpeed },
     },
     runtimeTemperatures: {},
+    runtimeTemperaturesFresh: false,
     updatedAt: mode === 'cool' ? 1 : 2,
   };
 }

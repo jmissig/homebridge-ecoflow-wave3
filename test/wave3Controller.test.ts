@@ -130,6 +130,60 @@ describe('WAVE 3 controller', () => {
     assert.equal(controller.snapshot.availability, 'stale');
   });
 
+  it('retains timestamped runtime telemetry across a two-miss freshness horizon', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+    });
+
+    session.emitPacket('property', displayPacket(1, { mode: 1, sleepState: 0 }));
+    session.emitPacket('property', runtimePacket(2, { indoorReturnAir: 23 }));
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, true);
+    assert.equal(controller.snapshot.runtimeTemperaturesObservedAt, 0);
+    assert.equal(controller.snapshot.runtimeTemperatures.indoorReturnAirCelsius, 23);
+
+    clock.advance(301_000);
+    assert.equal(controller.snapshot.availability, 'stale');
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, true);
+
+    clock.advance(358_999);
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, true);
+    clock.advance(1);
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, false);
+    assert.equal(controller.snapshot.runtimeTemperaturesObservedAt, 0);
+    assert.equal(controller.snapshot.runtimeTemperatures.indoorReturnAirCelsius, 23);
+
+    session.emitPacket('property', runtimePacket(3, { condenser: 41 }));
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, true);
+    assert.equal(controller.snapshot.runtimeTemperaturesObservedAt, 660_000);
+    assert.deepEqual(controller.snapshot.runtimeTemperatures, {
+      indoorReturnAirCelsius: 23,
+      condenserCelsius: 41,
+    });
+  });
+
+  it('uses a configured freshness horizon when it exceeds eleven minutes', () => {
+    const session = new FakeControllerSession();
+    const clock = new FakeClock();
+    const controller = new Wave3Controller(TEST_SERIAL, session, {
+      now: () => clock.now,
+      schedule: clock.schedule,
+      staleAfterMilliseconds: 15 * 60_000,
+    });
+
+    session.emitPacket('property', runtimePacket(1, { indoorReturnAir: 23 }));
+    clock.advance(11 * 60_000);
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, true);
+    clock.advance((4 * 60_000) - 1);
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, true);
+    clock.advance(1);
+    assert.equal(controller.snapshot.runtimeTemperaturesFresh, false);
+    assert.equal(controller.snapshot.runtimeTemperaturesObservedAt, 0);
+    assert.equal(controller.snapshot.runtimeTemperatures.indoorReturnAirCelsius, 23);
+  });
+
   it('uses the shared horizon for AC power without letting power refresh operational authority', () => {
     const session = new FakeControllerSession();
     const clock = new FakeClock();

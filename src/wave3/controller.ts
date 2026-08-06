@@ -77,6 +77,7 @@ interface PendingSequenceRebase {
 const DEFAULT_COMMAND_TIMEOUT_MILLISECONDS = 10_000;
 const DEFAULT_SEQUENCE_REBASE_TIMEOUT_MILLISECONDS = 10_000;
 const DEFAULT_STALE_AFTER_MILLISECONDS = 300_000;
+const MINIMUM_RUNTIME_FRESHNESS_MILLISECONDS = 11 * 60_000;
 const NOOP_LOGGER: CloudSessionLogger = {
   debug: () => undefined,
   info: () => undefined,
@@ -114,6 +115,7 @@ export class Wave3Controller {
   private readonly commandTimeoutMilliseconds: number;
   private readonly sequenceRebaseTimeoutMilliseconds: number;
   private readonly staleAfterMilliseconds: number;
+  private readonly runtimeFreshnessAfterMilliseconds: number;
   private readonly now: () => number;
   private readonly logger: CloudSessionLogger;
   private readonly schedule: (
@@ -132,6 +134,10 @@ export class Wave3Controller {
       ?? DEFAULT_SEQUENCE_REBASE_TIMEOUT_MILLISECONDS;
     this.staleAfterMilliseconds = options.staleAfterMilliseconds
       ?? DEFAULT_STALE_AFTER_MILLISECONDS;
+    this.runtimeFreshnessAfterMilliseconds = Math.max(
+      this.staleAfterMilliseconds,
+      MINIMUM_RUNTIME_FRESHNESS_MILLISECONDS,
+    );
     this.now = options.now ?? Date.now;
     this.logger = options.logger ?? NOOP_LOGGER;
     this.schedule = options.schedule ?? defaultSchedule;
@@ -142,6 +148,7 @@ export class Wave3Controller {
       state: {},
       modeProfiles: {},
       runtimeTemperatures: {},
+      runtimeTemperaturesFresh: false,
       firmwareVersions: {},
     });
     this.detachListeners = [
@@ -721,6 +728,13 @@ export class Wave3Controller {
       state: this.displayState?.state ?? {},
       modeProfiles: modeProfilesForDisplayState(this.displayState),
       runtimeTemperatures: this.runtimeTemperatures,
+      runtimeTemperaturesFresh: this.runtimeTemperaturesUpdatedAt !== undefined
+        && !isExpired(
+          this.runtimeTemperaturesUpdatedAt,
+          this.now(),
+          this.runtimeFreshnessAfterMilliseconds,
+        ),
+      runtimeTemperaturesObservedAt: this.runtimeTemperaturesUpdatedAt,
       firmwareVersions: this.firmwareVersions,
       updatedAt: this.updatedAt,
     });
@@ -728,6 +742,8 @@ export class Wave3Controller {
       `EcoFlow diagnostics: controller snapshot availability ${previousAvailability} -> ${availability}; `
       + `state=${JSON.stringify(this.snapshot.state)} `
       + `runtime=${JSON.stringify(this.snapshot.runtimeTemperatures)} `
+      + `runtimeFresh=${this.snapshot.runtimeTemperaturesFresh} `
+      + `runtimeObservedAt=${this.snapshot.runtimeTemperaturesObservedAt ?? '<none>'} `
       + `updatedAt=${this.snapshot.updatedAt ?? '<none>'}`,
     );
     for (const listener of this.snapshotListeners) {
@@ -750,21 +766,24 @@ export class Wave3Controller {
     }
   }
 
-  private supplementalFreshnessTimestamps(): number[] {
+  private supplementalFreshnessRemainingTimes(now: number): number[] {
     return [
-      this.environmentUpdatedAt,
-      this.profilesUpdatedAt,
-      this.acPowerUpdatedAt,
-      this.runtimeTemperaturesUpdatedAt,
-    ].filter((value): value is number => value !== undefined);
+      ...[this.environmentUpdatedAt, this.profilesUpdatedAt, this.acPowerUpdatedAt]
+        .filter((value): value is number => value !== undefined)
+        .map(timestamp => this.staleAfterMilliseconds - (now - timestamp)),
+      ...(this.runtimeTemperaturesUpdatedAt === undefined
+        ? []
+        : [
+          this.runtimeFreshnessAfterMilliseconds
+            - (now - this.runtimeTemperaturesUpdatedAt),
+        ]),
+    ].filter(remaining => remaining > 0);
   }
 
   private scheduleNextFreshnessExpiry(now: number, additionalRemaining: number[]): void {
     const remainingTimes = [
       ...additionalRemaining,
-      ...this.supplementalFreshnessTimestamps().map(
-        timestamp => this.staleAfterMilliseconds - (now - timestamp),
-      ).filter(remaining => remaining > 0),
+      ...this.supplementalFreshnessRemainingTimes(now),
     ];
     const nextExpiry = remainingTimes.length === 0 ? undefined : Math.min(...remainingTimes);
     if (nextExpiry === undefined) {
@@ -802,10 +821,6 @@ export class Wave3Controller {
     }
     if (isExpired(this.acPowerUpdatedAt, now, this.staleAfterMilliseconds)) {
       this.clearAcPowerMeasurement();
-    }
-    if (isExpired(this.runtimeTemperaturesUpdatedAt, now, this.staleAfterMilliseconds)) {
-      this.runtimeTemperaturesUpdatedAt = undefined;
-      this.runtimeTemperatures = {};
     }
   }
 

@@ -622,6 +622,7 @@ function platformHarness(
           state: {},
           modeProfiles: {},
           runtimeTemperatures: {},
+          runtimeTemperaturesFresh: false,
         } satisfies Wave3ControllerSnapshot,
         onSnapshot: () => () => undefined,
         execute: async () => ({

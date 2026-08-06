@@ -126,6 +126,8 @@ export interface Wave3ControllerSnapshot {
   state: Readonly<Wave3State>;
   modeProfiles: Wave3ModeProfiles;
   runtimeTemperatures: Readonly<Wave3RuntimeTemperatures>;
+  runtimeTemperaturesFresh: boolean;
+  runtimeTemperaturesObservedAt?: number;
   firmwareVersions?: Readonly<Wave3FirmwareVersions>;
   updatedAt?: number;
 }

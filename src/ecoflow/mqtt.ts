@@ -117,7 +117,8 @@ export function buildMqttClientOptions(
   };
 }
 
-class MqttJsConnection implements MqttConnection {
+export class MqttJsConnection implements MqttConnection {
+  private closePromise?: Promise<void>;
   private readonly pendingOperations = new Set<Promise<unknown>>();
 
   constructor(private readonly client: MqttClient) {}
@@ -156,11 +157,12 @@ class MqttJsConnection implements MqttConnection {
   }
 
   async subscribe(topics: readonly string[], signal?: AbortSignal): Promise<void> {
+    this.assertOpen();
     assertSignalActive(signal);
     const subscriptions: ISubscriptionMap = Object.fromEntries(
       topics.map(topic => [topic, { qos: 1 }]),
     );
-    await this.runOperation(this.client.subscribeAsync(subscriptions));
+    await this.runOperation(this.client.subscribeAsync(subscriptions), signal);
   }
 
   async publish(
@@ -168,6 +170,7 @@ class MqttJsConnection implements MqttConnection {
     payload: Uint8Array | string,
     signal?: AbortSignal,
   ): Promise<void> {
+    this.assertOpen();
     assertSignalActive(signal);
     await this.runOperation(
       this.client.publishAsync(
@@ -175,23 +178,65 @@ class MqttJsConnection implements MqttConnection {
         typeof payload === 'string' ? payload : Buffer.from(payload),
         { qos: 1 },
       ),
+      signal,
     );
   }
 
   async close(force = false): Promise<void> {
-    await this.client.endAsync(force);
+    await this.beginClose(force);
     await Promise.allSettled([...this.pendingOperations]);
   }
 
   private async runOperation<T>(
     operation: Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
-    this.pendingOperations.add(operation);
-    void operation.then(
-      () => this.pendingOperations.delete(operation),
-      () => this.pendingOperations.delete(operation),
-    );
-    return operation;
+    let detachAbort = (): void => undefined;
+    const cancellable = new Promise<T>((resolve, reject) => {
+      let cancelled = false;
+      const handleAbort = (): void => {
+        cancelled = true;
+        void this.beginClose(true).then(
+          () => reject(new Error('MQTT operation was cancelled')),
+          () => reject(new Error('MQTT operation was cancelled')),
+        );
+      };
+      signal?.addEventListener('abort', handleAbort, { once: true });
+      detachAbort = () => signal?.removeEventListener('abort', handleAbort);
+      void operation.then(
+        value => {
+          if (!cancelled) {
+            resolve(value);
+          }
+        },
+        error => {
+          if (!cancelled) {
+            reject(error);
+          }
+        },
+      );
+    });
+    this.pendingOperations.add(cancellable);
+    void cancellable.then(
+      () => this.pendingOperations.delete(cancellable),
+      () => this.pendingOperations.delete(cancellable),
+    ).finally(detachAbort);
+    return cancellable;
+  }
+
+  private beginClose(force: boolean): Promise<void> {
+    // MQTT.js cannot escalate end(false) after it marks itself disconnecting.
+    // If an operation is still pending, start with a forced close so a later
+    // cancellation cannot become trapped behind graceful QoS settlement.
+    const effectiveForce = force || this.pendingOperations.size > 0;
+    this.closePromise ??= this.client.endAsync(effectiveForce);
+    return this.closePromise;
+  }
+
+  private assertOpen(): void {
+    if (this.closePromise !== undefined) {
+      throw new Error('MQTT connection is closing');
+    }
   }
 }
 

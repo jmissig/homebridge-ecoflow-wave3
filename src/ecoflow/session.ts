@@ -949,14 +949,16 @@ export class EcoFlowCloudSession {
       `EcoFlow diagnostics: authoritative state still missing for ${this.deviceLabel(serialNumber)}; `
       + `retrying latestQuotas (attempt=${retry.attempt}, requestId=${refresh.requestId}, generation=${retry.generation})`,
     );
+    const operationController = new AbortController();
     const signal = AbortSignal.any([
       lifecycleSignal,
       retry.controller.signal,
+      operationController.signal,
     ]);
     try {
-      await withSignalAndTimeout(
+      await withAbortAndTimeout(
         connection.publish(topics.get, refresh.payload, signal),
-        signal,
+        operationController,
         this.operationTimeoutMilliseconds,
       );
       if (this.authoritativeRefreshRetries.get(serialNumber) === retry) {
@@ -964,8 +966,16 @@ export class EcoFlowCloudSession {
           `EcoFlow diagnostics: MQTT broker accepted authoritative-state retry for ${this.deviceLabel(serialNumber)}`,
         );
       }
-    } catch {
+    } catch (error) {
+      operationController.abort();
       this.clearPendingRefresh(serialNumber, refresh.requestId);
+      if (error instanceof OperationTimeoutError
+        || error instanceof UnsettledOperationError) {
+        // This retry is itself tracked in activeOperations. Start cleanup but
+        // do not await it here: cleanup may drain this promise, which must be
+        // allowed to return before that drain can complete.
+        void this.failConnectionAfterPublicOperation(connection);
+      }
       if (this.authoritativeRefreshRetries.get(serialNumber) === retry
         && !retry.controller.signal.aborted) {
         this.logger.warn(
@@ -1136,7 +1146,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number):
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(
-      () => reject(new Error('operation timed out')),
+      () => reject(new OperationTimeoutError()),
       timeoutMilliseconds,
     );
   });
@@ -1167,15 +1177,30 @@ async function withAbortAndTimeout<T>(
     controller.abort();
     try {
       await withTimeout(promise, timeoutMilliseconds);
-    } catch {
+    } catch (error) {
+      if (error instanceof OperationTimeoutError) {
+        throw new UnsettledOperationError();
+      }
       // The original operation owns cleanup after cancellation. Shutdown is
       // still bounded if an external adapter violates that contract.
     }
-    throw new Error('operation timed out');
+    throw new OperationTimeoutError();
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);
     }
+  }
+}
+
+class OperationTimeoutError extends Error {
+  constructor() {
+    super('operation timed out');
+  }
+}
+
+class UnsettledOperationError extends Error {
+  constructor() {
+    super('operation timed out and did not settle after cancellation');
   }
 }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
+import type { MqttClient } from 'mqtt';
 
 import type { EcoFlowMqttCredentials } from '../src/ecoflow/auth.js';
 import { parseEcoFlowWave3Config } from '../src/ecoflow/config.js';
@@ -12,6 +13,7 @@ import type {
 } from '../src/ecoflow/http.js';
 import {
   buildMqttClientOptions,
+  MqttJsConnection,
   type MqttConnection,
   type MqttMessage,
   type MqttTransport,
@@ -343,6 +345,62 @@ describe('EcoFlow cloud session', () => {
     assert.equal(refreshCount(), completedRefreshCount);
 
     controller.stop();
+    await session.stop();
+  });
+
+  it('fails the connection after a timed-out authoritative refresh settles', async () => {
+    const connection = new FakeMqttConnection();
+    const logger = new CapturingLogger();
+    const session = new EcoFlowCloudSession(
+      singleDeviceTestConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+      logger,
+      undefined,
+      10,
+      sequentialRequestIds(),
+      1,
+      1,
+    );
+
+    await session.start();
+    connection.publishGate = new Deferred<void>();
+    await waitUntil(() => session.state === 'failed', 100);
+    await waitUntil(() => connection.closeCalls === 1, 100);
+    assert.equal(connection.publishAttempts, 2);
+    assert.equal(connection.maximumActivePublishes, 1);
+
+    connection.publishGate.resolve();
+    await session.stop();
+    assert.equal(
+      logger.warnings.some(message => message.includes('did not settle cleanly')),
+      false,
+    );
+  });
+
+  it('fails the connection before an uncooperative refresh can overlap', async () => {
+    const connection = new FakeMqttConnection();
+    const session = new EcoFlowCloudSession(
+      singleDeviceTestConfig(),
+      successfulHttp(),
+      new FakeMqttTransport(connection),
+      undefined,
+      undefined,
+      5,
+      sequentialRequestIds(),
+      1,
+      1,
+    );
+
+    await session.start();
+    connection.publishGate = new Deferred<void>();
+    connection.ignoreOperationAbort = true;
+    await waitUntil(() => session.state === 'failed', 100);
+    await waitUntil(() => connection.closeCalls === 1, 100);
+    assert.equal(connection.publishAttempts, 2);
+    assert.equal(connection.maximumActivePublishes, 1);
+
+    connection.publishGate.resolve();
     await session.stop();
   });
 
@@ -897,6 +955,51 @@ describe('EcoFlow cloud session', () => {
       Uint8Array.of(1, 2, 3),
     );
   });
+
+  it('settles cancelled MQTT.js publications and subscriptions by force-closing', async () => {
+    for (const operation of ['publish', 'subscribe'] as const) {
+      const never = new Promise<never>(() => undefined);
+      const closeGate = new Deferred<void>();
+      const closeForces: boolean[] = [];
+      let operationCalls = 0;
+      const client = {
+        publishAsync: () => {
+          operationCalls += 1;
+          return never;
+        },
+        subscribeAsync: () => {
+          operationCalls += 1;
+          return never;
+        },
+        endAsync: async (force = false) => {
+          closeForces.push(force);
+          await closeGate.promise;
+        },
+      } as unknown as MqttClient;
+      const connection = new MqttJsConnection(client);
+      const controller = new AbortController();
+      const pending = operation === 'publish'
+        ? connection.publish('test/topic', 'payload', controller.signal)
+        : connection.subscribe(['test/topic'], controller.signal);
+
+      const gracefulClose = operation === 'subscribe'
+        ? connection.close(false)
+        : undefined;
+      controller.abort();
+      await assert.rejects(
+        operation === 'publish'
+          ? connection.publish('test/topic', 'payload')
+          : connection.subscribe(['test/topic']),
+        /closing/,
+      );
+      assert.equal(operationCalls, 1);
+      closeGate.resolve();
+      await assert.rejects(pending, /cancelled/);
+      await connection.close(true);
+      await gracefulClose;
+      assert.deepEqual(closeForces, [true]);
+    }
+  });
 });
 
 class FakeHttpTransport implements HttpTransport {
@@ -930,6 +1033,8 @@ class FakeMqttConnection implements MqttConnection {
   public readonly publishCalls: Array<{ topic: string; payload: Uint8Array | string }> = [];
   public readonly closeForces: Array<boolean | undefined> = [];
   public closeCalls = 0;
+  public publishAttempts = 0;
+  public maximumActivePublishes = 0;
   public failSubscribe = false;
   public failPublish = false;
   public ignoreOperationAbort = false;
@@ -939,6 +1044,7 @@ class FakeMqttConnection implements MqttConnection {
   private readonly connectListeners = new Set<() => void>();
   private readonly disconnectListeners = new Set<() => void>();
   private readonly messageListeners = new Set<(message: MqttMessage) => void>();
+  private activePublishes = 0;
 
   onConnect(listener: () => void): () => void {
     this.connectListeners.add(listener);
@@ -968,11 +1074,21 @@ class FakeMqttConnection implements MqttConnection {
     payload: Uint8Array | string,
     signal?: AbortSignal,
   ): Promise<void> {
-    await waitForGate(this.publishGate?.promise, signal, this.ignoreOperationAbort);
-    if (this.failPublish) {
-      throw new Error('TEST_MQTT_PASSWORD TESTWAVE30001');
+    this.publishAttempts += 1;
+    this.activePublishes += 1;
+    this.maximumActivePublishes = Math.max(
+      this.maximumActivePublishes,
+      this.activePublishes,
+    );
+    try {
+      await waitForGate(this.publishGate?.promise, signal, this.ignoreOperationAbort);
+      if (this.failPublish) {
+        throw new Error('TEST_MQTT_PASSWORD TESTWAVE30001');
+      }
+      this.publishCalls.push({ topic, payload });
+    } finally {
+      this.activePublishes -= 1;
     }
-    this.publishCalls.push({ topic, payload });
   }
 
   async close(force?: boolean): Promise<void> {

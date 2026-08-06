@@ -2,7 +2,7 @@
   "name": "homebridge-ecoflow-wave3",
   "displayName": "EcoFlow WAVE 3",
   "type": "module",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Homebridge 2 plugin for the EcoFlow WAVE 3 portable air conditioner.",
   "author": "Julian Missig",

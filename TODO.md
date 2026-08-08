@@ -1,6 +1,7 @@
 # Current
 
-Ship a reliable, Matter-only Homebridge 2.2.1 plugin for the EcoFlow WAVE 3.
+Ship a reliable, Matter-only Homebridge plugin for the EcoFlow WAVE 3,
+supporting Homebridge 2.2.1 and newer 2.x releases.
 The HAP migration, Matter commissioning, protocol boundary, command
 confirmation, architecture hardening, and initial Apple Home pairing are
 complete. Their history lives in git and the linked project documents rather
@@ -144,6 +145,10 @@ and controller reconciliation.
 
 ## Release readiness
 
+- [x] Verify Homebridge 2.3.0 compatibility while retaining 2.2.1 as the
+  supported minimum. The full 124-test suite, runtime Matter endpoint probes,
+  build, and package inspection pass on 2.3.0; the same suite also passes in an
+  isolated 2.2.1 install. Verified 2026-08-08.
 - [ ] Investigate authenticated-account WAVE 3 autodiscovery. Keep manual
   serial-number configuration until discovery is proven safe and strictly
   WAVE-3-specific.

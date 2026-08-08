@@ -1,181 +1,84 @@
 # Current
 
-Ship a reliable, Matter-only Homebridge plugin for the EcoFlow WAVE 3,
-supporting Homebridge 2.2.1 and newer 2.x releases.
-The HAP migration, Matter commissioning, protocol boundary, command
-confirmation, architecture hardening, and initial Apple Home pairing are
-complete. Their history lives in git and the linked project documents rather
-than this active checklist.
+Ship a reliable, Matter-only Homebridge plugin for the EcoFlow WAVE 3 on
+Homebridge 2.2.1 and newer 2.x releases.
 
-Current architecture and evidence:
+The protocol boundary, command confirmation, coordinator, Matter presentation,
+and primary Apple Home control paths are implemented. Household acceptance has
+passed for Off→Cool, Off→Heat, Cool→Heat→Cool profile restoration, all five fan
+speeds, and rapid-slider coalescing.
+[told: Julian · 2026-08-08](https://discord.com/channels/1499872194610598249/1531866537185640448/1535769081100247090)
 
-- [Matter-only decision](docs/decisions/0003-matter-only.md)
-- [Auto-mode interoperability decision](docs/decisions/0004-defer-matter-auto.md)
-- [Electrical power decision](docs/decisions/0006-electrical-power.md)
-- [Architecture comparison](docs/architecture-comparison.md)
-- [Protocol dossier](docs/protocol.md)
-- [Hardware evidence](docs/hardware-packet-evidence-2026-08-01.md)
-- [Commissioning runbook](docs/commissioning.md)
+Auto remains decoded internally but is not advertised because Apple Home writes
+Cool when Auto is selected on a Room Air Conditioner. Keep the integrated Room
+Air Conditioner and revisit Auto only after that controller mapping changes.
 
-## Now — controller ordering and WAVE mode profiles
+## Now — finish resilience acceptance
 
-Live Matter testing shows that transport, decoding, state reconciliation, and
-ordinary power/fan/temperature writes work. The remaining control failures sit
-at the boundary between Apple Home's write ordering and the WAVE's saved
-per-mode profiles.
+- [ ] Verify concurrent EcoFlow app and Matter control without stale replay.
+- [ ] Verify MQTT reconnect, child-bridge restart, WAVE power cycle, and an
+  extended unattended freshness window.
+- [ ] Verify startup with recent cache versus missing/expired cache and exactly
+  one explicit refresh.
+- [ ] Confirm normal and debug logs remain useful while credentials,
+  identifiers, and raw payloads stay redacted.
 
-### 1. Make every mode transition explicitly sequential
+## Release issue — same-UUID Matter shape replacement
 
-- [x] Represent the user's desired destination as durable staged intent,
-  separate from any command derived before wake-up.
-- [x] When the WAVE is off:
-  1. send power-on only and confirm the resulting operational state;
-  2. re-plan from the latest authoritative snapshot;
-  3. send the destination mode and confirm it;
-  4. send the destination target and confirm it.
-- [x] When the WAVE is already on, confirm the mode change before applying its
-  target/range rather than assuming the hardware accepts both atomically.
-- [x] Re-plan queued work after every confirmed step so a wake-up into a saved
-  profile cannot turn the remaining operation into a stale or false no-op.
-- [x] Let a newer Matter intent supersede the remaining steps of an older one;
-  power-off cancels all queued mode, setpoint, and fan work immediately.
-- [x] Add transcript-shaped regressions for Off→Heat, Off→Cool, and
-  on-device mode changes where the WAVE first restores a saved profile.
+The schema-5→6 Auto removal exposed a remaining Homebridge lifecycle failure.
+Homebridge rejected the cached Auto-capable endpoint during restoration, its
+public accessory API later reported that UUID absent, but the private Matter
+topology retained the endpoint. Registering the schema-6 replacement therefore
+created a second endpoint. A clean reset/recommission restored one schema-6
+accessory on one endpoint.
 
-### 2. Keep WAVE profiles authoritative and Matter values presentational
+- [ ] Reproduce the failed-restore/private-topology mismatch with the installed
+  Homebridge runtime and determine whether the plugin can detect or prevent it.
+- [ ] If no safe plugin-side recovery exists, document the least-destructive
+  Apple Home and Homebridge recovery path. Try removing the stale accessory in
+  Apple Home before removing or resetting the whole bridge.
+- [ ] Document the reproducible commissioning handoff in which Apple Home first
+  places the bridge and air conditioner in the selected room, temporarily moves
+  both to Default Room as No Response, then recovers and allows reassignment.
 
-- [x] Retain independent confirmed profiles for Cool, Heat, Auto, Fan Only,
-  and Dry, plus confirmed Sleep submode state, without copying values between
-  modes.
-- [x] Never infer a destination target from Matter's inactive companion
-  heating/cooling setpoint.
-- [x] Keep mode-only writes mode-only. Let the WAVE restore its independent
-  destination profile, then mirror that confirmed active target into both
-  constrained Matter setpoint attributes. Do not copy the source target into
-  the destination WAVE profile. Source: household Cool→Heat trace and
-  Julian's profile-sync model · 2026-08-02
-- [x] Track which target/range values came from an explicit controller write
-  versus projection needed only to keep Matter attributes transactionally
-  valid.
-- [x] Resolve the two-profile impedance mismatch: Apple Home presents one
-  active manual target, while Matter constrains two companion attributes and
-  the WAVE stores independent crossing profiles.
-- [x] Verify repeated Cool→Heat→Cool transitions make Apple Home follow each
-  confirmed active WAVE target without changing either saved WAVE profile.
-  Household acceptance passed 2026-08-08.
-
-### 3. Keep Auto deferred without losing protocol support
-
-- Auto is not advertised in Matter for now. A fresh-endpoint A/B test proved
-  that Apple Home writes `SystemMode=1` (Auto) to a plain Thermostat but writes
-  `SystemMode=3` (Cool) when Auto is selected on a Room Air Conditioner. Keep
-  the Room Air Conditioner for its integrated fan controls and Fan Only path;
-  revisit Auto after Apple fixes that device-type mapping. [decision: Julian ·
-  2026-08-08](docs/decisions/0004-defer-matter-auto.md)
-- [x] Preserve the verified WAVE protocol semantics: wire mode `5`, lower/upper
-  thresholds, midpoint scalar target, 16–30°C limits, and a minimum 4°C range.
-- [x] When the EcoFlow app selects Auto, retain its authoritative profile
-  internally and present Cooling at the Auto upper threshold to Matter.
-- [ ] Decode or safely diagnose the official app's Auto range-write
-  acknowledgement fields. Accepted app writes did not change the subsequent
-  full-state range, so distinguish device rejection/no-op from an unmapped
-  response.
-- [x] Prove Homebridge and the coordinator route a true Matter Auto write
-  correctly: the plain Thermostat diagnostic received `SystemMode=1`, sent one
-  WAVE mode-`5` command, preserved 19.8–23.8°C, and did not reverse to Cool.
-- [ ] Re-test the Room Air Conditioner after a meaningful Apple Home/Matter
-  update and with a second Matter controller. Re-enable Auto only after the
-  production device type writes `SystemMode.Auto` and renders the authoritative
-  report correctly.
-
-### 4. Hardware acceptance for the corrected coordinator
-
-For each test, change one thing, record the pre-state, Matter semantic write,
-WAVE command/acknowledgement, authoritative resulting state, physical result,
-and controller reconciliation.
-
-- [ ] Off→Cool with an explicit target.
-- [ ] Off→Heat with an explicit target that differs from the saved Heat
-  profile.
-- [x] Cool→Heat→Cool profile restoration. Household acceptance passed
-  2026-08-08.
-- [ ] Five fan speeds and rapid-slider coalescing.
-- [ ] Concurrent EcoFlow app and Matter control without stale replay.
-- [ ] MQTT reconnect, child-bridge restart, WAVE power cycle, and an extended
-  unattended freshness window.
-- [ ] Startup with recent cache versus missing/expired cache and exactly one
-  explicit refresh.
-- [x] Migrate endpoint feature shapes under the same UUID without requiring a
-  bridge re-pair: schema 4→5 advertised Auto; schema 5→6 removes it again after
-  the Apple Home Room Air Conditioner A/B result.
-- [x] Harden same-UUID Matter schema replacement against Homebridge's
-  asynchronous bridged registration lifecycle: require sustained endpoint
-  absence before UUID reuse, verify stable OnOff/Thermostat/Humidity
-  readability after registration, and clean up plus retry one dropped
-  registration. Regression coverage includes transient missing-state reads.
-- [ ] Normal and debug logs remain useful with credentials, identifiers, and
-  raw payloads redacted.
-
-## Matter presentation follow-up
-
-- [ ] Verify the standard Celsius/Fahrenheit thermostat UI attribute with a
-  controller that exposes it; keep all actual temperatures canonical in
-  Celsius.
-- [ ] Determine whether any common Matter controller exposes Fan Only, Dry,
-  and Sleep for this Room Air Conditioner. Apple Home and Eve currently do
-  not.
-- [ ] Expose Eco/Normal and Boost only when a useful standard Matter
-  programming or preset surface is available.
-- [ ] Continue omitting optional running-mode/compressor state until direct
-  protocol evidence can distinguish actual compressor activity.
-
-## Next — standard Matter electrical power
-
-- [x] Add WAVE display field `53` (`pow_get_ac`) to the pinned protobuf subset
-  and normalize it as AC active power in watts. Do not substitute field `777`
-  (`pow_get_self_consume`), which can include power drawn from an attached
-  battery.
-- [x] Accept sparse power-only packets as supplemental measurement evidence.
-  They must not renew operational power/mode authority, rebase command state,
-  or confirm a command.
-- [x] Declare `electricalPowerMeasurement.activePower` on the existing Room Air
-  Conditioner accessory. Let Homebridge 2.2.1 apply its standard
-  `PowerTopology(TreeTopology)` and Electrical Sensor utility-device handling;
-  do not create a separate composed child endpoint.
-- [x] Convert finite nonnegative WAVE watts to Matter milliwatts and publish
-  `null` when the measurement is unknown or stale. Publish zero only when the
-  WAVE reports zero.
-- [x] Add one optional advanced `freshnessTimeoutMinutes` setting, defaulting
-  to five minutes. Use that single duration for independently timestamped
-  categories of live cloud-derived knowledge, including operational authority,
-  environmental telemetry, saved profiles, and electrical power; one category
-  must not refresh another. Keep static firmware metadata, the ten-second
-  command deadline, and the separate startup cache-restoration grace outside
-  this setting.
-- [x] Cover protobuf decoding, sparse merge behavior, independent freshness,
-  explicit offline/account-error clearing, W-to-mW conversion, cache shape,
-  Homebridge electrical-cluster defaults, and descriptor advertisement in
-  tests before household validation.
+Source: household Homebridge diagnostics and Apple Home commissioning
+observations · 2026-08-08
 
 ## Release readiness
 
-- [x] Verify Homebridge 2.3.0 compatibility while retaining 2.2.1 as the
-  supported minimum. The full 124-test suite, runtime Matter endpoint probes,
-  build, and package inspection pass on 2.3.0; the same suite also passes in an
-  isolated 2.2.1 install. Verified 2026-08-08.
-- [ ] Investigate authenticated-account WAVE 3 autodiscovery. Keep manual
-  serial-number configuration until discovery is proven safe and strictly
-  WAVE-3-specific.
-- [ ] Complete the corrected coordinator and hardware acceptance above.
+- [ ] Complete the resilience acceptance and same-UUID migration disposition
+  above.
 - [ ] Run `npm run verify` and inspect `npm pack --dry-run` for the release
   candidate.
-- [ ] Review configuration schema, install/update instructions,
+- [ ] Review the configuration schema, install/update instructions,
   troubleshooting, privacy language, and supported-controller caveats.
 - [ ] Prepare versioning, release notes, changelog, and npm metadata.
 - [ ] Keep the package private until Julian explicitly approves publication.
 
+## Watch — deferred interoperability
+
+- [ ] Decode or safely diagnose the official EcoFlow app's Auto range-write
+  acknowledgement fields. Accepted app writes did not change the subsequent
+  full-state range, so distinguish device rejection/no-op from an unmapped
+  response.
+- [ ] Re-test Room Air Conditioner Auto after a meaningful Apple Home/Matter
+  update and with a second Matter controller. Re-enable it only after the
+  production device type writes `SystemMode.Auto` and renders authoritative
+  state correctly.
+- [ ] Verify the standard Celsius/Fahrenheit thermostat UI attribute with a
+  controller that exposes it; keep actual temperatures canonical in Celsius.
+- [ ] Determine whether a common Matter controller exposes Fan Only, Dry, and
+  Sleep for this Room Air Conditioner. Apple Home and Eve currently do not.
+- [ ] Expose Eco/Normal and Boost only when a useful standard Matter programming
+  or preset surface is available.
+- [ ] Continue omitting optional running-mode/compressor state until direct
+  protocol evidence can distinguish actual compressor activity.
+
 ## Later / outside the first release
 
+- [ ] Investigate authenticated-account WAVE 3 autodiscovery. Keep manual
+  serial-number configuration until discovery is proven safe and strictly
+  WAVE-3-specific.
 - [ ] Consider optional per-device Night and Eco composed switch endpoints,
   disabled by default and derived only from confirmed device state.
 - [ ] Add battery/charging state when an add-on battery is present.
@@ -190,5 +93,13 @@ and controller reconciliation.
   persisted counter with defined gap, restart, reset, clock-jump, and offline
   semantics—not as device-lifetime or accounting-grade energy. Prefer a real
   device Wh/kWh counter if one is identified first.
-- [ ] Do not add other EcoFlow products or older WAVE generations to this
-  repository.
+
+## Project records
+
+- [Matter-only decision](docs/decisions/0003-matter-only.md)
+- [Auto-mode interoperability decision](docs/decisions/0004-defer-matter-auto.md)
+- [Electrical power decision](docs/decisions/0006-electrical-power.md)
+- [Architecture comparison](docs/architecture-comparison.md)
+- [Protocol dossier](docs/protocol.md)
+- [Hardware evidence](docs/hardware-packet-evidence-2026-08-01.md)
+- [Commissioning runbook](docs/commissioning.md)

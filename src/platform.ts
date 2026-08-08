@@ -422,6 +422,11 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         return accessory;
       }
 
+      // Homebridge's bridged Matter registration is fire-and-forget: its API
+      // promise can resolve even when the endpoint never becomes usable, or
+      // while an older same-UUID removal is still queued. Fully clean and
+      // settle the UUID before the one bounded retry so that queued removal
+      // cannot delete the replacement too.
       const cleaned = await this.cleanupDispatchedRegistration(accessory);
       releaseWave3MatterAccessoryState(uuid);
       if (cleaned && this.matterAccessories.get(uuid) === accessory) {
@@ -440,7 +445,13 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   private async waitForMatterRegistration(
     accessory: MatterAccessory<Wave3MatterAccessoryContext>,
   ): Promise<boolean> {
+    // TODO: Replace these polling barriers if Homebridge exposes an explicit
+    // bridged-accessory ready/removed promise or lifecycle event. Its current
+    // Matter API only confirms that the operation was dispatched.
     const maxAttempts = this.dependencies.matterRegistrationPollAttempts ?? 60;
+    // OnOff can become readable before the rest of an asynchronously built
+    // endpoint. Require every cluster the binding depends on to be readable
+    // on consecutive, spaced probes before starting the cloud session.
     const requiredStablePolls = Math.max(
       1,
       Math.min(this.dependencies.matterRegistrationStablePolls ?? 2, maxAttempts),
@@ -493,6 +504,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
 
   private async waitForMatterUnregistration(uuids: readonly string[]): Promise<boolean> {
     const maxAttempts = this.dependencies.matterOperationPollAttempts ?? 200;
+    // A queued Homebridge removal can briefly make getAccessoryState return
+    // undefined while the old endpoint still owns its UUID. With the default
+    // 25 ms poll interval, 80 consecutive misses establish about two seconds
+    // of continuous absence before a same-UUID replacement is allowed.
     const requiredStablePolls = Math.max(
       1,
       Math.min(this.dependencies.matterUnregistrationStablePolls ?? 80, maxAttempts),
@@ -523,9 +538,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
   ): Promise<boolean> {
     const maxAttempts = this.dependencies.matterOperationPollAttempts ?? 200;
     try {
-      // Registration is dispatched asynchronously by Homebridge. Cancel it
-      // immediately even when the endpoint is not readable yet, then keep
-      // watching for a late registration that needs a second removal.
+      // Registration and removal are dispatched independently by Homebridge.
+      // This first cancellation can therefore run before the delayed add and
+      // remove nothing. Keep watching for that late add, dispatch removal a
+      // second time if it appears, and then require stable UUID absence.
       await this.matter!.unregisterPlatformAccessories(
         PLUGIN_NAME,
         PLATFORM_NAME,

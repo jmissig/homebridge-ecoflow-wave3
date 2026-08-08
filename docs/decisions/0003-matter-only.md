@@ -36,14 +36,17 @@ better than preserving HAP and adding several synchronized companion services.
 Use a customized Matter `RoomAirConditioner` endpoint, not the narrower
 Homebridge convenience wrapper unchanged. Construct it from Homebridge's
 exported low-level `devices.RoomAirConditionerDevice` and
-`devices.RoomAirConditionerRequirements`, enabling Heating, Cooling, AutoMode,
-and FanControl.
+`devices.RoomAirConditionerRequirements`, enabling Heating, Cooling, and
+FanControl. AutoMode was briefly enabled for schema 5, then removed again in
+schema 6 after Apple Home wrote Cool for Room Air Conditioner Auto selections;
+the current interoperability decision is [Decision 0004](0004-defer-matter-auto.md).
 
 Power and active HVAC mode are separate Matter concerns:
 
 - Off -> `OnOff.onOff = false`
 - Powered -> `OnOff.onOff = true`
-- Auto -> `Thermostat.systemMode = Auto` (`0x01`)
+- Auto -> retained internally and projected as Cool at its upper threshold;
+  Matter Auto (`0x01`) is currently not advertised
 - Cool -> `Thermostat.systemMode = Cool` (`0x03`)
 - Heat -> `Thermostat.systemMode = Heat` (`0x04`)
 - Fan Only -> `Thermostat.systemMode = FanOnly` (`0x07`)

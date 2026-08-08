@@ -132,8 +132,8 @@ placeholders.
 ## Supported controls and information
 
 - Power on and off
-- Cooling, heating, and automatic heat/cool modes
-- Target temperature and automatic lower/upper thresholds
+- Cooling and heating modes
+- Target temperature
 - Five fan-speed steps
 - Current room/input-air temperature reported by the WAVE 3 ambient sensor
 - Ambient humidity
@@ -158,14 +158,13 @@ real-device behavior remains unverified.
 Sleep/Night means the WAVE 3's quiet operating preset; it is not a sleep timer.
 Other Matter controllers may present these standard modes differently.
 
-Automatic heat/cool is advertised through Matter using the WAVE's saved Auto
-profile. A mode-only change lets the appliance restore its authoritative lower
-and upper thresholds; only an explicit controller range change replaces them.
-The WAVE requires a 4 °C minimum range within 16–30 °C, which the plugin
-enforces before publishing a command. WAVE-initiated Auto currently renders
-correctly in Apple Home, but selecting Auto in Apple Home has been observed to
-send Matter `SystemMode=Cool` rather than `SystemMode=Auto`, so Apple Home→WAVE
-Auto control remains an interoperability limitation under investigation.
+Automatic heat/cool is temporarily not advertised through Matter. In live A/B
+testing, Apple Home correctly wrote `SystemMode=Auto` to a plain Matter
+Thermostat but wrote `SystemMode=Cool` when Auto was selected on the production
+Room Air Conditioner. The plugin retains the WAVE's real Auto profile
+internally and presents app-initiated Auto as Cooling at its upper threshold.
+This preserves the Room Air Conditioner's integrated fan controls while the
+Apple Home interoperability bug remains unresolved.
 
 Apple Home also does not currently display the published firmware revision.
 Its UI may hide the standard Celsius/Fahrenheit preference even though the

@@ -20,7 +20,6 @@ export function wave3RoomAirConditionerDeviceType(matter: MatterAPI) {
   const Wave3ThermostatBase = requirements.ThermostatServer.with(
     'Heating',
     'Cooling',
-    'AutoMode',
   );
   const MultiSpeedFanControlServer = requirements.FanControlServer.with('MultiSpeed');
   const Wave3ThermostatUiBase = requirements.ThermostatUserInterfaceConfigurationServer;

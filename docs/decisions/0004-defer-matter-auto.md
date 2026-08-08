@@ -1,25 +1,40 @@
 # Matter Auto mode interoperability
 
 Date: 2026-08-02
-Superseded in part: 2026-08-08
+Last decision: 2026-08-08
 
 ## Current decision
 
-Advertise Matter Thermostat Auto again using the completed staged-intent and
-authoritative-profile coordination model. A mode-only Auto write sends only
+Do not advertise Matter Thermostat Auto on the production Room Air Conditioner
+for now. Continue decoding and retaining the WAVE 3's real Auto profile
+internally. If Auto is selected in the EcoFlow app, project it to Matter as
+Cooling at the Auto upper threshold.
+
+A fresh-endpoint A/B experiment isolated the failure to Apple Home's treatment
+of the Matter device type: a plain Thermostat received `SystemMode = 1` (Auto),
+while the Room Air Conditioner received `SystemMode = 3` (Cool) for the same
+Apple Home selection. Keep the Room Air Conditioner because its integrated fan
+controls and Fan Only path are more useful than Auto for this installation.
+The plain-Thermostat workaround is therefore not the production direction.
+[decision: Julian · 2026-08-08](https://discord.com/channels/1499872194610598249/1531866537185640448/1535759260850454589)
+
+Use endpoint context schema 6 for the returned Heat/Cool-only feature shape.
+The schema change forces Homebridge to replace a cached schema-5 Auto endpoint
+before restoring cluster state, preventing a cached `SystemMode.Auto` or
+Auto-only `MinSetpointDeadBand` from making the replacement nonconformant.
+
+## Superseded 2026-08-08 re-enable attempt
+
+Matter Thermostat Auto was briefly advertised using the completed staged-intent
+and authoritative-profile coordination model. A mode-only Auto write sent only
 WAVE mode `5`; after confirmation, the WAVE's saved lower and upper thresholds
-are projected back into Matter. Only explicit controller setpoint writes may
+were projected back into Matter. Only explicit controller setpoint writes could
 replace that saved range.
 
-Keep Matter's global `MinSetpointDeadBand` at zero because a four-degree global
-constraint would also restrict ordinary Heat and Cool companion setpoints.
-Enforce the WAVE-specific 4°C Auto minimum in the semantic planner within the
-16–30°C device bounds. Replace the schema-v4 Heat/Cool-only endpoint with the
-schema-v5 Auto-capable shape under the same UUID.
-
-This supersedes the deferral below. It does not erase the prior Apple Home
-interoperability evidence; renewed controller and hardware acceptance remains
-required.
+The schema-v5 experiment kept Matter's global `MinSetpointDeadBand` at zero
+because a four-degree global constraint would also restrict ordinary Heat and
+Cool companion setpoints. The WAVE-specific 4°C Auto minimum remained enforced
+in the semantic planner within the 16–30°C device bounds.
 
 The 2026-08-08 household acceptance pass proved the WAVE-facing implementation
 but not Apple Home control. Cool→Heat→Cool restored each saved WAVE profile,
@@ -31,7 +46,7 @@ however, tapping Auto in Apple Home sent a raw Matter write of
 an older Apple OS produced the same value. The plugin therefore never received
 an Auto intent to translate into WAVE mode `5`.
 
-## Previous decision
+## Original 2026-08-02 decision
 
 Do not advertise the Matter Thermostat Auto feature in the first release.
 Continue decoding and retaining the WAVE 3's real Auto profile internally. If
@@ -69,11 +84,11 @@ standard contract:
   Cool→Heat→Cool transitions confirmed correctly, and a mode-only WAVE Auto
   transition retained the appliance's saved 19.8–23.8°C range. [told: Julian ·
   2026-08-08](https://discord.com/channels/1499872194610598249/1531866537185640448/1535702127895121920)
-- The reverse path now works: WAVE mode `5` is projected as Matter
-  `SystemMode.Auto`, acknowledged by the Apple fabric, and rendered as Auto by
-  Apple Home. This supersedes the 2026-08-02 reverse-path observation above;
-  only controller→WAVE Auto remains blocked. Source: household Homebridge
-  Matter diagnostics and EcoFlow-app test · 2026-08-08
+- During the schema-5 experiment, the reverse path worked: WAVE mode `5` was
+  projected as Matter `SystemMode.Auto`, acknowledged by the Apple fabric, and
+  rendered as Auto by Apple Home. This superseded the 2026-08-02 reverse-path
+  observation; only controller→WAVE Auto was blocked. Source: household
+  Homebridge Matter diagnostics and EcoFlow-app test · 2026-08-08
 - At the raw Matter boundary, every Apple Home Auto selection wrote
   `SystemMode = 3` (Cool), not `1` (Auto). A focused runtime write of `1`
   traversed Homebridge and the plugin correctly and selected WAVE mode `5`, so
@@ -95,21 +110,30 @@ standard contract:
   for single-setpoint devices is not a direct fix here. [source: HAMH climate
   documentation · retrieved 2026-08-08](https://riddix.github.io/home-assistant-matter-hub/devices/climate)
 
-## Current interpretation and next discriminator
+## Fresh-endpoint A/B result
 
-The failure is not unique to this plugin or to Homebridge. The evidence points
-to an Apple Home interoperability problem with this Matter presentation, but
-does not yet prove whether the trigger is the `RoomAirConditioner` device shape
-or Apple retaining capabilities from the earlier pre-Auto endpoint.
+- A temporary plain Matter Thermostat, with a fresh accessory identity and the
+  same true dual setpoints, received Apple Home's raw `SystemMode = 1` write.
+  Homebridge routed it unchanged, the plugin sent exactly one WAVE mode-`5`
+  command, the WAVE retained its 19.8–23.8°C saved range, and no delayed Cool
+  reversal appeared during the following minute. Source: household Homebridge
+  Matter diagnostics and WAVE telemetry · 2026-08-08
+- Moments later, the fresh Room Air Conditioner endpoint on the same bridge and
+  Apple fabric received `SystemMode = 3` when Auto was selected. The common
+  Homebridge, plugin, coordinator, WAVE, and fabric paths rule out stale endpoint
+  capabilities and plugin-side Auto decoding. Source: household Homebridge
+  Matter diagnostics · 2026-08-08
+- The experiment introduced endpoint-number churn when Homebridge rejected an
+  inconsistent cached feature shape and reserved its old endpoint number. That
+  is a separate Homebridge cache-restoration hazard and is why future feature
+  changes must continue to use explicit schema replacement and bounded
+  registration checks.
 
-The smallest discriminating experiment is a temporary fresh-identity endpoint
-that exposes the same WAVE state and true dual setpoints as a plain Matter
-Thermostat without FanControl. If Apple writes `SystemMode.Auto` there, compare
-the two endpoint descriptors and decide whether losing integrated fan control
-is an acceptable workaround. If it still writes Cool, preserve both raw traces
-for an Apple Feedback report and test a second Matter controller.
+The evidence therefore identifies an Apple Home Room Air Conditioner mapping
+bug, not a WAVE protocol, Homebridge routing, or coordinator failure. Re-test
+after a meaningful Apple Home/Matter update and with a second Matter controller.
 
-## Consequences of the previous deferral
+## Consequences of the current deferral
 
 - Apple Home receives only the interoperable manual HVAC modes for now.
 - The WAVE protocol model retains Auto mode, its saved profile, 16–30°C bounds,

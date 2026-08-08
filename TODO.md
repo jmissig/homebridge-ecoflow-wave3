@@ -64,36 +64,29 @@ per-mode profiles.
   confirmed active WAVE target without changing either saved WAVE profile.
   Household acceptance passed 2026-08-08.
 
-### 3. Re-enable Auto using the authoritative-profile coordinator
+### 3. Keep Auto deferred without losing protocol support
 
-- [x] Advertise standard Matter Auto again on Homebridge 2.3.0 and project
-  authoritative WAVE Auto state as `SystemMode.Auto`. [decision: Julian ·
+- Auto is not advertised in Matter for now. A fresh-endpoint A/B test proved
+  that Apple Home writes `SystemMode=1` (Auto) to a plain Thermostat but writes
+  `SystemMode=3` (Cool) when Auto is selected on a Room Air Conditioner. Keep
+  the Room Air Conditioner for its integrated fan controls and Fan Only path;
+  revisit Auto after Apple fixes that device-type mapping. [decision: Julian ·
   2026-08-08](docs/decisions/0004-defer-matter-auto.md)
 - [x] Preserve the verified WAVE protocol semantics: wire mode `5`, lower/upper
   thresholds, midpoint scalar target, 16–30°C limits, and a minimum 4°C range.
-- [x] Keep mode-only Auto writes mode-only. After confirmation, project the
-  WAVE's restored saved lower/upper thresholds without replacing them.
-- [x] Apply an Auto range only after explicit controller setpoint writes;
-  enforce the 4°C minimum in the WAVE-aware planner rather than Matter's global
-  deadband attribute.
+- [x] When the EcoFlow app selects Auto, retain its authoritative profile
+  internally and present Cooling at the Auto upper threshold to Matter.
 - [ ] Decode or safely diagnose the official app's Auto range-write
   acknowledgement fields. Accepted app writes did not change the subsequent
   full-state range, so distinguish device rejection/no-op from an unmapped
   response.
-- [x] Verify authoritative WAVE Auto projects through Homebridge and renders as
-  Auto in Apple Home while preserving the saved mode-only range. Household
-  acceptance passed with WAVE mode `5` and 19.8–23.8°C on 2026-08-08.
-- [ ] Resolve Apple Home→WAVE Auto interoperability. Apple Home's raw Matter
-  write is `SystemMode=3` (Cool), not `1` (Auto), on current and older Apple
-  OS clients; Homebridge correctly routes a direct write of `1` to WAVE mode
-  `5`. An independent matter.js Room Air Conditioner has the same trace in
-  [HAMH issue #309](https://github.com/RiDDiX/home-assistant-matter-hub/issues/309#issuecomment-4294985981).
-- [ ] Build a temporary fresh-identity plain Thermostat endpoint with the same
-  true dual setpoints and no FanControl. Compare its Apple Home raw Auto write
-  with the Room Air Conditioner before choosing a permanent workaround.
-- [ ] After Apple Home can write true Auto, verify explicit lower/upper changes
-  and the WAVE's 16–30°C bounds and 4°C minimum on hardware.
-- [ ] Repeat the Auto acceptance sequence with a second Matter controller.
+- [x] Prove Homebridge and the coordinator route a true Matter Auto write
+  correctly: the plain Thermostat diagnostic received `SystemMode=1`, sent one
+  WAVE mode-`5` command, preserved 19.8–23.8°C, and did not reverse to Cool.
+- [ ] Re-test the Room Air Conditioner after a meaningful Apple Home/Matter
+  update and with a second Matter controller. Re-enable Auto only after the
+  production device type writes `SystemMode.Auto` and renders the authoritative
+  report correctly.
 
 ### 4. Hardware acceptance for the corrected coordinator
 
@@ -112,8 +105,9 @@ and controller reconciliation.
   unattended freshness window.
 - [ ] Startup with recent cache versus missing/expired cache and exactly one
   explicit refresh.
-- [x] Upgrade the Heat/Cool-only schema-v4 endpoint to the Auto-capable
-  schema-v5 shape with the same UUID and without requiring bridge re-pairing.
+- [x] Migrate endpoint feature shapes under the same UUID without requiring a
+  bridge re-pair: schema 4→5 advertised Auto; schema 5→6 removes it again after
+  the Apple Home Room Air Conditioner A/B result.
 - [x] Harden same-UUID Matter schema replacement against Homebridge's
   asynchronous bridged registration lifecycle: require sustained endpoint
   absence before UUID reuse, verify stable OnOff/Thermostat/Humidity

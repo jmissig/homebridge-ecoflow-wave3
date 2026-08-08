@@ -91,13 +91,12 @@ The primary Matter surface should be climate-first:
 
 - one WAVE 3 accessory
 - one customized Matter `RoomAirConditioner` endpoint built from Homebridge's
-  exported low-level Matter device requirements, with Heating, Cooling,
-  and FanControl enabled; Auto remains decoded internally but is not currently
-  advertised because Apple Home did not write or render standard Matter Auto
+  exported low-level Matter device requirements, with Heating, Cooling, Auto,
+  and FanControl enabled
 - `OnOff.onOff` is authoritative for appliance power; `Thermostat.systemMode`
   selects the active HVAC mode and does not replace the power cluster
-- Off, Cool, Heat, Fan Only, Dry, and Sleep system modes where behavior is
-  verified; revisit Matter Auto after controller interoperability improves
+- Off, Cool, Heat, Auto, Fan Only, Dry, and Sleep system modes where behavior
+  is verified; Auto remains subject to controller interoperability acceptance
 - current room/input-air temperature from the WAVE 3 ambient sensor plus
   cooling/heating setpoints
 - ambient humidity

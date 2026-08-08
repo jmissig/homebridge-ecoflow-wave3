@@ -63,23 +63,26 @@ per-mode profiles.
 - [ ] Verify repeated Cool→Heat→Cool transitions make Apple Home follow each
   confirmed active WAVE target without changing either saved WAVE profile.
 
-### 3. Keep Auto deferred without losing protocol support
+### 3. Re-enable Auto using the authoritative-profile coordinator
 
-- Auto is not advertised in Matter for now. Matter defines Auto as a distinct
-  writable `SystemMode`, but Apple Home twice displayed Auto without writing
-  that value and ignored a correctly reported Auto state. [decision: Julian ·
-  2026-08-02](docs/decisions/0004-defer-matter-auto.md)
+- [x] Advertise standard Matter Auto again on Homebridge 2.3.0 and project
+  authoritative WAVE Auto state as `SystemMode.Auto`. [decision: Julian ·
+  2026-08-08](docs/decisions/0004-defer-matter-auto.md)
 - [x] Preserve the verified WAVE protocol semantics: wire mode `5`, lower/upper
   thresholds, midpoint scalar target, 16–30°C limits, and a minimum 4°C range.
-- [x] When the EcoFlow app selects Auto, retain its authoritative profile
-  internally and present Cooling at the Auto upper threshold to Matter.
+- [x] Keep mode-only Auto writes mode-only. After confirmation, project the
+  WAVE's restored saved lower/upper thresholds without replacing them.
+- [x] Apply an Auto range only after explicit controller setpoint writes;
+  enforce the 4°C minimum in the WAVE-aware planner rather than Matter's global
+  deadband attribute.
 - [ ] Decode or safely diagnose the official app's Auto range-write
   acknowledgement fields. Accepted app writes did not change the subsequent
   full-state range, so distinguish device rejection/no-op from an unmapped
   response.
-- [ ] Re-test Auto with a second Matter controller and after meaningful Apple
-  Home/Homebridge Matter updates. Re-enable it only after a controller writes
-  `SystemMode.Auto` and renders the authoritative report correctly.
+- [ ] Verify Apple Home writes `SystemMode.Auto`, renders authoritative Auto,
+  restores the saved range on a mode-only transition, and applies explicit
+  lower/upper changes after the Homebridge 2.3.0 endpoint migration.
+- [ ] Repeat the Auto acceptance sequence with a second Matter controller.
 
 ### 4. Hardware acceptance for the corrected coordinator
 
@@ -97,8 +100,8 @@ and controller reconciliation.
   unattended freshness window.
 - [ ] Startup with recent cache versus missing/expired cache and exactly one
   explicit refresh.
-- [x] Upgrade an older Auto-capable cached endpoint to the Heat/Cool-only
-  Matter shape without restoring an illegal Auto value or requiring re-pairing.
+- [x] Upgrade the Heat/Cool-only schema-v4 endpoint to the Auto-capable
+  schema-v5 shape with the same UUID and without requiring bridge re-pairing.
 - [ ] Normal and debug logs remain useful with credentials, identifiers, and
   raw payloads redacted.
 

@@ -89,6 +89,11 @@ export function clustersForSnapshot(
       minCoolSetpointLimit: 1_600,
       maxCoolSetpointLimit: 3_000,
       absMaxCoolSetpointLimit: 3_000,
+      // Matter requires this attribute when Auto is advertised. Keep its
+      // global constraint disabled because the WAVE's four-degree minimum is
+      // specific to Auto; applying it here would also constrain the inactive
+      // companion setpoint while Cool or Heat is active.
+      minSetpointDeadBand: 0,
       controlSequenceOfOperation: 4,
       systemMode: projectedSystemMode,
     },
@@ -115,9 +120,6 @@ export function clustersForSnapshot(
   };
 
   delete clusters.thermostat?.thermostatRunningMode;
-  // Remove the Auto-only attribute from older cached endpoint state when the
-  // Auto feature is no longer advertised.
-  delete clusters.thermostat?.minSetpointDeadBand;
 
   clusters.relativeHumidityMeasurement = {
     measuredValue: environmentUnavailable
@@ -156,14 +158,6 @@ export function systemModeForState(
   }
   if (mode === undefined || mode === 'off') {
     return undefined;
-  }
-  // Apple Home currently presents Auto for this Room Air Conditioner but does
-  // not write Thermostat.SystemMode=Auto, and it ignores authoritative Auto
-  // reports. Keep WAVE Auto available to the protocol/domain layer, but expose
-  // an externally selected Auto profile as Cool at its upper threshold until
-  // controller interoperability is good enough to advertise Auto again.
-  if (mode === 'auto') {
-    return MATTER_SYSTEM_MODE.cool;
   }
   return MATTER_SYSTEM_MODE[mode];
 }

@@ -550,7 +550,7 @@ Source: household Apple Home/Matter diagnostic log and narrated target selection
 Source: household Apple Home, EcoFlow app, and WAVE 3 observations shared by Julian · 2026-08-02
 Auto-range observation: Julian · 2026-08-02
 
-**Matter interoperability — Auto temporarily not advertised**
+**Matter interoperability — Auto deferral and re-enablement**
 
 - Matter defines Auto as a distinct writable Thermostat `SystemMode`; the
   thermostat is responsible for generating heating or cooling demand from the
@@ -562,9 +562,16 @@ Auto-range observation: Julian · 2026-08-02
   `SystemMode.Auto`. Apple Home sent power and later Cooling-setpoint traffic
   instead. A correctly reported and controller-acknowledged Auto state also
   failed to render as Auto.
-- Auto is therefore deferred at the Matter boundary. The protocol/domain layer
-  continues to preserve real WAVE Auto state. An EcoFlow-app-selected Auto
-  profile is presented to Matter as Cooling at its upper threshold.
+- Auto was therefore deferred at the Matter boundary while the protocol/domain
+  layer continued to preserve real WAVE Auto state.
+- On 2026-08-08 Auto was re-enabled after the staged-intent coordinator and
+  authoritative saved-profile projection had become the settled control model.
+  Mode-only Auto changes now send only mode `5` and accept the WAVE's restored
+  range; explicit Matter setpoint writes are planned separately and constrained
+  to the observed 16–30 °C bounds and four-degree minimum.
+- The earlier Apple Home result remains an interoperability risk to verify on
+  hardware; re-enablement does not reinterpret the old trace as an EcoFlow
+  protocol failure.
 
 [Decision record](decisions/0004-defer-matter-auto.md)
 

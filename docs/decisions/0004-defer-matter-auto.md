@@ -1,8 +1,27 @@
-# Defer Matter Auto mode
+# Matter Auto mode interoperability
 
 Date: 2026-08-02
+Superseded in part: 2026-08-08
 
-## Decision
+## Current decision
+
+Advertise Matter Thermostat Auto again using the completed staged-intent and
+authoritative-profile coordination model. A mode-only Auto write sends only
+WAVE mode `5`; after confirmation, the WAVE's saved lower and upper thresholds
+are projected back into Matter. Only explicit controller setpoint writes may
+replace that saved range.
+
+Keep Matter's global `MinSetpointDeadBand` at zero because a four-degree global
+constraint would also restrict ordinary Heat and Cool companion setpoints.
+Enforce the WAVE-specific 4°C Auto minimum in the semantic planner within the
+16–30°C device bounds. Replace the schema-v4 Heat/Cool-only endpoint with the
+schema-v5 Auto-capable shape under the same UUID.
+
+This supersedes the deferral below. It does not erase the prior Apple Home
+interoperability evidence; renewed controller and hardware acceptance remains
+required.
+
+## Previous decision
 
 Do not advertise the Matter Thermostat Auto feature in the first release.
 Continue decoding and retaining the WAVE 3's real Auto profile internally. If
@@ -34,7 +53,7 @@ standard contract:
   controller acknowledged. Source: household Matter diagnostics and Julian's
   narrated test · 2026-08-02
 
-## Consequences
+## Consequences of the previous deferral
 
 - Apple Home receives only the interoperable manual HVAC modes for now.
 - The WAVE protocol model retains Auto mode, its saved profile, 16–30°C bounds,

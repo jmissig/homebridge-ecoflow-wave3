@@ -1354,6 +1354,8 @@ function updateLastSystemMode(
 
 function waveModeForSystemMode(systemMode: number): Exclude<Wave3Mode, 'off'> | undefined {
   switch (systemMode) {
+  case MATTER_SYSTEM_MODE.auto:
+    return 'auto';
   case MATTER_SYSTEM_MODE.cool:
     return 'cool';
   case MATTER_SYSTEM_MODE.heat:
@@ -1473,8 +1475,7 @@ function packedFirmwareVersion(version: string): number {
 }
 
 function validSystemMode(value: unknown): number | undefined {
-  return typeof value === 'number' && value !== MATTER_SYSTEM_MODE.auto
-    && Object.values(MATTER_SYSTEM_MODE).includes(
-      value as (typeof MATTER_SYSTEM_MODE)[keyof typeof MATTER_SYSTEM_MODE],
-    ) ? value : undefined;
+  return typeof value === 'number' && Object.values(MATTER_SYSTEM_MODE).includes(
+    value as (typeof MATTER_SYSTEM_MODE)[keyof typeof MATTER_SYSTEM_MODE],
+  ) ? value : undefined;
 }

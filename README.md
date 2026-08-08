@@ -132,8 +132,8 @@ placeholders.
 ## Supported controls and information
 
 - Power on and off
-- Cooling and heating modes
-- Target temperature
+- Cooling, heating, and automatic heat/cool modes
+- Target temperature and automatic lower/upper thresholds
 - Five fan-speed steps
 - Current room/input-air temperature reported by the WAVE 3 ambient sensor
 - Ambient humidity
@@ -158,13 +158,13 @@ real-device behavior remains unverified.
 Sleep/Night means the WAVE 3's quiet operating preset; it is not a sleep timer.
 Other Matter controllers may present these standard modes differently.
 
-Automatic heat/cool is temporarily not advertised through Matter. Matter
-defines Auto as a distinct writable thermostat system mode, but Apple Home was
-observed showing Auto without sending that mode to the accessory and ignoring
-authoritative Auto reports. If Auto is selected in the EcoFlow app, the plugin
-retains the real WAVE profile internally and presents it to Matter as Cooling
-at the Auto upper threshold. Auto will be reconsidered after controller
-interoperability improves.
+Automatic heat/cool is advertised through Matter using the WAVE's saved Auto
+profile. A mode-only change lets the appliance restore its authoritative lower
+and upper thresholds; only an explicit controller range change replaces them.
+The WAVE requires a 4 °C minimum range within 16–30 °C, which the plugin
+enforces before publishing a command. Earlier Apple Home testing displayed
+Auto without reliably writing or rendering the standard mode, so controller
+behavior still needs renewed hardware acceptance.
 
 Apple Home also does not currently display the published firmware revision.
 Its UI may hide the standard Celsius/Fahrenheit preference even though the

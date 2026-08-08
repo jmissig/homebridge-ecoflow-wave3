@@ -70,7 +70,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const restored = harness.platform.matterAccessories.get(expectedFirstUuid)!;
     assert.equal(restored.displayName, 'Bedroom WAVE 3');
     assert.deepEqual(restored.context, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       serialNumber: 'FIRST1234',
       lastSystemMode: 0x04,
     });
@@ -138,33 +138,38 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await harness.signalDidFinishLaunching();
     assert.deepEqual(harness.unregistered, [cached]);
     assert.equal(harness.registered.length, 1);
-    assert.equal(harness.registered[0]?.context.schemaVersion, 4);
+    assert.equal(harness.registered[0]?.context.schemaVersion, 5);
     assert.notEqual(harness.registered[0]?.clusters?.relativeHumidityMeasurement, undefined);
     assert.deepEqual(harness.registered[0]?.clusters?.electricalPowerMeasurement, {
       activePower: null,
     });
   });
 
-  it('re-registers an older cached Matter endpoint before a feature-shape migration', async () => {
+  it('re-registers an older cached Matter endpoint before restoring the Auto feature shape', async () => {
     const harness = platformHarness(validConfig());
     const cached = cachedMatterAccessory(
       'Bedroom WAVE 3',
       uuidFor('FIRST1234'),
       'FIRST1234',
     );
-    // Version 1 advertised Thermostat Auto. Its cached SystemMode=Auto is not
-    // conformant after Auto is removed, and Homebridge restores cached cluster
-    // values after the plugin has constructed its sanitized state.
-    (cached.context as { schemaVersion: number }).schemaVersion = 1;
-    cached.clusters!.thermostat!.systemMode = 0x01;
+    // Any older schema is replaced so Homebridge cannot restore cluster state
+    // from the previous Heat/Cool-only endpoint shape onto the Auto endpoint.
+    (cached.context as { schemaVersion: number }).schemaVersion = 4;
     harness.platform.configureMatterAccessory(cached);
 
     await harness.signalDidFinishLaunching();
 
     assert.deepEqual(harness.unregistered, [cached]);
     const replacement = harness.registered.find(accessory => accessory.UUID === cached.UUID);
-    assert.equal(replacement?.context.schemaVersion, 4);
+    assert.equal(replacement?.context.schemaVersion, 5);
     assert.equal(replacement?.clusters?.thermostat?.systemMode, 0x03);
+    assert.equal(replacement?.clusters?.thermostat?.minSetpointDeadBand, 0);
+    assert.equal(
+      (replacement?.deviceType.behaviors.thermostat as unknown as {
+        features: { autoMode: boolean };
+      }).features.autoMode,
+      true,
+    );
   });
 
   it('waits for same-UUID removal before registering a changed endpoint shape', async () => {
@@ -430,7 +435,7 @@ function cachedMatterAccessory(
     model: 'WAVE 3',
     deviceType: wave3RoomAirConditionerDeviceType({ deviceTypes } as unknown as MatterAPI),
     context: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       serialNumber,
     },
     clusters: {

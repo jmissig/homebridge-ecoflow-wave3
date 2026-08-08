@@ -102,6 +102,11 @@ and controller reconciliation.
   explicit refresh.
 - [x] Upgrade the Heat/Cool-only schema-v4 endpoint to the Auto-capable
   schema-v5 shape with the same UUID and without requiring bridge re-pairing.
+- [x] Harden same-UUID Matter schema replacement against Homebridge's
+  asynchronous bridged registration lifecycle: require sustained endpoint
+  absence before UUID reuse, verify stable OnOff/Thermostat/Humidity
+  readability after registration, and clean up plus retry one dropped
+  registration. Regression coverage includes transient missing-state reads.
 - [ ] Normal and debug logs remain useful with credentials, identifiers, and
   raw payloads redacted.
 

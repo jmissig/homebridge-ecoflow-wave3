@@ -172,11 +172,19 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     );
   });
 
-  it('waits for same-UUID removal before registering a changed endpoint shape', async () => {
+  it('requires stable same-UUID removal before registering a changed endpoint shape', async () => {
     const config = validConfig();
     config.devices = [{ name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234' }];
     const unregistrationGate = deferred();
-    const harness = platformHarness(config, undefined, true, undefined, unregistrationGate);
+    const harness = platformHarness(
+      config,
+      undefined,
+      true,
+      undefined,
+      unregistrationGate,
+      200,
+      { transientUnregistrationMisses: 1 },
+    );
     const cached = cachedMatterAccessory(
       'Bedroom WAVE 3',
       uuidFor('FIRST1234'),
@@ -189,10 +197,46 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await waitUntil(() => harness.events.includes('unregister'));
     assert.deepEqual(harness.events, ['unregister']);
 
+    // Homebridge can transiently report a missing state while its asynchronous
+    // removal handler still owns the old endpoint. One miss must not release a
+    // same-UUID replacement into that in-flight removal.
+    await waitUntil(() => harness.stateReadClusters.length >= 2);
+    assert.deepEqual(harness.events, ['unregister']);
+
     unregistrationGate.resolve();
     await launch;
     assert.deepEqual(harness.events, ['unregister', 'register', 'session:start']);
     assert.equal(harness.registered.length, 1);
+  });
+
+  it('requires stable readiness across every required Matter cluster', async () => {
+    const config = validConfig();
+    config.devices = [{ name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234' }];
+    const harness = platformHarness(
+      config,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      20,
+      { transientRegistrationReadMissAt: 4 },
+    );
+
+    await harness.signalDidFinishLaunching();
+
+    assert.deepEqual(harness.stateReadClusters, [
+      'onOff',
+      'thermostat',
+      'relativeHumidityMeasurement',
+      'onOff',
+      'onOff',
+      'thermostat',
+      'relativeHumidityMeasurement',
+      'onOff',
+      'thermostat',
+      'relativeHumidityMeasurement',
+    ]);
+    assert.deepEqual(harness.events, ['register', 'session:start']);
   });
 
   it('makes shutdown terminal and joins launch work already in progress', async () => {
@@ -293,7 +337,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(harness.platform.matterAccessories.size, 0);
   });
 
-  it('bounds a dropped Matter registration and fails closed without starting the cloud session', async () => {
+  it('retries a dropped Matter registration after cleaning and settling its UUID', async () => {
     const harness = platformHarness(
       validConfig(),
       undefined,
@@ -307,22 +351,21 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await harness.signalDidFinishLaunching();
 
     assert.equal(harness.sessionCreateCount, 1);
-    assert.equal(harness.sessionStopCount, 1);
-    assert.equal(harness.controllerStopCount, 2);
-    assert.equal(harness.bindingStopCount, 1);
-    assert.doesNotMatch(harness.events.join(','), /session:start/);
+    assert.equal(harness.sessionStopCount, 0);
+    assert.equal(harness.controllerStopCount, 0);
+    assert.equal(harness.bindingStopCount, 0);
     assert.deepEqual(harness.events, [
       'register',
       'register',
       'unregister',
-      'session:stop',
-      'unregister',
+      'register',
+      'session:start',
     ]);
-    assert.equal(harness.platform.matterAccessories.size, 0);
-    assert.match(harness.logs.error.join('\n'), /registration did not complete/);
+    assert.equal(harness.platform.matterAccessories.size, 2);
+    assert.match(harness.logs.warn.join('\n'), /Retrying Matter endpoint registration/);
   });
 
-  it('removes a Matter endpoint that materializes after registration cancellation', async () => {
+  it('cleans and retries a Matter endpoint that materializes after cancellation', async () => {
     const delayedRegistration = deferred();
     const config = validConfig();
     config.devices = [{ name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234' }];
@@ -340,18 +383,47 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     delayedRegistration.resolve();
     await launch;
 
-    assert.equal(harness.sessionStopCount, 1);
-    assert.equal(harness.controllerStopCount, 1);
-    assert.doesNotMatch(harness.events.join(','), /session:start/);
-    assert.equal(harness.registered.length, 1);
+    assert.equal(harness.sessionStopCount, 0);
+    assert.equal(harness.controllerStopCount, 0);
+    assert.equal(harness.registered.length, 2);
     assert.equal(harness.unregistered.length, 2);
     assert.deepEqual(harness.events, [
       'register',
       'unregister',
       'unregister',
+      'register',
+      'session:start',
+    ]);
+    assert.equal(harness.platform.matterAccessories.size, 1);
+  });
+
+  it('fails closed after both bounded Matter registration attempts are dropped', async () => {
+    const config = validConfig();
+    config.devices = [{ name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234' }];
+    const harness = platformHarness(
+      config,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      2,
+      { dropRegistrationCalls: [1, 2] },
+    );
+
+    await harness.signalDidFinishLaunching();
+
+    assert.equal(harness.sessionStopCount, 1);
+    assert.equal(harness.controllerStopCount, 1);
+    assert.doesNotMatch(harness.events.join(','), /session:start/);
+    assert.deepEqual(harness.events, [
+      'register',
+      'unregister',
+      'register',
+      'unregister',
       'session:stop',
     ]);
     assert.equal(harness.platform.matterAccessories.size, 0);
+    assert.match(harness.logs.error.join('\n'), /registration did not complete/);
   });
 
   it('bounds shutdown cleanup and fails closed on dropped Matter removal dispatches', async () => {
@@ -371,7 +443,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(registering.sessionStopCount, 1);
     assert.equal(registering.controllerStopCount, 1);
     assert.equal(registering.platform.matterAccessories.size, 0);
-    assert.match(registering.logs.warn.join('\n'), /Stopped waiting.*registration to materialize/);
+    assert.doesNotMatch(registering.logs.warn.join('\n'), /Retrying Matter endpoint registration/);
 
     const droppedUnregistration = deferred();
     const unregistering = platformHarness(
@@ -455,9 +527,12 @@ function platformHarness(
   matterOperationPollAttempts = 200,
   options: {
     bindingStopWaitsForController?: boolean;
+    dropRegistrationCalls?: number[];
     failBindingAt?: number;
     dropRegistrationAt?: number;
     failRegistrationAt?: number;
+    transientRegistrationReadMissAt?: number;
+    transientUnregistrationMisses?: number;
   } = {},
 ): {
   platform: EcoFlowWave3Platform;
@@ -496,7 +571,9 @@ function platformHarness(
   let controllerStopCount = 0;
   let bindingCreateCount = 0;
   let registrationCount = 0;
+  let transientUnregistrationMisses = options.transientUnregistrationMisses ?? 0;
   const controllerStopped = deferred();
+  const pendingUnregistrationUuids = new Set<string>();
   const registrationReadyUuids = new Set<string>();
   const unregisteredUuids = new Set<string>();
   const eventListeners = new Map<string, () => void>();
@@ -524,7 +601,8 @@ function platformHarness(
           if (registrationCount === options.failRegistrationAt) {
             throw new Error('synthetic Matter registration failure');
           }
-          if (registrationCount === options.dropRegistrationAt) {
+          if (registrationCount === options.dropRegistrationAt
+            || options.dropRegistrationCalls?.includes(registrationCount)) {
             return;
           }
           if (registrationGate === undefined) {
@@ -553,9 +631,13 @@ function platformHarness(
           accessories: MatterAccessory[],
         ) => {
           events.push('unregister');
+          for (const accessory of accessories) {
+            pendingUnregistrationUuids.add(accessory.UUID);
+          }
           const applyUnregistration = () => {
             unregistered.push(...accessories);
             for (const accessory of accessories) {
+              pendingUnregistrationUuids.delete(accessory.UUID);
               registrationReadyUuids.delete(accessory.UUID);
               unregisteredUuids.add(accessory.UUID);
             }
@@ -569,6 +651,14 @@ function platformHarness(
         updateAccessoryState: async () => undefined,
         getAccessoryState: async (uuid: string, cluster: string) => {
           stateReadClusters.push(cluster);
+          if (registrationReadyUuids.has(uuid)
+            && stateReadClusters.length === options.transientRegistrationReadMissAt) {
+            return undefined;
+          }
+          if (pendingUnregistrationUuids.has(uuid) && transientUnregistrationMisses > 0) {
+            transientUnregistrationMisses -= 1;
+            return undefined;
+          }
           const restoredCacheEntryIsReady = registrationGate === undefined
             && registrationCount === 0
             && !unregisteredUuids.has(uuid);
@@ -593,6 +683,8 @@ function platformHarness(
   const dependencies: EcoFlowWave3PlatformDependencies = {
     matterRegistrationPollAttempts: matterOperationPollAttempts,
     matterOperationPollAttempts,
+    matterRegistrationStablePolls: Math.min(2, matterOperationPollAttempts),
+    matterUnregistrationStablePolls: Math.min(2, matterOperationPollAttempts),
     waitForMatterOperationPoll: async () => {
       await new Promise<void>(resolve => setImmediate(resolve));
     },

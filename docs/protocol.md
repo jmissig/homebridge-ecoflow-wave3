@@ -560,8 +560,8 @@ Auto-range observation: Julian · 2026-08-02
   the installed Matter.js runtime conformance checks.
 - Two isolated Apple Home tests displayed Auto without writing
   `SystemMode.Auto`. Apple Home sent power and later Cooling-setpoint traffic
-  instead. A correctly reported and controller-acknowledged Auto state also
-  failed to render as Auto.
+  instead. At the time, a correctly reported and controller-acknowledged Auto
+  state also failed to render as Auto.
 - Auto was therefore deferred at the Matter boundary while the protocol/domain
   layer continued to preserve real WAVE Auto state.
 - On 2026-08-08 Auto was re-enabled after the staged-intent coordinator and
@@ -572,6 +572,25 @@ Auto-range observation: Julian · 2026-08-02
 - The earlier Apple Home result remains an interoperability risk to verify on
   hardware; re-enablement does not reinterpret the old trace as an EcoFlow
   protocol failure.
+- The 2026-08-08 hardware pass separated the two directions. WAVE mode `5`
+  with its saved 19.8–23.8°C range now projects through Homebridge and renders
+  as Auto in Apple Home. Apple Home→WAVE remains broken: selecting Auto wrote
+  raw Matter `SystemMode=3` (Cool), never `1` (Auto), on both current and older
+  Apple OS clients. A direct runtime write of `1` traversed Homebridge and the
+  plugin correctly, ruling out an observed Homebridge value remap.
+- Home Assistant Matter Hub issue #309 independently records the same Apple
+  Home `Auto` UI→`SystemMode=3` packet on another matter.js Room Air
+  Conditioner. Its underlying AC used single-setpoint, device-decided Auto, so
+  HAMH's eventual remedy—do not advertise Matter Auto without a real dual
+  heat/cool range—does not directly apply to the WAVE's verified range.
+- Next discriminator: expose the same dual-setpoint model temporarily as a
+  fresh-identity plain Matter Thermostat. This isolates the Room Air
+  Conditioner presentation from Apple capability caching before any permanent
+  product change.
+
+Sources: household Homebridge Matter diagnostics and Julian's hardware tests ·
+2026-08-08; [HAMH issue #309](https://github.com/RiDDiX/home-assistant-matter-hub/issues/309#issuecomment-4294985981);
+[HAMH climate mapping](https://riddix.github.io/home-assistant-matter-hub/devices/climate)
 
 [Decision record](decisions/0004-defer-matter-auto.md)
 

@@ -60,8 +60,9 @@ per-mode profiles.
 - [x] Resolve the two-profile impedance mismatch: Apple Home presents one
   active manual target, while Matter constrains two companion attributes and
   the WAVE stores independent crossing profiles.
-- [ ] Verify repeated Cool→Heat→Cool transitions make Apple Home follow each
+- [x] Verify repeated Cool→Heat→Cool transitions make Apple Home follow each
   confirmed active WAVE target without changing either saved WAVE profile.
+  Household acceptance passed 2026-08-08.
 
 ### 3. Re-enable Auto using the authoritative-profile coordinator
 
@@ -79,9 +80,19 @@ per-mode profiles.
   acknowledgement fields. Accepted app writes did not change the subsequent
   full-state range, so distinguish device rejection/no-op from an unmapped
   response.
-- [ ] Verify Apple Home writes `SystemMode.Auto`, renders authoritative Auto,
-  restores the saved range on a mode-only transition, and applies explicit
-  lower/upper changes after the Homebridge 2.3.0 endpoint migration.
+- [x] Verify authoritative WAVE Auto projects through Homebridge and renders as
+  Auto in Apple Home while preserving the saved mode-only range. Household
+  acceptance passed with WAVE mode `5` and 19.8–23.8°C on 2026-08-08.
+- [ ] Resolve Apple Home→WAVE Auto interoperability. Apple Home's raw Matter
+  write is `SystemMode=3` (Cool), not `1` (Auto), on current and older Apple
+  OS clients; Homebridge correctly routes a direct write of `1` to WAVE mode
+  `5`. An independent matter.js Room Air Conditioner has the same trace in
+  [HAMH issue #309](https://github.com/RiDDiX/home-assistant-matter-hub/issues/309#issuecomment-4294985981).
+- [ ] Build a temporary fresh-identity plain Thermostat endpoint with the same
+  true dual setpoints and no FanControl. Compare its Apple Home raw Auto write
+  with the Room Air Conditioner before choosing a permanent workaround.
+- [ ] After Apple Home can write true Auto, verify explicit lower/upper changes
+  and the WAVE's 16–30°C bounds and 4°C minimum on hardware.
 - [ ] Repeat the Auto acceptance sequence with a second Matter controller.
 
 ### 4. Hardware acceptance for the corrected coordinator
@@ -93,7 +104,8 @@ and controller reconciliation.
 - [ ] Off→Cool with an explicit target.
 - [ ] Off→Heat with an explicit target that differs from the saved Heat
   profile.
-- [ ] Cool→Heat→Cool profile restoration.
+- [x] Cool→Heat→Cool profile restoration. Household acceptance passed
+  2026-08-08.
 - [ ] Five fan speeds and rapid-slider coalescing.
 - [ ] Concurrent EcoFlow app and Matter control without stale replay.
 - [ ] MQTT reconnect, child-bridge restart, WAVE power cycle, and an extended

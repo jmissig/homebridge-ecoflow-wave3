@@ -162,9 +162,10 @@ Automatic heat/cool is advertised through Matter using the WAVE's saved Auto
 profile. A mode-only change lets the appliance restore its authoritative lower
 and upper thresholds; only an explicit controller range change replaces them.
 The WAVE requires a 4 °C minimum range within 16–30 °C, which the plugin
-enforces before publishing a command. Earlier Apple Home testing displayed
-Auto without reliably writing or rendering the standard mode, so controller
-behavior still needs renewed hardware acceptance.
+enforces before publishing a command. WAVE-initiated Auto currently renders
+correctly in Apple Home, but selecting Auto in Apple Home has been observed to
+send Matter `SystemMode=Cool` rather than `SystemMode=Auto`, so Apple Home→WAVE
+Auto control remains an interoperability limitation under investigation.
 
 Apple Home also does not currently display the published firmware revision.
 Its UI may hide the standard Celsius/Fahrenheit preference even though the

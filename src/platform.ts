@@ -20,6 +20,7 @@ import { EcoFlowCloudSession } from './ecoflow/session.js';
 import {
   MATTER_ACCESSORY_SCHEMA_VERSION,
   type Wave3MatterAccessoryContext,
+  type Wave3MatterAccessoryPresentation,
 } from './matter/context.js';
 import {
   createWave3MatterAccessory,
@@ -199,7 +200,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     }
 
     const desiredUuids = new Set(
-      this.parsedConfig.devices.map(device => this.uuidForSerial(device.serialNumber)),
+      this.parsedConfig.devices.flatMap(device => [
+        this.uuidForSerial(device.serialNumber),
+        this.uuidForPlainThermostatSpike(device.serialNumber),
+      ]),
     );
     const staleMatterAccessories = [
       ...this.duplicateMatterAccessories,
@@ -211,9 +215,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         PLATFORM_NAME,
         staleMatterAccessories,
       );
-      const removed = await this.waitForMatterUnregistration(
-        staleMatterAccessories.map(accessory => accessory.UUID),
-      );
+      const removed = await this.waitForMatterUnregistration(staleMatterAccessories);
       if (!removed) {
         if (!this.shutdownStarted) {
           this.log.error('EcoFlow WAVE 3 stale Matter endpoint removal did not complete');
@@ -244,9 +246,17 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       const uuid = this.uuidForSerial(device.serialNumber);
       const cachedAccessory = this.matterAccessories.get(uuid);
       const endpointShapeChanged = cachedAccessory !== undefined
-        && cachedAccessory.context.schemaVersion !== MATTER_ACCESSORY_SCHEMA_VERSION;
+        && (cachedAccessory.context.schemaVersion !== MATTER_ACCESSORY_SCHEMA_VERSION
+          || cachedAccessory.context.presentation === 'plainThermostatSpike');
+      const diagnosticUuid = this.uuidForPlainThermostatSpike(device.serialNumber);
+      const cachedDiagnosticAccessory = this.matterAccessories.get(diagnosticUuid);
+      const diagnosticShapeChanged = cachedDiagnosticAccessory !== undefined
+        && (cachedDiagnosticAccessory.context.schemaVersion !== MATTER_ACCESSORY_SCHEMA_VERSION
+          || cachedDiagnosticAccessory.context.presentation !== 'plainThermostatSpike');
       if (endpointShapeChanged
-        || !isRecentCachedState(cachedAccessory?.context.lastConfirmedAt)) {
+        || diagnosticShapeChanged
+        || !isRecentCachedState(cachedAccessory?.context.lastConfirmedAt)
+        || !isRecentCachedState(cachedDiagnosticAccessory?.context.lastConfirmedAt)) {
         devicesNeedingFullDisplayState.push(device.serialNumber);
       }
       if (endpointShapeChanged) {
@@ -255,7 +265,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
           PLATFORM_NAME,
           [cachedAccessory],
         );
-        const removed = await this.waitForMatterUnregistration([uuid]);
+        const removed = await this.waitForMatterUnregistration([cachedAccessory]);
         if (!removed) {
           if (!this.shutdownStarted) {
             this.log.error('EcoFlow WAVE 3 Matter endpoint replacement could not remove the old shape');
@@ -282,6 +292,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         controller,
         cachedAccessory,
         endpointShapeChanged,
+        'roomAirConditioner',
       );
       if (accessory === undefined) {
         this.stopController(uuid, controller);
@@ -306,6 +317,54 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         logger,
       );
       this.bindings.set(uuid, binding);
+
+      if (diagnosticShapeChanged) {
+        await this.matter!.unregisterPlatformAccessories(
+          PLUGIN_NAME,
+          PLATFORM_NAME,
+          [cachedDiagnosticAccessory],
+        );
+        const removed = await this.waitForMatterUnregistration([cachedDiagnosticAccessory]);
+        if (!removed) {
+          if (!this.shutdownStarted) {
+            this.log.error(
+              'EcoFlow WAVE 3 diagnostic Thermostat replacement could not remove the old shape',
+            );
+          }
+          throw new Error('Diagnostic Matter endpoint replacement did not complete');
+        }
+        this.matterAccessories.delete(diagnosticUuid);
+      }
+
+      const diagnosticAccessory = await this.registerMatterAccessory(
+        diagnosticUuid,
+        device,
+        controller,
+        cachedDiagnosticAccessory,
+        diagnosticShapeChanged,
+        'plainThermostatSpike',
+      );
+      if (diagnosticAccessory === undefined) {
+        if (!this.shutdownStarted) {
+          this.log.error('EcoFlow WAVE 3 diagnostic Thermostat registration did not complete');
+          throw new Error('Diagnostic Matter endpoint registration did not complete');
+        }
+        await this.stopSession();
+        return;
+      }
+      if (cachedDiagnosticAccessory === undefined || diagnosticShapeChanged) {
+        this.log.info('Registered a temporary Matter WAVE 3 Auto test Thermostat');
+      } else {
+        this.log.info('Restored the temporary Matter WAVE 3 Auto test Thermostat from cache');
+      }
+      const diagnosticBinding = this.dependencies.bindMatterAccessory(
+        this.matter!,
+        diagnosticAccessory,
+        controller,
+        device,
+        logger,
+      );
+      this.bindings.set(diagnosticUuid, diagnosticBinding);
     }
 
     if (this.shutdownStarted) {
@@ -378,7 +437,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         PLATFORM_NAME,
         accessories,
       );
-      if (!await this.waitForMatterUnregistration(accessories.map(accessory => accessory.UUID))) {
+      if (!await this.waitForMatterUnregistration(accessories)) {
         this.log.error('EcoFlow WAVE 3 Matter cleanup did not remove all endpoints after setup failure');
         return;
       }
@@ -406,6 +465,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     controller: Wave3AccessoryController,
     cachedAccessory: MatterAccessory<Wave3MatterAccessoryContext> | undefined,
     endpointShapeChanged: boolean,
+    presentation: Wave3MatterAccessoryPresentation,
   ): Promise<MatterAccessory<Wave3MatterAccessoryContext> | undefined> {
     const maxDispatchAttempts = this.dependencies.matterRegistrationDispatchAttempts ?? 2;
     for (let attempt = 0; attempt < maxDispatchAttempts && !this.shutdownStarted; attempt += 1) {
@@ -415,6 +475,7 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         device,
         controller.snapshot,
         attempt === 0 && !endpointShapeChanged ? cachedAccessory : undefined,
+        presentation,
       );
       this.matterAccessories.set(uuid, accessory);
       await this.matter!.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
@@ -464,21 +525,11 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       }
       let ready = false;
       try {
-        const onOff = await this.matter!.getAccessoryState(
-          accessory.UUID,
-          this.matter!.clusterNames.OnOff,
+        const states = await Promise.all(
+          this.registrationProbeClusters(accessory).map(cluster =>
+            this.matter!.getAccessoryState(accessory.UUID, cluster)),
         );
-        if (onOff !== undefined) {
-          const thermostat = await this.matter!.getAccessoryState(
-            accessory.UUID,
-            this.matter!.clusterNames.Thermostat,
-          );
-          const humidity = await this.matter!.getAccessoryState(
-            accessory.UUID,
-            this.matter!.clusterNames.RelativeHumidityMeasurement,
-          );
-          ready = thermostat !== undefined && humidity !== undefined;
-        }
+        ready = states.every(state => state !== undefined);
       } catch {
         // Homebridge reports a missing endpoint while bridged registration is still in flight.
       }
@@ -502,7 +553,9 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     }
   }
 
-  private async waitForMatterUnregistration(uuids: readonly string[]): Promise<boolean> {
+  private async waitForMatterUnregistration(
+    accessories: readonly MatterAccessory<Wave3MatterAccessoryContext>[],
+  ): Promise<boolean> {
     const maxAttempts = this.dependencies.matterOperationPollAttempts ?? 200;
     // A queued Homebridge removal can briefly make getAccessoryState return
     // undefined while the old endpoint still owns its UUID. With the default
@@ -514,9 +567,12 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
     );
     let stablePolls = 0;
     for (let attempts = 0; attempts < maxAttempts; attempts += 1) {
-      const states = await Promise.all(uuids.map(async uuid => {
+      const states = await Promise.all(accessories.map(async accessory => {
         try {
-          return await this.matter!.getAccessoryState(uuid, this.matter!.clusterNames.OnOff);
+          return await this.matter!.getAccessoryState(
+            accessory.UUID,
+            this.registrationProbeClusters(accessory)[0]!,
+          );
         } catch {
           return undefined;
         }
@@ -554,21 +610,21 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       try {
         if (await this.matter!.getAccessoryState(
           accessory.UUID,
-          this.matter!.clusterNames.OnOff,
+          this.registrationProbeClusters(accessory)[0]!,
         ) !== undefined) {
           await this.matter!.unregisterPlatformAccessories(
             PLUGIN_NAME,
             PLATFORM_NAME,
             [accessory],
           );
-          return this.waitForMatterUnregistration([accessory.UUID]);
+          return this.waitForMatterUnregistration([accessory]);
         }
       } catch {
         // Keep watching for a dispatched registration that has not materialized yet.
       }
       await this.waitForMatterOperationPoll();
     }
-    return this.waitForMatterUnregistration([accessory.UUID]);
+    return this.waitForMatterUnregistration([accessory]);
   }
 
   private async waitForMatterOperationPoll(): Promise<void> {
@@ -584,6 +640,31 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       throw new Error('Matter API is unavailable');
     }
     return this.matter.uuid.generate(`${PLUGIN_NAME}:wave3:${serialNumber}`);
+  }
+
+  private uuidForPlainThermostatSpike(serialNumber: string): string {
+    if (this.matter === undefined) {
+      throw new Error('Matter API is unavailable');
+    }
+    return this.matter.uuid.generate(
+      `${PLUGIN_NAME}:wave3:${serialNumber}:plain-thermostat-auto-spike:v1`,
+    );
+  }
+
+  private registrationProbeClusters(
+    accessory: MatterAccessory<Wave3MatterAccessoryContext>,
+  ): string[] {
+    const clusters: string[] = [];
+    if (accessory.clusters?.onOff !== undefined) {
+      clusters.push(this.matter!.clusterNames.OnOff);
+    }
+    if (accessory.clusters?.thermostat !== undefined) {
+      clusters.push(this.matter!.clusterNames.Thermostat);
+    }
+    if (accessory.clusters?.relativeHumidityMeasurement !== undefined) {
+      clusters.push(this.matter!.clusterNames.RelativeHumidityMeasurement);
+    }
+    return clusters.length > 0 ? clusters : [this.matter!.clusterNames.OnOff];
   }
 }
 

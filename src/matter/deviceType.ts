@@ -220,6 +220,74 @@ export function wave3RoomAirConditionerDeviceType(matter: MatterAPI) {
   );
 }
 
+/**
+ * Disposable diagnostic presentation used to isolate Apple Home's Auto-mode
+ * handling from the Room Air Conditioner device type and integrated fan.
+ */
+export function wave3PlainThermostatDeviceType(matter: MatterAPI) {
+  const thermostat = matter.deviceTypes.Thermostat;
+  const requirements = thermostat.requirements;
+  const Wave3ThermostatBase = requirements.ThermostatServer.with(
+    'Heating',
+    'Cooling',
+    'AutoMode',
+  );
+
+  class Wave3PlainThermostatServer extends Wave3ThermostatBase {
+    override initialize(): void {
+      super.initialize();
+      this.reactTo(
+        this.events.systemMode$Changing,
+        value => {
+          requireDesiredValueOrControl(
+            this.endpoint.id,
+            'thermostat',
+            'systemMode',
+            value,
+            control => control.setSystemMode(value),
+          );
+        },
+      );
+      this.reactTo(
+        this.events.occupiedHeatingSetpoint$Changing,
+        value => {
+          requireDesiredValueOrControl(
+            this.endpoint.id,
+            'thermostat',
+            'occupiedHeatingSetpoint',
+            value,
+            control => control.setHeatingSetpoint(value),
+          );
+        },
+      );
+      this.reactTo(
+        this.events.occupiedCoolingSetpoint$Changing,
+        value => {
+          requireDesiredValueOrControl(
+            this.endpoint.id,
+            'thermostat',
+            'occupiedCoolingSetpoint',
+            value,
+            control => control.setCoolingSetpoint(value),
+          );
+        },
+      );
+    }
+
+    override async setpointRaiseLower(request: { mode: number; amount: number }): Promise<void> {
+      await requireMatterControl(this.endpoint.id).raiseLowerSetpoint(
+        request.mode,
+        request.amount,
+        async () => {
+          await super.setpointRaiseLower(request);
+        },
+      );
+    }
+  }
+
+  return thermostat.with(Wave3PlainThermostatServer);
+}
+
 function percentForFanMode(fanMode: number): number | undefined {
   switch (fanMode) {
   case MATTER_FAN_MODE.low:

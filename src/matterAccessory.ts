@@ -20,6 +20,7 @@ import {
 import {
   MATTER_ACCESSORY_SCHEMA_VERSION,
   type Wave3MatterAccessoryContext,
+  type Wave3MatterAccessoryPresentation,
 } from './matter/context.js';
 import {
   forgetAllDesiredAttributes,
@@ -31,7 +32,10 @@ import {
   rememberDesiredState,
   type Wave3MatterControl,
 } from './matter/controlRegistry.js';
-import { wave3RoomAirConditionerDeviceType } from './matter/deviceType.js';
+import {
+  wave3PlainThermostatDeviceType,
+  wave3RoomAirConditionerDeviceType,
+} from './matter/deviceType.js';
 import {
   centidegrees,
   clustersForSnapshot,
@@ -55,7 +59,10 @@ import {
 
 export { CACHED_STATE_MAX_AGE_MILLISECONDS, isRecentCachedState } from './matter/cachePolicy.js';
 export { MATTER_SYSTEM_MODE } from './matter/constants.js';
-export { wave3RoomAirConditionerDeviceType } from './matter/deviceType.js';
+export {
+  wave3PlainThermostatDeviceType,
+  wave3RoomAirConditionerDeviceType,
+} from './matter/deviceType.js';
 
 export interface MatterAccessoryBinding {
   stop(): void | Promise<void>;
@@ -99,6 +106,7 @@ export function createWave3MatterAccessory(
   device: Wave3DeviceConfig,
   snapshot: Wave3ControllerSnapshot,
   cached?: MatterAccessory<Wave3MatterAccessoryContext>,
+  presentation: Wave3MatterAccessoryPresentation = 'roomAirConditioner',
 ): MatterAccessory<Wave3MatterAccessoryContext> {
   const cachedContext = cached?.context;
   const firmwareRevision = snapshot.firmwareVersions?.pd
@@ -108,6 +116,7 @@ export function createWave3MatterAccessory(
   const context: Wave3MatterAccessoryContext = {
     schemaVersion: MATTER_ACCESSORY_SCHEMA_VERSION,
     serialNumber: device.serialNumber,
+    ...(presentation === 'roomAirConditioner' ? {} : { presentation }),
     lastSystemMode: validSystemMode(cachedContext?.lastSystemMode)
       ?? MATTER_SYSTEM_MODE.cool,
     ...(
@@ -128,11 +137,17 @@ export function createWave3MatterAccessory(
   rememberDesiredState(uuid, clusters);
   return {
     UUID: uuid,
-    displayName: device.name,
-    deviceType: wave3RoomAirConditionerDeviceType(matter),
+    displayName: presentation === 'plainThermostatSpike'
+      ? `${device.name} Auto Test`
+      : device.name,
+    deviceType: presentation === 'plainThermostatSpike'
+      ? wave3PlainThermostatDeviceType(matter)
+      : wave3RoomAirConditionerDeviceType(matter),
     manufacturer: 'EcoFlow',
-    model: 'WAVE 3',
-    serialNumber: device.serialNumber,
+    model: presentation === 'plainThermostatSpike' ? 'WAVE 3 Auto Test' : 'WAVE 3',
+    serialNumber: presentation === 'plainThermostatSpike'
+      ? `${device.serialNumber}-AUTO-TEST`
+      : device.serialNumber,
     ...(firmwareRevision === undefined ? {} : { firmwareRevision }),
     context,
     clusters,
@@ -713,7 +728,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (firmwareRevision !== undefined && firmwareRevision !== this.presentedFirmwareRevision) {
       return true;
     }
-    return !Object.is(
+    return this.accessory.clusters?.electricalPowerMeasurement !== undefined && !Object.is(
       electricalPowerMeasurementForSnapshot(snapshot).activePower,
       this.presentedActivePower,
     );
@@ -852,27 +867,35 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
 
     const clusters = this.clustersForPresentation(snapshot);
     this.accessory.clusters = clusters;
-    await this.updateState(
-      this.accessory.UUID,
-      this.matter.clusterNames.OnOff,
-      clusters.onOff ?? {},
-    );
+    if (clusters.onOff !== undefined) {
+      await this.updateState(
+        this.accessory.UUID,
+        this.matter.clusterNames.OnOff,
+        clusters.onOff,
+      );
+    }
     await this.pushThermostatState(clusters.thermostat ?? {});
-    await this.updateState(
-      this.accessory.UUID,
-      MATTER_THERMOSTAT_UI_CLUSTER,
-      clusters.thermostatUserInterfaceConfiguration ?? {},
-    );
-    await this.updateState(
-      this.accessory.UUID,
-      this.matter.clusterNames.FanControl,
-      clusters.fanControl ?? {},
-    );
-    await this.updateState(
-      this.accessory.UUID,
-      this.matter.clusterNames.RelativeHumidityMeasurement,
-      clusters.relativeHumidityMeasurement ?? {},
-    );
+    if (clusters.thermostatUserInterfaceConfiguration !== undefined) {
+      await this.updateState(
+        this.accessory.UUID,
+        MATTER_THERMOSTAT_UI_CLUSTER,
+        clusters.thermostatUserInterfaceConfiguration,
+      );
+    }
+    if (clusters.fanControl !== undefined) {
+      await this.updateState(
+        this.accessory.UUID,
+        this.matter.clusterNames.FanControl,
+        clusters.fanControl,
+      );
+    }
+    if (clusters.relativeHumidityMeasurement !== undefined) {
+      await this.updateState(
+        this.accessory.UUID,
+        this.matter.clusterNames.RelativeHumidityMeasurement,
+        clusters.relativeHumidityMeasurement,
+      );
+    }
     await this.pushReachability(true);
     this.accessory.context.lastConfirmedAt = this.now();
   }
@@ -904,6 +927,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private async pushElectricalPower(snapshot: Wave3ControllerSnapshot): Promise<void> {
+    if (this.accessory.clusters?.electricalPowerMeasurement === undefined) {
+      return;
+    }
     const attributes = electricalPowerMeasurementForSnapshot(snapshot);
     const activePower = attributes.activePower;
     if (Object.is(activePower, this.presentedActivePower)) {

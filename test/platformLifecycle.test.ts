@@ -19,7 +19,10 @@ import {
 import type {
   Wave3AccessoryController,
 } from '../src/wave3/controller.js';
-import { wave3RoomAirConditionerDeviceType } from '../src/matterAccessory.js';
+import {
+  wave3PlainThermostatDeviceType,
+  wave3RoomAirConditionerDeviceType,
+} from '../src/matterAccessory.js';
 import type { Wave3ControllerSnapshot } from '../src/wave3/domain.js';
 
 describe('EcoFlow WAVE 3 platform lifecycle', () => {
@@ -49,6 +52,8 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     const harness = platformHarness(validConfig());
     const expectedFirstUuid = uuidFor('FIRST1234');
     const expectedSecondUuid = uuidFor('SECOND5678');
+    const expectedFirstDiagnosticUuid = diagnosticUuidFor('FIRST1234');
+    const expectedSecondDiagnosticUuid = diagnosticUuidFor('SECOND5678');
     const first = cachedMatterAccessory('Old Bedroom Name', expectedFirstUuid, 'FIRST1234');
     first.context.lastSystemMode = 0x04;
     const duplicate = cachedMatterAccessory('Duplicate', expectedFirstUuid, 'FIRST1234');
@@ -62,10 +67,15 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(harness.sessionCreateCount, 1);
     assert.deepEqual(harness.events.slice(-1), ['session:start']);
     assert.deepEqual(harness.unregistered, [duplicate, stale]);
-    assert.equal(harness.registered.length, 2);
+    assert.equal(harness.registered.length, 4);
     assert.deepEqual(
       harness.registered.map(accessory => accessory.UUID),
-      [expectedFirstUuid, expectedSecondUuid],
+      [
+        expectedFirstUuid,
+        expectedFirstDiagnosticUuid,
+        expectedSecondUuid,
+        expectedSecondDiagnosticUuid,
+      ],
     );
     const restored = harness.platform.matterAccessories.get(expectedFirstUuid)!;
     assert.equal(restored.displayName, 'Bedroom WAVE 3');
@@ -77,19 +87,23 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.equal(harness.updated.length, 0);
     assert.deepEqual(harness.boundSerials, ['FIRST1234', 'SECOND5678']);
     assert.deepEqual(harness.controllerFreshnessTimeouts, [300_000, 300_000]);
-    assert.equal(harness.platform.matterAccessories.size, 2);
+    assert.equal(harness.platform.matterAccessories.size, 4);
+    const diagnostic = harness.platform.matterAccessories.get(expectedFirstDiagnosticUuid)!;
+    assert.equal(diagnostic.displayName, 'Bedroom WAVE 3 Auto Test');
+    assert.equal(diagnostic.context.presentation, 'plainThermostatSpike');
+    assert.deepEqual(Object.keys(diagnostic.clusters ?? {}), ['thermostat']);
     assert.deepEqual(harness.fullDisplayStateRequests, ['FIRST1234', 'SECOND5678']);
 
     await harness.signalDidFinishLaunching();
     assert.equal(harness.sessionCreateCount, 1);
-    assert.equal(harness.registered.length, 2);
+    assert.equal(harness.registered.length, 4);
 
     await Promise.all([
       harness.platform.shutdown(),
       harness.platform.shutdown(),
     ]);
     assert.equal(harness.sessionStopCount, 1);
-    assert.equal(harness.bindingStopCount, 2);
+    assert.equal(harness.bindingStopCount, 4);
     assert.equal(harness.controllerStopCount, 2);
   });
 
@@ -102,6 +116,9 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     );
     recent.context.lastConfirmedAt = Date.now() - 60_000;
     harness.platform.configureMatterAccessory(recent);
+    const recentDiagnostic = cachedDiagnosticAccessory('FIRST1234');
+    recentDiagnostic.context.lastConfirmedAt = Date.now() - 60_000;
+    harness.platform.configureMatterAccessory(recentDiagnostic);
 
     await harness.signalDidFinishLaunching();
 
@@ -137,10 +154,11 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
 
     await harness.signalDidFinishLaunching();
     assert.deepEqual(harness.unregistered, [cached]);
-    assert.equal(harness.registered.length, 1);
-    assert.equal(harness.registered[0]?.context.schemaVersion, 5);
-    assert.notEqual(harness.registered[0]?.clusters?.relativeHumidityMeasurement, undefined);
-    assert.deepEqual(harness.registered[0]?.clusters?.electricalPowerMeasurement, {
+    assert.equal(harness.registered.length, 2);
+    const primary = harness.registered.find(accessory => accessory.UUID === cached.UUID)!;
+    assert.equal(primary.context.schemaVersion, 5);
+    assert.notEqual(primary.clusters?.relativeHumidityMeasurement, undefined);
+    assert.deepEqual(primary.clusters?.electricalPowerMeasurement, {
       activePower: null,
     });
   });
@@ -205,8 +223,8 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
 
     unregistrationGate.resolve();
     await launch;
-    assert.deepEqual(harness.events, ['unregister', 'register', 'session:start']);
-    assert.equal(harness.registered.length, 1);
+    assert.deepEqual(harness.events, ['unregister', 'register', 'register', 'session:start']);
+    assert.equal(harness.registered.length, 2);
   });
 
   it('requires stable readiness across every required Matter cluster', async () => {
@@ -229,14 +247,18 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
       'thermostat',
       'relativeHumidityMeasurement',
       'onOff',
-      'onOff',
       'thermostat',
       'relativeHumidityMeasurement',
       'onOff',
       'thermostat',
       'relativeHumidityMeasurement',
+      'onOff',
+      'thermostat',
+      'relativeHumidityMeasurement',
+      'thermostat',
+      'thermostat',
     ]);
-    assert.deepEqual(harness.events, ['register', 'session:start']);
+    assert.deepEqual(harness.events, ['register', 'register', 'session:start']);
   });
 
   it('makes shutdown terminal and joins launch work already in progress', async () => {
@@ -279,11 +301,18 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
       }),
     ]);
     assert.equal(harness.controllerStopCount, 2);
-    assert.equal(harness.bindingStopCount, 2);
+    assert.equal(harness.bindingStopCount, 4);
     assert.equal(harness.sessionStopCount, 1);
     assert.deepEqual(
       harness.events.filter(event => /^(controller|binding):stop$/.test(event)),
-      ['controller:stop', 'controller:stop', 'binding:stop', 'binding:stop'],
+      [
+        'controller:stop',
+        'controller:stop',
+        'binding:stop',
+        'binding:stop',
+        'binding:stop',
+        'binding:stop',
+      ],
     );
   });
 
@@ -305,7 +334,7 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
       assert.equal(harness.sessionCreateCount, 1);
       assert.equal(harness.sessionStopCount, 1);
       assert.doesNotMatch(harness.events.join(','), /session:start/);
-      assert.equal(harness.controllerStopCount, 2);
+      assert.equal(harness.controllerStopCount, 1);
       assert.equal(harness.bindingStopCount, 1);
       assert.equal(harness.platform.matterAccessories.size, 0);
       assert.equal(harness.unregistered.length, 2);
@@ -322,7 +351,10 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     await Promise.resolve();
     assert.deepEqual(harness.events, ['register']);
     await waitUntil(() => harness.stateReadClusters.length > 0);
-    assert.deepEqual([...new Set(harness.stateReadClusters)], ['onOff']);
+    assert.deepEqual(
+      [...new Set(harness.stateReadClusters)],
+      ['onOff', 'thermostat', 'relativeHumidityMeasurement'],
+    );
 
     const shutdown = harness.platform.shutdown();
     registrationGate.resolve();
@@ -359,9 +391,11 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
       'register',
       'unregister',
       'register',
+      'register',
+      'register',
       'session:start',
     ]);
-    assert.equal(harness.platform.matterAccessories.size, 2);
+    assert.equal(harness.platform.matterAccessories.size, 4);
     assert.match(harness.logs.warn.join('\n'), /Retrying Matter endpoint registration/);
   });
 
@@ -385,16 +419,17 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
 
     assert.equal(harness.sessionStopCount, 0);
     assert.equal(harness.controllerStopCount, 0);
-    assert.equal(harness.registered.length, 2);
+    assert.equal(harness.registered.length, 3);
     assert.equal(harness.unregistered.length, 2);
     assert.deepEqual(harness.events, [
       'register',
       'unregister',
       'unregister',
       'register',
+      'register',
       'session:start',
     ]);
-    assert.equal(harness.platform.matterAccessories.size, 1);
+    assert.equal(harness.platform.matterAccessories.size, 2);
   });
 
   it('fails closed after both bounded Matter registration attempts are dropped', async () => {
@@ -514,6 +549,27 @@ function cachedMatterAccessory(
       onOff: { onOff: false },
       thermostat: { systemMode: 0x03 },
       fanControl: { percentSetting: 20 },
+    },
+  };
+}
+
+function cachedDiagnosticAccessory(
+  serialNumber: string,
+): MatterAccessory<Wave3MatterAccessoryContext> {
+  return {
+    UUID: diagnosticUuidFor(serialNumber),
+    displayName: 'Bedroom WAVE 3 Auto Test',
+    serialNumber: `${serialNumber}-AUTO-TEST`,
+    manufacturer: 'EcoFlow',
+    model: 'WAVE 3 Auto Test',
+    deviceType: wave3PlainThermostatDeviceType({ deviceTypes } as unknown as MatterAPI),
+    context: {
+      schemaVersion: 5,
+      serialNumber,
+      presentation: 'plainThermostatSpike',
+    },
+    clusters: {
+      thermostat: { systemMode: 0x03 },
     },
   };
 }
@@ -810,6 +866,12 @@ function validConfig(): PlatformConfig {
 
 function uuidFor(serialNumber: string): string {
   return matterUuidForSeed(`homebridge-ecoflow-wave3:wave3:${serialNumber}`);
+}
+
+function diagnosticUuidFor(serialNumber: string): string {
+  return matterUuidForSeed(
+    `homebridge-ecoflow-wave3:wave3:${serialNumber}:plain-thermostat-auto-spike:v1`,
+  );
 }
 
 function matterUuidForSeed(seed: string): string {

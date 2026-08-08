@@ -9,6 +9,7 @@ import { deviceTypes, MatterStatus, type MatterAccessory, type MatterAPI } from 
 import {
   createWave3MatterAccessory,
   MATTER_SYSTEM_MODE,
+  wave3PlainThermostatDeviceType,
   wave3RoomAirConditionerDeviceType,
   Wave3MatterAccessory,
 } from '../src/matterAccessory.js';
@@ -286,6 +287,40 @@ describe('WAVE 3 Matter accessory', () => {
     assert.ok('relativeHumidityMeasurement' in deviceType.behaviors);
   });
 
+  it('builds a fresh-identity thermostat-only Auto diagnostic presentation', () => {
+    const harness = matterHarness();
+    const primary = createWave3MatterAccessory(
+      harness.matter,
+      'matter-primary-shape',
+      device(),
+      onlineSnapshot(),
+    );
+    const diagnostic = createWave3MatterAccessory(
+      harness.matter,
+      'matter-plain-thermostat-shape',
+      device(),
+      onlineSnapshot(),
+      undefined,
+      'plainThermostatSpike',
+    );
+
+    assert.notEqual(diagnostic.UUID, primary.UUID);
+    assert.equal(diagnostic.displayName, 'Bedroom WAVE 3 Auto Test');
+    assert.equal(diagnostic.model, 'WAVE 3 Auto Test');
+    assert.equal(diagnostic.serialNumber, 'FIRST1234-AUTO-TEST');
+    assert.equal(diagnostic.context.presentation, 'plainThermostatSpike');
+    assert.deepEqual(Object.keys(diagnostic.clusters ?? {}), ['thermostat']);
+    assert.equal(diagnostic.clusters?.thermostat?.systemMode, MATTER_SYSTEM_MODE.auto);
+    assert.equal(diagnostic.clusters?.thermostat?.occupiedHeatingSetpoint, 1_900);
+    assert.equal(diagnostic.clusters?.thermostat?.occupiedCoolingSetpoint, 2_400);
+    assert.equal(
+      (wave3PlainThermostatDeviceType(harness.matter).behaviors.thermostat as unknown as {
+        features: { autoMode: boolean };
+      }).features.autoMode,
+      true,
+    );
+  });
+
   it('constructs a conformant endpoint with the installed Matter runtime', async () => {
     const harness = matterHarness();
     const accessory = createWave3MatterAccessory(
@@ -388,7 +423,158 @@ describe('WAVE 3 Matter accessory', () => {
         state.descriptor.deviceTypeList.some(deviceType => deviceType.deviceType === 0x0510),
         true,
       );
+
+      const diagnostic = createWave3MatterAccessory(
+        harness.matter,
+        'matter-runtime-plain-thermostat',
+        device(),
+        onlineSnapshot(),
+        undefined,
+        'plainThermostatSpike',
+      );
+      const diagnosticEndpoint = new Endpoint(
+        wave3PlainThermostatDeviceType(harness.matter).with(
+          BridgedDeviceBasicInformationServer,
+        ),
+        {
+          id: diagnostic.UUID,
+          ...diagnostic.clusters,
+          bridgedDeviceBasicInformation: {
+            vendorName: 'EcoFlow',
+            nodeLabel: diagnostic.displayName,
+            productName: diagnostic.model,
+            productLabel: diagnostic.model,
+            serialNumber: 'redacted-auto-test-serial',
+            reachable: true,
+          },
+        } as never,
+      );
+      await aggregator.add(diagnosticEndpoint);
+      const diagnosticSupported = diagnosticEndpoint.behaviors.supported as unknown as Record<
+        string,
+        { features: Record<string, boolean> }
+      >;
+      assert.equal(diagnosticEndpoint.lifecycle.isReady, true);
+      assert.equal(diagnosticSupported.thermostat?.features.autoMode, true);
+      assert.equal('onOff' in diagnosticSupported, false);
+      assert.equal('fanControl' in diagnosticSupported, false);
+      assert.equal('relativeHumidityMeasurement' in diagnosticSupported, false);
+      assert.equal('electricalPowerMeasurement' in diagnosticSupported, false);
+      const diagnosticState = diagnosticEndpoint.state as unknown as {
+        descriptor: { deviceTypeList: Array<{ deviceType: number }> };
+      };
+      assert.equal(
+        diagnosticState.descriptor.deviceTypeList.some(({ deviceType }) => deviceType === 0x0301),
+        true,
+      );
+      assert.equal(
+        diagnosticState.descriptor.deviceTypeList.some(({ deviceType }) => deviceType === 0x0072),
+        false,
+      );
     } finally {
+      await node.close();
+    }
+  });
+
+  it('routes powered Auto through the plain Thermostat diagnostic endpoint', async () => {
+    const baseMatter = matterHarness().matter;
+    const initial = onlineSnapshot();
+    const controller = recordingController({
+      ...initial,
+      state: {
+        powered: true,
+        mode: 'cool',
+        ambientTemperatureCelsius: 21.23,
+        ambientHumidityPercent: 54.56,
+        targetTemperatureCelsius: 22,
+        airflowSpeed: 60,
+      },
+    });
+    const accessory = createWave3MatterAccessory(
+      baseMatter,
+      'matter-runtime-plain-auto-control',
+      device(),
+      controller.snapshot,
+      undefined,
+      'plainThermostatSpike',
+    );
+    const environment = new Environment('wave3-plain-auto-control-test', Environment.default);
+    new MockStorageService(environment);
+    const node = await ServerNode.create({
+      id: 'wave3-plain-auto-control-node',
+      environment,
+      network: { port: 0 },
+      productDescription: { name: 'WAVE plain Auto test', deviceType: 0x000e },
+      basicInformation: {
+        vendorName: 'Test',
+        vendorId: 0xfff1,
+        productName: 'WAVE plain Auto test',
+        productId: 0x8000,
+        nodeLabel: 'WAVE plain Auto test',
+        serialNumber: 'wave3-plain-auto-test',
+        hardwareVersion: 1,
+        hardwareVersionString: '1',
+        softwareVersion: 1,
+        softwareVersionString: '1',
+      },
+    } as never);
+    let binding: Wave3MatterAccessory | undefined;
+    try {
+      const aggregator = new Endpoint(AggregatorEndpoint, { id: 'wave3-plain-auto-aggregator' });
+      await node.add(aggregator);
+      const endpoint = new Endpoint(
+        wave3PlainThermostatDeviceType(baseMatter).with(
+          BridgedDeviceBasicInformationServer,
+        ),
+        {
+          id: accessory.UUID,
+          ...accessory.clusters,
+          bridgedDeviceBasicInformation: {
+            vendorName: 'EcoFlow',
+            nodeLabel: accessory.displayName,
+            productName: accessory.model,
+            productLabel: accessory.model,
+            serialNumber: 'redacted-plain-auto-control',
+            reachable: true,
+          },
+        } as never,
+      );
+      await aggregator.add(endpoint);
+      const runtimeMatter = {
+        ...baseMatter,
+        updateAccessoryState: async (
+          _uuid: string,
+          cluster: string,
+          attributes: Record<string, unknown>,
+        ) => {
+          void endpoint.set({ [cluster]: attributes } as never);
+        },
+        getAccessoryState: async (_uuid: string, cluster: string) => {
+          const state = endpoint.state as unknown as Record<string, Record<string, unknown>>;
+          return state[cluster];
+        },
+      } as MatterAPI;
+      binding = new Wave3MatterAccessory(runtimeMatter, accessory, controller);
+
+      await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.auto } });
+      await waitUntil(
+        () => controller.snapshot.state.mode === 'auto',
+        'plain Thermostat Auto command',
+      );
+      await waitUntil(
+        () => endpoint.state.thermostat.occupiedHeatingSetpoint === 1_900
+          && endpoint.state.thermostat.occupiedCoolingSetpoint === 2_400,
+        'plain Thermostat saved Auto range projection',
+      );
+
+      assert.deepEqual(controller.commands, [{ type: 'mode', mode: 'auto' }]);
+      assert.equal(controller.snapshot.state.targetTemperatureLowerCelsius, 19);
+      assert.equal(controller.snapshot.state.targetTemperatureUpperCelsius, 24);
+      assert.equal(endpoint.state.thermostat.systemMode, MATTER_SYSTEM_MODE.auto);
+      assert.equal(endpoint.state.thermostat.occupiedHeatingSetpoint, 1_900);
+      assert.equal(endpoint.state.thermostat.occupiedCoolingSetpoint, 2_400);
+    } finally {
+      await binding?.stop();
       await node.close();
     }
   });

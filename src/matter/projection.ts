@@ -136,6 +136,10 @@ export function clustersForSnapshot(
     ...electricalPowerMeasurementForSnapshot(snapshot),
   };
 
+  if (context.presentation === 'plainThermostatSpike') {
+    return { thermostat: clusters.thermostat ?? {} };
+  }
+
   return clusters;
 }
 

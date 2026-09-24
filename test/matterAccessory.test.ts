@@ -12,6 +12,7 @@ import {
   wave3RoomAirConditionerDeviceType,
   Wave3MatterAccessory,
 } from '../src/matterAccessory.js';
+import { requireMatterControl } from '../src/matter/controlRegistry.js';
 import { MATTER_TEMPERATURE_DISPLAY_MODE } from '../src/matter/constants.js';
 import type { Wave3AccessoryController } from '../src/wave3/controller.js';
 import type {
@@ -21,6 +22,185 @@ import type {
 } from '../src/wave3/domain.js';
 
 describe('WAVE 3 Matter accessory', () => {
+  it('projects storage without granting synthetic cache freshness across restarts', async () => {
+    for (const lastConfirmedAt of [undefined, Date.now(), Date.now() - 3_600_000]) {
+      const harness = matterHarness();
+      const storedDevice = { ...device(), seasonalStorage: true };
+      const cached = createWave3MatterAccessory(harness.matter, 'storage-cache', device(), onlineSnapshot());
+      cached.context.lastConfirmedAt = lastConfirmedAt;
+      const offline = { ...onlineSnapshot(), availability: 'offline' as const, acPowerWatts: 400 };
+      const accessory = createWave3MatterAccessory(harness.matter, cached.UUID, storedDevice, offline, cached);
+      assert.equal(accessory.context.lastConfirmedAt, undefined);
+      assert.equal(accessory.context.lastSystemMode, cached.context.lastSystemMode);
+      assert.equal(accessory.clusters?.thermostat?.occupiedCoolingSetpoint, cached.clusters?.thermostat?.occupiedCoolingSetpoint);
+      assert.equal(accessory.clusters?.onOff?.onOff, false);
+      assert.equal(accessory.clusters?.electricalPowerMeasurement?.activePower, null);
+      assert.equal(offline.state.powered, true);
+      assert.equal(offline.availability, 'offline');
+      const controller = recordingController(offline);
+      const binding = new Wave3MatterAccessory(harness.matter, accessory, controller, undefined, undefined, 1, true);
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
+      await binding.stop();
+      // Simulate persisted accessory restoration, with no separate storage latch.
+      const restored = createWave3MatterAccessory(harness.matter, accessory.UUID, storedDevice, offline, accessory);
+      assert.equal(restored.context.lastConfirmedAt, undefined);
+      assert.equal(restored.clusters?.bridgedDeviceBasicInformation?.reachable, true);
+      const disabled = createWave3MatterAccessory(harness.matter, accessory.UUID, device(), offline, restored);
+      const normal = new Wave3MatterAccessory(harness.matter, disabled, controller);
+      try {
+        await (normal as unknown as { updateTail: Promise<void> }).updateTail;
+        assert.equal((await harness.matter.getAccessoryState(disabled.UUID, 'bridgedDeviceBasicInformation'))?.reachable, false);
+        await assert.rejects(requireMatterControl(disabled.UUID).setPower(true, async () => undefined), /not currently controllable/);
+        controller.setSnapshot(onlineSnapshot());
+        await (normal as unknown as { updateTail: Promise<void> }).updateTail;
+        await requireMatterControl(disabled.UUID).setPower(false, async () => undefined);
+        assert.deepEqual(controller.commands, [{ type: 'power', on: false }]);
+        controller.setSnapshot(offlineSnapshot());
+        await drainMicrotasks();
+        await (normal as unknown as { updateTail: Promise<void> }).updateTail;
+        assert.equal((await harness.matter.getAccessoryState(disabled.UUID, 'bridgedDeviceBasicInformation'))?.reachable, false);
+      } finally {
+        await normal.stop();
+      }
+    }
+  });
+
+  it('keeps a real stored Matter endpoint read-only through wake, loss, and retry', async () => {
+    const baseMatter = matterHarness().matter;
+    const controller = recordingController(offlineSnapshot());
+    const accessory = createWave3MatterAccessory(baseMatter, 'stored-runtime', { ...device(), seasonalStorage: true }, controller.snapshot);
+    const environment = new Environment('storage-runtime-test', Environment.default);
+    new MockStorageService(environment);
+    const node = await ServerNode.create({
+      id: 'storage-test-node', environment, network: { port: 0 },
+      productDescription: { name: 'Storage test', deviceType: 0x000e },
+      basicInformation: {
+        vendorName: 'Test', vendorId: 0xfff1, productName: 'Storage test', productId: 0x8000,
+        nodeLabel: 'Storage test', serialNumber: 'storage-test', hardwareVersion: 1,
+        hardwareVersionString: '1', softwareVersion: 1, softwareVersionString: '1',
+      },
+    } as never);
+    let binding: Wave3MatterAccessory | undefined;
+    try {
+      const { applyElectricalMeasurementClusters, applyElectricalMeasurementDefaults, detectElectricalMeasurementClusters } =
+        await import('../node_modules/homebridge/dist/matter/serverHelpers.js');
+      const detection = detectElectricalMeasurementClusters(accessory);
+      applyElectricalMeasurementDefaults(accessory, detection);
+      const endpointType = applyElectricalMeasurementClusters(
+        wave3RoomAirConditionerDeviceType(baseMatter).with(BridgedDeviceBasicInformationServer), accessory, detection,
+      );
+      const aggregator = new Endpoint(AggregatorEndpoint, { id: 'stored-aggregator' });
+      await node.add(aggregator);
+      const endpoint = new Endpoint(endpointType, {
+        id: accessory.UUID, ...accessory.clusters,
+        bridgedDeviceBasicInformation: { vendorName: 'EcoFlow', productName: 'WAVE 3', nodeLabel: 'Stored WAVE', reachable: true },
+      } as never);
+      await aggregator.add(endpoint);
+      let dropCluster: string | undefined;
+      let stateGate: ReturnType<typeof deferred> | undefined;
+      let updateStarted: ReturnType<typeof deferred> | undefined;
+      const errors: string[] = [];
+      const infos: string[] = [];
+      const runtimeMatter = {
+        ...baseMatter,
+        updateAccessoryState: async (_uuid: string, cluster: string, attributes: Record<string, unknown>) => {
+          updateStarted?.resolve();
+          await stateGate?.promise;
+          if (dropCluster === cluster) {
+            dropCluster = undefined; return;
+          }
+          await endpoint.set({ [cluster]: attributes } as never);
+        },
+        getAccessoryState: async (_uuid: string, cluster: string) =>
+          (endpoint.state as unknown as Record<string, Record<string, unknown>>)[cluster],
+      } as MatterAPI;
+      binding = new Wave3MatterAccessory(runtimeMatter, accessory, controller,
+        { error: message => errors.push(message), info: message => infos.push(message) }, undefined, 1, true);
+      const settle = () => (binding as unknown as { updateTail: Promise<void> }).updateTail;
+      await settle();
+      const control = requireMatterControl(accessory.UUID);
+      const assertStored = () => {
+        const state = endpoint.state as unknown as Record<string, Record<string, unknown>>;
+        assert.equal(state.onOff?.onOff, false);
+        assert.equal(state.thermostat?.localTemperature, null);
+        assert.equal(state.relativeHumidityMeasurement?.measuredValue, null);
+        assert.equal(state.electricalPowerMeasurement?.activePower, null);
+        assert.equal(state.fanControl?.percentCurrent, 0);
+        assert.equal(state.bridgedDeviceBasicInformation?.reachable, true);
+        assert.equal(accessory.context.lastConfirmedAt, undefined);
+      };
+      const rejectCommands = async () => {
+        for (const on of [true, false]) {
+          await assert.rejects(control.setPower(on, async () => assert.fail('must not apply power')), /Seasonal Storage/);
+        }
+        for (const write of [
+          () => control.setSystemMode(MATTER_SYSTEM_MODE.heat),
+          () => control.setHeatingSetpoint(2500), () => control.setCoolingSetpoint(2600),
+          () => control.setFanMode(1), () => control.setFanPercent(40), () => control.setFanSpeed(2),
+          () => control.setTemperatureDisplayMode(1),
+        ]) {
+          assert.throws(write, /Seasonal Storage/);
+        }
+        await assert.rejects(control.raiseLowerSetpoint(2, 10, async () => undefined), /Seasonal Storage/);
+        await assert.rejects(async () => endpoint.act('stored power', agent =>
+          (agent as unknown as { onOff: { on(): Promise<void> } }).onOff.on()), /Seasonal Storage/);
+        await assert.rejects(async () => endpoint.act('stored toggle', agent =>
+          (agent as unknown as { onOff: { toggle(): Promise<void> } }).onOff.toggle()), /Seasonal Storage/);
+        await assert.rejects(async () => endpoint.act('stored off', agent =>
+          (agent as unknown as { onOff: { off(): Promise<void> } }).onOff.off()), /Seasonal Storage/);
+        await assert.rejects(endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.heat } }), /Seasonal Storage/);
+        await assert.rejects(endpoint.set({ fanControl: { percentSetting: 40 } }), /Seasonal Storage/);
+        assert.equal(controller.commands.length, 0);
+      };
+      assertStored();
+      await rejectCommands();
+      for (const availability of ['stale', 'reconnecting', 'accountError'] as const) {
+        controller.setSnapshot({ ...onlineSnapshot(), availability, acPowerWatts: 500 });
+        await settle();
+        assertStored();
+      }
+      controller.setSnapshot({ ...onlineSnapshot(), acPowerWatts: 20 });
+      await settle();
+      assert.equal((endpoint.state as unknown as { onOff: { onOff: boolean } }).onOff.onOff, true);
+      await rejectCommands();
+      assert.equal(infos.length, 1);
+      assert.equal(accessory.context.lastConfirmedAt !== undefined, true);
+      controller.setSnapshot(offlineSnapshot());
+      await settle();
+      assertStored();
+      // Read-back, not update dispatch, decides whether telemetry was delivered.
+      dropCluster = 'electricalPowerMeasurement';
+      const wake = { ...onlineSnapshot(), acPowerWatts: 30 };
+      controller.setSnapshot(wake);
+      await settle();
+      assert.match(errors.at(-1)!, /not confirmed by read-back/);
+      controller.setSnapshot(wake);
+      await settle();
+      const state = endpoint.state as unknown as Record<string, Record<string, unknown>>;
+      assert.equal(Number(state.electricalPowerMeasurement?.activePower), 30000);
+      assert.equal(infos.length, 1);
+      stateGate = deferred();
+      updateStarted = deferred();
+      controller.setSnapshot({ ...wake, acPowerWatts: 40 });
+      await updateStarted.promise;
+      updateStarted = undefined;
+      controller.setSnapshot(offlineSnapshot());
+      stateGate.resolve();
+      stateGate = undefined;
+      await settle();
+      assertStored();
+      controller.setSnapshot(offlineSnapshot());
+      controller.setSnapshot(wake);
+      controller.setSnapshot(offlineSnapshot());
+      await settle();
+      assertStored();
+      assert.equal(controller.commands.length, 0);
+    } finally {
+      await binding?.stop();
+      await node.close();
+    }
+  });
+
   it('maps advertised system modes and degrades external Auto to cooling presentation', () => {
     const harness = matterHarness();
     const cases = [
@@ -719,6 +899,8 @@ describe('WAVE 3 Matter accessory', () => {
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.heat,
         'newer confirmed heat projection',
       );
+      await drainMicrotasks();
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
       const commandsBeforeFormerlyStaleMode = controller.commands.length;
       await endpoint.set({ thermostat: { systemMode: MATTER_SYSTEM_MODE.cool } });
       await waitUntil(
@@ -1251,7 +1433,7 @@ describe('WAVE 3 Matter accessory', () => {
             agent => agent.thermostat.setpointRaiseLower({ mode: 2, amount: 10 }),
           ),
           error => {
-            assert.ok(error instanceof StatusType);
+            assert.ok(error instanceof StatusType, String(error));
             assert.equal(MatterStatus.isMatterProtocolError(error), true);
             return true;
           },
@@ -1278,6 +1460,8 @@ describe('WAVE 3 Matter accessory', () => {
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'automatic projection before deferred setpoint failure',
       );
+      await drainMicrotasks();
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
 
       for (const [reason, StatusType, message] of [
         ['publicationFailed', MatterStatus.Failure, /cloud did not accept/],
@@ -1290,7 +1474,7 @@ describe('WAVE 3 Matter accessory', () => {
         await assert.rejects(
           async () => endpoint.act(`failed power command: ${reason}`, agent => agent.onOff.off()),
           error => {
-            assert.ok(error instanceof StatusType);
+            assert.ok(error instanceof StatusType, String(error));
             assert.equal(MatterStatus.isMatterProtocolError(error), true);
             assert.match(error.message, message);
             return true;
@@ -1338,6 +1522,8 @@ describe('WAVE 3 Matter accessory', () => {
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'automatic projection after command failure matrix',
       );
+      await drainMicrotasks();
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
 
       let errorCount = errors.length;
       const interruptedModeCommand = controller.deferNextFailure();
@@ -1362,6 +1548,8 @@ describe('WAVE 3 Matter accessory', () => {
         () => endpoint.state.fanControl.speedSetting === 3,
         'fan projection before deferred fan failure',
       );
+      await drainMicrotasks();
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
       errorCount = errors.length;
       const interruptedFanCommand = controller.deferNextFailure();
       await endpoint.set({ fanControl: { speedSetting: 1 } });
@@ -1380,11 +1568,15 @@ describe('WAVE 3 Matter accessory', () => {
           && endpoint.state.fanControl.percentSetting === 60,
         'confirmed fan restoration during account error',
       );
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
+      assert.equal(endpoint.state.bridgedDeviceBasicInformation.reachable, false);
       controller.setSnapshot(onlineSnapshot());
       await waitUntil(
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'automatic projection before pending fan cancellation',
       );
+      await drainMicrotasks();
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
 
       const airflowBeforePowerOff = controller.commands.filter(
         command => command.type === 'airflowSpeed',
@@ -1485,6 +1677,7 @@ describe('WAVE 3 Matter accessory', () => {
       await node.close();
     }
     assert.deepEqual(errors, [
+      'EcoFlow WAVE 3 Matter state update failed: Matter thermostat update was not confirmed by read-back',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Cooling setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
       'EcoFlow WAVE 3 Matter setpoint adjustment command failed: Heating setpoint is not active',
@@ -1495,7 +1688,7 @@ describe('WAVE 3 Matter accessory', () => {
       'EcoFlow WAVE 3 Matter power command failed: EcoFlow cloud did not accept the command',
       'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 rejected the command',
       'EcoFlow WAVE 3 Matter power command confirmation timed out: EcoFlow WAVE 3 did not confirm within the command deadline',
-      ...Array<string>(5).fill(
+      ...Array<string>(3).fill(
         'EcoFlow WAVE 3 Matter power command failed: EcoFlow WAVE 3 is not currently controllable',
       ),
       'EcoFlow WAVE 3 Matter system mode command failed: EcoFlow WAVE 3 is not currently controllable',

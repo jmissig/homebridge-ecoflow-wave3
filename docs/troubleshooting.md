@@ -27,6 +27,20 @@ Confirm the child bridge has Matter enabled and HAP disabled.
 
 ## No Response during startup
 
+If the WAVE is deliberately powered down for seasonal storage, use the
+per-device **Seasonal Storage** option instead of removing the accessory.
+See [Seasonal storage](../README.md#seasonal-storage). The option stays enabled
+until you disable it and restart the EcoFlow child bridge; powering the WAVE
+back on only restores read-only telemetry. A rejected control while storage is
+enabled is expected, even if the WAVE is online.
+
+While storage is enabled, offline state is presented as Off with unknown
+sensor readings. Account/connection errors still appear in Homebridge logs,
+and the bridge must remain online. The setting cannot hide failure of the
+child bridge or home hub. Exact Apple Home rendering remains to be validated.
+
+The rules below describe normal operation with Seasonal Storage disabled.
+
 Startup presentation depends on the age of the last authoritative device
 state:
 

@@ -87,6 +87,9 @@ const DEFAULT_DEPENDENCIES: EcoFlowWave3PlatformDependencies = {
     accessory,
     controller,
     logger,
+    undefined,
+    undefined,
+    device.seasonalStorage,
   ),
 };
 
@@ -245,8 +248,8 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
       const cachedAccessory = this.matterAccessories.get(uuid);
       const endpointShapeChanged = cachedAccessory !== undefined
         && cachedAccessory.context.schemaVersion !== MATTER_ACCESSORY_SCHEMA_VERSION;
-      if (endpointShapeChanged
-        || !isRecentCachedState(cachedAccessory?.context.lastConfirmedAt)) {
+      if (!device.seasonalStorage && (endpointShapeChanged
+        || !isRecentCachedState(cachedAccessory?.context.lastConfirmedAt))) {
         devicesNeedingFullDisplayState.push(device.serialNumber);
       }
       if (endpointShapeChanged) {
@@ -306,6 +309,10 @@ export class EcoFlowWave3Platform implements DynamicPlatformPlugin {
         logger,
       );
       this.bindings.set(uuid, binding);
+      const storageStatus = device.seasonalStorage
+        ? 'enabled; controls locked until manually disabled'
+        : 'disabled; normal device availability applies';
+      this.log.info(`WAVE 3 device #${this.bindings.size}: Seasonal Storage ${storageStatus}`);
     }
 
     if (this.shutdownStarted) {

@@ -32,6 +32,7 @@ import {
   type Wave3MatterControl,
 } from './matter/controlRegistry.js';
 import { wave3RoomAirConditionerDeviceType } from './matter/deviceType.js';
+import { storageClusters, usesStoragePresentation } from './matter/storagePolicy.js';
 import {
   centidegrees,
   clustersForSnapshot,
@@ -63,6 +64,7 @@ export interface MatterAccessoryBinding {
 
 export interface MatterAccessoryLogger {
   debug?(message: string): void;
+  info?(message: string): void;
   error(message: string): void;
 }
 
@@ -120,11 +122,16 @@ export function createWave3MatterAccessory(
     ...(firmwareRevision === undefined ? {} : { firmwareRevision }),
   };
   updateLastSystemMode(context, snapshot);
-  const clusters = clustersForSnapshot(
+  let clusters = clustersForSnapshot(
     snapshot,
     context,
     cached?.clusters,
   );
+  if (usesStoragePresentation(device.seasonalStorage ?? false, snapshot)) {
+    clusters = storageClusters(clusters);
+    // Synthetic cached values must never receive the normal restart grace.
+    delete context.lastConfirmedAt;
+  }
   rememberDesiredState(uuid, clusters);
   return {
     UUID: uuid,
@@ -151,9 +158,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private interactiveCommandDepth = 0;
   private fanWriteGeneration = 0;
   private updateTail: Promise<void> = Promise.resolve();
-  private lastConfirmedSnapshot?: Wave3ControllerSnapshot;
   private presentedFirmwareRevision?: string;
-  private presentedActivePower: number | null;
+  private presentedActivePower: number | null | undefined;
   private snapshot: Wave3ControllerSnapshot;
   private pendingFanWrite?: PendingFanWrite;
   private pendingTemperatureWrite?: PendingTemperatureWrite;
@@ -166,6 +172,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   private cacheExpiryTimer?: ReturnType<typeof setTimeout>;
   private presentedReachable = true;
   private stopped = false;
+  private reportedStorageOnline = false;
+  private operationalPresentationReady: boolean;
 
   constructor(
     private readonly matter: MatterAPI,
@@ -177,13 +185,17 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     },
     private readonly now: () => number = Date.now,
     private readonly cachedStateMaxAgeMilliseconds = CACHED_STATE_MAX_AGE_MILLISECONDS,
+    private readonly seasonalStorage = false,
   ) {
     this.snapshot = controller.snapshot;
-    this.presentedActivePower = nullableFiniteNumber(
+    this.operationalPresentationReady = this.snapshot.availability === 'online';
+    this.presentedActivePower = this.seasonalStorage ? undefined : nullableFiniteNumber(
       accessory.clusters?.electricalPowerMeasurement?.activePower,
     );
-    if (controller.snapshot.availability === 'online') {
-      this.lastConfirmedSnapshot = controller.snapshot;
+    if (this.seasonalStorage) {
+      // A restored live endpoint can still hold its previous reachability.
+      // Force the first storage publication instead of trusting cached fields.
+      this.presentedReachable = false;
     }
     // Registration has completed before the binding is created. The desired
     // values used to admit asynchronous endpoint construction must not remain
@@ -196,7 +208,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       ?? accessory.context.firmwareRevision
       ?? accessory.firmwareRevision,
     )).then(async () => {
-      await this.initializeReachability(controller.snapshot);
+      if (this.seasonalStorage) {
+        await this.pushSnapshot(this.snapshot);
+      } else {
+        await this.initializeReachability(this.snapshot);
+      }
     }).then(() => {
       this.presentationRetryPending = false;
     }).catch(error => {
@@ -206,8 +222,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     this.detachSnapshot = controller.onSnapshot(snapshot => {
       const previousSnapshot = this.snapshot;
       this.snapshot = snapshot;
-      if (snapshot.availability === 'online') {
-        this.lastConfirmedSnapshot = snapshot;
+      if (snapshot.availability !== 'online') {
+        this.operationalPresentationReady = false;
+        this.cancelPendingFan();
+        this.cancelPendingTemperature();
+        this.cancelThermostatIntent();
       }
       if (!this.presentationRetryPending
         && !matterPresentationChanged(previousSnapshot, snapshot)
@@ -297,17 +316,14 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (this.stopped) {
       return;
     }
-    if (this.lastConfirmedSnapshot === undefined) {
-      return;
-    }
     setImmediate(() => {
       if (this.stopped) {
         return;
       }
       this.updateTail = this.updateTail
         .then(() => {
-          const latest = this.lastConfirmedSnapshot;
-          return latest === undefined ? undefined : this.pushSnapshot(latest);
+          // Reconcile current availability, not a formerly-online snapshot.
+          return this.pushSnapshot(this.snapshot, true);
         })
         .catch(error => {
           this.logger.error(`EcoFlow WAVE 3 Matter state restoration failed: ${errorMessage(error)}`);
@@ -531,6 +547,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private setFanMode(fanMode: number): void {
+    this.requireControllable();
     this.logger.debug?.(`EcoFlow diagnostics: Matter write fanMode=${fanMode}`);
     if (fanMode === MATTER_FAN_MODE.off) {
       throw new MatterStatus.InvalidInState(
@@ -551,6 +568,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private setFanPercent(percent: number | null): void {
+    this.requireControllable();
     this.logger.debug?.(`EcoFlow diagnostics: Matter write fanPercent=${String(percent)}`);
     if (percent === 0) {
       throw new MatterStatus.InvalidInState(
@@ -567,6 +585,7 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private setFanSpeed(speed: number | null): void {
+    this.requireControllable();
     this.logger.debug?.(`EcoFlow diagnostics: Matter write fanSpeed=${String(speed)}`);
     if (speed === 0) {
       throw new MatterStatus.InvalidInState(
@@ -627,6 +646,11 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     description: string,
     operation: () => Promise<void>,
   ): Promise<void> {
+    try {
+      this.requireControllable();
+    } catch (error) {
+      return Promise.reject(error);
+    }
     this.interactiveCommandDepth += 1;
     const reported = this.enqueueControllerOperation(async () => {
       // Homebridge 2.2 dispatches snapshot writes asynchronously. Let an
@@ -681,7 +705,8 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     this.updateTail = this.updateTail
       .then(async () => {
         try {
-          await this.pushSnapshot(snapshot);
+          // New availability supersedes queued/rollback projections.
+          await this.pushSnapshot(this.snapshot);
           this.presentationRetryPending = false;
         } catch (error) {
           this.presentationRetryPending = true;
@@ -690,7 +715,13 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       })
       .catch(error => {
         if (!this.stopped && this.snapshot === snapshot) {
-          this.logger.error(`EcoFlow WAVE 3 Matter state update failed: ${errorMessage(error)}`);
+          if (this.pendingFanWrite !== undefined
+            || this.pendingTemperatureWrite !== undefined
+            || this.interactiveCommandDepth > 0) {
+            this.logger.debug?.(`Matter projection interrupted by controller interaction: ${errorMessage(error)}`);
+          } else {
+            this.logger.error(`EcoFlow WAVE 3 Matter state update failed: ${errorMessage(error)}`);
+          }
         }
       })
       .finally(() => this.finishPresentationUpdate());
@@ -714,7 +745,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return true;
     }
     return !Object.is(
-      electricalPowerMeasurementForSnapshot(snapshot).activePower,
+      usesStoragePresentation(this.seasonalStorage, snapshot)
+        ? null
+        : electricalPowerMeasurementForSnapshot(snapshot).activePower,
       this.presentedActivePower,
     );
   }
@@ -809,12 +842,19 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     if (this.stopped) {
       throw new MatterStatus.InvalidInState('Matter accessory stopped');
     }
+    if (this.seasonalStorage) {
+      throw new MatterStatus.InvalidInState('Seasonal Storage is enabled; disable it in Homebridge and restart the child bridge');
+    }
     if (this.snapshot.availability !== 'online') {
       throw new MatterStatus.InvalidInState('EcoFlow WAVE 3 is not currently controllable');
+    }
+    if (!this.operationalPresentationReady) {
+      throw new MatterStatus.InvalidInState('Matter state synchronization is pending');
     }
   }
 
   private async execute(command: Wave3Command): Promise<void> {
+    this.requireControllable();
     let result;
     try {
       result = await this.controller.execute(command);
@@ -830,14 +870,15 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     throw matterErrorForFailure(result.reason);
   }
 
-  private async pushSnapshot(snapshot: Wave3ControllerSnapshot): Promise<void> {
+  private async pushSnapshot(snapshot: Wave3ControllerSnapshot, restoreControls = false): Promise<void> {
     if (this.stopped) {
       return;
     }
 
     await this.pushElectricalPower(snapshot);
 
-    if (snapshot.availability !== 'online') {
+    const stored = usesStoragePresentation(this.seasonalStorage, snapshot);
+    if (snapshot.availability !== 'online' && !stored && !restoreControls) {
       await this.reconcileUnavailableSnapshot(snapshot);
       return;
     }
@@ -850,7 +891,12 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       return;
     }
 
-    const clusters = this.clustersForPresentation(snapshot);
+    const clusters = stored
+      ? storageClusters(this.clustersForPresentation(snapshot))
+      : this.clustersForPresentation(snapshot);
+    if (stored) {
+      delete this.accessory.context.lastConfirmedAt;
+    }
     this.accessory.clusters = clusters;
     await this.updateState(
       this.accessory.UUID,
@@ -873,8 +919,24 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
       this.matter.clusterNames.RelativeHumidityMeasurement,
       clusters.relativeHumidityMeasurement ?? {},
     );
-    await this.pushReachability(true);
-    this.accessory.context.lastConfirmedAt = this.now();
+    // A newer snapshot is already queued. Do not give the superseded one
+    // fresh-cache or command authority after an awaited cluster update.
+    if (this.stopped || snapshot !== this.snapshot) {
+      return;
+    }
+    if (stored || snapshot.availability === 'online') {
+      await this.pushReachability(true);
+    } else {
+      await this.reconcileUnavailableSnapshot(snapshot);
+    }
+    if (snapshot.availability === 'online' && snapshot === this.snapshot && !this.stopped) {
+      this.operationalPresentationReady = true;
+      this.accessory.context.lastConfirmedAt = this.now();
+      if (this.seasonalStorage && !this.reportedStorageOnline) {
+        this.reportedStorageOnline = true;
+        this.logger.info?.('WAVE 3 is online; Seasonal Storage still blocks controls until manually disabled');
+      }
+    }
   }
 
   private async pushThermostatState(attributes: Record<string, unknown>): Promise<void> {
@@ -904,7 +966,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
   }
 
   private async pushElectricalPower(snapshot: Wave3ControllerSnapshot): Promise<void> {
-    const attributes = electricalPowerMeasurementForSnapshot(snapshot);
+    const attributes = usesStoragePresentation(this.seasonalStorage, snapshot)
+      ? { activePower: null }
+      : electricalPowerMeasurementForSnapshot(snapshot);
     const activePower = attributes.activePower;
     if (Object.is(activePower, this.presentedActivePower)) {
       return;
@@ -1266,6 +1330,9 @@ export class Wave3MatterAccessory implements MatterAccessoryBinding {
     // has not caught up, retain these values as internal-write markers. A
     // later Matter.js reaction consumes them, a newer snapshot safely adds its
     // own marker, and stop/release clears anything still pending.
+    if (confirmedAttributes.size !== Object.keys(attributes).length) {
+      throw new Error(`Matter ${cluster} update was not confirmed by read-back`);
+    }
   }
 
   private async pushFirmware(firmwareRevision: string | undefined): Promise<void> {
@@ -1435,6 +1502,7 @@ async function waitForAttributes(
   const confirmed = new Set<string>();
   const expectedEntries = Object.entries(expected);
   for (let attempt = 0; attempt < 20; attempt += 1) {
+    confirmed.clear();
     try {
       const state = await matter.getAccessoryState(uuid, cluster);
       if (state !== undefined) {

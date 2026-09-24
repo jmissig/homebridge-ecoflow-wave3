@@ -44,6 +44,23 @@ describe('EcoFlow WAVE 3 configuration', () => {
     }
   });
 
+  it('defaults storage off and accepts only explicit per-device booleans', () => {
+    assert.equal(parseEcoFlowWave3Config(baseConfig()).devices[0]?.seasonalStorage, false);
+    for (const seasonalStorage of [true, false]) {
+      const config = parseEcoFlowWave3Config(baseConfig({ devices: [
+        { name: 'Stored WAVE', serialNumber: 'STORED1234', seasonalStorage },
+        { name: 'Active WAVE', serialNumber: 'ACTIVE1234' },
+      ] }));
+      assert.equal(config.devices[0]?.seasonalStorage, seasonalStorage);
+      assert.equal(config.devices[1]?.seasonalStorage, false);
+    }
+    for (const seasonalStorage of ['true', 'false', null, 0, 1, {}]) {
+      assert.throws(() => parseEcoFlowWave3Config(baseConfig({ devices: [
+        { name: 'Stored WAVE', serialNumber: 'STORED1234', seasonalStorage },
+      ] })), /seasonalStorage must be a boolean/);
+    }
+  });
+
   it('rejects the removed current-temperature source preference', () => {
     assert.throws(
       () => parseEcoFlowWave3Config(baseConfig({
@@ -118,6 +135,11 @@ describe('EcoFlow WAVE 3 configuration', () => {
       schemaAccepted: boolean;
       runtimeAccepted: boolean;
     }> = [
+      ...[true, false, 'true', null, 1].map(seasonalStorage => ({
+        candidate: baseConfig({ devices: [{ name: 'Bedroom', serialNumber: 'TESTWAVE30001', seasonalStorage }] }),
+        schemaAccepted: typeof seasonalStorage === 'boolean',
+        runtimeAccepted: typeof seasonalStorage === 'boolean',
+      })),
       { candidate: baseConfig(), schemaAccepted: true, runtimeAccepted: true },
       {
         candidate: baseConfig({ freshnessTimeoutMinutes: 12 }),

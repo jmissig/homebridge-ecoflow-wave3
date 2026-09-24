@@ -92,6 +92,30 @@ control authority alive.
 Choose the same region your EcoFlow account uses. Authentication usually fails
 if the region is wrong.
 
+### Seasonal storage
+
+If you power down a WAVE for months at a time, enable **Seasonal Storage** for
+that unit in Homebridge UI, save, and restart the EcoFlow child bridge. In JSON,
+set `"seasonalStorage": true` inside that unit's entry in `devices`.
+
+The plugin keeps the same paired accessory and presents it as Off while it is
+offline. Room temperature, humidity, and power readings become unavailable,
+not frozen or zero. All controls are blocked, and commands are never saved for
+later. Enabling storage does **not** turn off the physical appliance.
+
+If the WAVE comes online, its actual state is displayed read-only. **Storage
+does not end automatically.** Uncheck the option (or set it to `false`), save,
+and restart the child bridge to restore normal operation. Controls also need
+fresh device state; disabling storage while offline restores No Response.
+No removal, re-pairing, or accessory-cache reset is needed.
+
+This is an opt-in presentation workaround: the plugin reports the stored
+accessory as reachable even though the appliance is offline. Homebridge itself
+must remain running. Apple Home may still show a transient error if you try a
+blocked control. The Off/unknown-readings presentation is covered by Matter
+runtime tests; its exact Apple Home tile and summary behavior still needs
+household acceptance testing.
+
 ## Enable Matter and pair with your controller
 
 Run the plugin as a Homebridge platform child bridge with Matter enabled and

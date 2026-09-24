@@ -15,6 +15,12 @@ Air Conditioner and revisit Auto only after that controller mapping changes.
 
 ## Now — finish resilience acceptance
 
+- [ ] Validate Seasonal Storage in Apple Home: Off without persistent tile or
+  summary errors, unknown rather than stale/zero readings, transient-only
+  errors on blocked controls, unchanged pairing/room/scenes, read-only wake,
+  and manual exit plus subsequent offline fault reporting. See
+  [decision 0007](docs/decisions/0007-seasonal-storage.md).
+
 - [ ] Verify concurrent EcoFlow app and Matter control without stale replay.
 - [ ] Verify MQTT reconnect, child-bridge restart, WAVE power cycle, and an
   extended unattended freshness window.

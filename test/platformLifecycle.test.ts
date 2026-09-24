@@ -108,6 +108,31 @@ describe('EcoFlow WAVE 3 platform lifecycle', () => {
     assert.deepEqual(harness.fullDisplayStateRequests, ['SECOND5678']);
   });
 
+  it('keeps stored endpoints paired and skips their full-display control request', async () => {
+    const config = validConfig();
+    config.devices = [
+      { name: 'Bedroom WAVE 3', serialNumber: 'FIRST1234', seasonalStorage: true },
+      { name: 'Office WAVE 3', serialNumber: 'SECOND5678' },
+    ];
+    const harness = platformHarness(config);
+    const cached = cachedMatterAccessory('Bedroom WAVE 3', uuidFor('FIRST1234'), 'FIRST1234');
+    cached.context.lastConfirmedAt = Date.now();
+    cached.clusters!.onOff = { onOff: true };
+    harness.platform.configureMatterAccessory(cached);
+    await harness.signalDidFinishLaunching();
+    assert.deepEqual(harness.fullDisplayStateRequests, ['SECOND5678']);
+    assert.equal(harness.unregistered.length, 0);
+    const stored = harness.platform.matterAccessories.get(uuidFor('FIRST1234'))!;
+    assert.equal(stored.UUID, cached.UUID);
+    assert.equal(stored.context.schemaVersion, 6);
+    assert.equal(stored.context.lastConfirmedAt, undefined);
+    assert.equal(stored.clusters?.onOff?.onOff, false);
+    assert.equal(stored.clusters?.thermostat?.localTemperature, null);
+    assert.equal(stored.clusters?.bridgedDeviceBasicInformation?.reachable, true);
+    assert.equal(harness.sessionCreateCount, 1);
+    await harness.platform.shutdown();
+  });
+
   it('uses stable serial-derived UUIDs without writing identifiers to logs', async () => {
     const first = platformHarness(validConfig());
     const second = platformHarness(validConfig());

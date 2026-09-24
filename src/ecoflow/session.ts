@@ -906,10 +906,14 @@ export class EcoFlowCloudSession {
       || retry.controller.signal.aborted) {
       return;
     }
-    const delay = Math.min(
+    const normalDelay = Math.min(
       this.authoritativeRefreshRetryBaseMilliseconds * (2 ** retry.attempt),
       this.authoritativeRefreshRetryMaximumMilliseconds,
     );
+    // Stored appliances can be absent for months. Keep subscriptions and a
+    // read-only discovery path without probing each unit every 30 seconds.
+    const stored = this.config.devices.some(device => device.serialNumber === serialNumber && device.seasonalStorage);
+    const delay = stored ? Math.max(5 * 60_000, normalDelay) : normalDelay;
     retry.attempt += 1;
     retry.timer = setTimeout(() => {
       retry.timer = undefined;
@@ -986,24 +990,29 @@ export class EcoFlowCloudSession {
   }
 
   private completeAuthoritativeRefresh(serialNumber: string): void {
-    this.cancelAuthoritativeRefreshRetry(serialNumber);
+    // Telemetry may arrive before MQTT's publish callback. Completing the
+    // refresh must not abort that publication (and force-close shared MQTT).
+    this.cancelAuthoritativeRefreshRetry(serialNumber, false);
     this.pendingRefreshes.delete(serialNumber);
   }
 
-  private cancelAuthoritativeRefreshRetry(serialNumber: string): void {
+  private cancelAuthoritativeRefreshRetry(serialNumber: string, abortPublication = true): void {
     const retry = this.authoritativeRefreshRetries.get(serialNumber);
     if (retry !== undefined) {
       if (retry.timer !== undefined) {
         clearTimeout(retry.timer);
       }
-      retry.controller.abort();
+      if (abortPublication) {
+        retry.controller.abort();
+      }
       this.authoritativeRefreshRetries.delete(serialNumber);
     }
   }
 
   private clearAuthoritativeRefreshRetries(): void {
     for (const serialNumber of this.authoritativeRefreshRetries.keys()) {
-      this.completeAuthoritativeRefresh(serialNumber);
+      this.cancelAuthoritativeRefreshRetry(serialNumber);
+      this.pendingRefreshes.delete(serialNumber);
     }
   }
 

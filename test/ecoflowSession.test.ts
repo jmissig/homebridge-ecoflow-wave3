@@ -348,6 +348,61 @@ describe('EcoFlow cloud session', () => {
     await session.stop();
   });
 
+  it('keeps refresh completion from aborting a pending shared MQTT publication', async () => {
+    const connection = new FakeMqttConnection();
+    const session = new EcoFlowCloudSession(singleDeviceTestConfig(), successfulHttp(),
+      new FakeMqttTransport(connection), undefined, undefined, 15_000, sequentialRequestIds(), 1, 1);
+    try {
+      await session.start();
+      const gate = new Deferred<void>();
+      connection.publishGate = gate;
+      await waitUntil(() => connection.publishAttempts === 2, 100);
+      connection.emitMessage({
+        topic: buildWave3Topics('TEST_USER', 'TESTWAVE30001').property,
+        payload: displayPacket(10, 1, 24, 20),
+      });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(connection.closeCalls, 0);
+      assert.equal(session.state, 'online');
+      gate.resolve();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(connection.publishCalls.length, 2);
+      assert.equal(connection.maximumActivePublishes, 1);
+      assert.equal(connection.closeCalls, 0);
+    } finally {
+      connection.publishGate?.resolve();
+      await session.stop();
+    }
+  });
+
+  it('slows only stored-device retries while preserving live subscriptions', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const base = testConfig();
+    const config = { ...base, devices: base.devices.map((device, i) => ({ ...device, seasonalStorage: i === 0 })) };
+    const connection = new FakeMqttConnection();
+    const session = new EcoFlowCloudSession(config, successfulHttp(), new FakeMqttTransport(connection));
+    const count = (serial: string) => connection.publishCalls.filter(call => call.topic === buildWave3Topics('TEST_USER', serial).get).length;
+    try {
+      await session.start();
+      assert.equal(count('TESTWAVE30001'), 1);
+      assert.equal(count('TESTWAVE30002'), 1);
+      for (let i = 0; i < 59; i += 1) {
+        t.mock.timers.tick(5000);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      assert.equal(count('TESTWAVE30001'), 1);
+      assert.ok(count('TESTWAVE30002') > 1);
+      t.mock.timers.tick(5000);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(count('TESTWAVE30001'), 2);
+      assert.ok(connection.subscribeCalls.flat().includes(buildWave3Topics('TEST_USER', 'TESTWAVE30001').property));
+      assert.equal(session.state, 'online');
+    } finally {
+      await session.stop();
+      t.mock.timers.reset();
+    }
+  });
+
   it('fails the connection after a timed-out authoritative refresh settles', async () => {
     const connection = new FakeMqttConnection();
     const logger = new CapturingLogger();

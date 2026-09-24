@@ -147,6 +147,9 @@ Rules:
 - Keep Matter reads fast; return cached normalized state and update cluster
   attributes asynchronously from device events.
 - Make offline, stale, rejected, and timed-out states explicit.
+- Seasonal Storage is an explicit per-device presentation exception, not
+  controller authority. Keep it read-only until manually disabled; preserve
+  endpoint identity and follow [decision 0007](docs/decisions/0007-seasonal-storage.md).
 - Re-subscribe and request current state after reconnect.
 - Ensure shutdown closes MQTT connections and timers cleanly.
 - Assume the private API can change without notice and make failures diagnosable without leaking secrets.

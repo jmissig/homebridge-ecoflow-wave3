@@ -69,6 +69,12 @@
           "required": ["name", "serialNumber"],
           "additionalProperties": false,
           "properties": {
+            "seasonalStorage": {
+              "title": "Seasonal Storage",
+              "description": "Enable after powering down this WAVE for storage, then save and restart the child bridge. Shows Off while offline and blocks controls even if the WAVE returns online. Disable and restart to resume control; fresh device state is also required.",
+              "type": "boolean",
+              "default": false
+            },
             "name": {
               "title": "Display Name",
               "type": "string",

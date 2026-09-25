@@ -3,6 +3,7 @@ node_modules/
 
 # Compiled output and TypeScript caches
 dist/
+src/proto/gen/
 *.tsbuildinfo
 
 # Test and coverage output

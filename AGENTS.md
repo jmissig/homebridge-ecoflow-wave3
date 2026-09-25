@@ -181,6 +181,19 @@ Treat these as protocol hypotheses until verified against the household WAVE 3. 
 
 For toolchain and dependency updates, compare against the current official template first. The template is the default; local divergence should be intentional and documented.
 
+Dependabot is the sole dependency updater: weekly grouped npm minor/patch
+updates, individual npm major upgrades, grouped GitHub Actions updates, and
+separate security-update groups. Do not reintroduce a second scheduled updater
+or automatic merge/publish behavior. See [decision 0008](docs/decisions/0008-dependency-maintenance.md).
+
+The reviewed `.proto` files are tracked; `src/proto/gen/` is ignored build output.
+`npm run build`, `npm test`, and `npm run typecheck:test` each generate their
+inputs, and `npm run verify` lints schemas, generates, and validates the result.
+After `npm ci`, use `npm run proto:generate` if editor imports need resolving.
+`npm pack` builds through `prepack`; installed tarballs need only runtime
+dependencies, not Buf or the source schemas. Keep provenance comments in the
+schemas so generation preserves them in distributed JavaScript.
+
 ## Configuration and secrets
 
 Configuration should be the smallest set needed for a WAVE 3 session and useful

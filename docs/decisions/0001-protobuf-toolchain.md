@@ -3,6 +3,10 @@
 - Date: 2026-07-28
 - Status: accepted for the first protocol slice
 
+The generated-source tracking and CI drift-check policy below was superseded
+on 2026-09-24 by [decision 0008](0008-dependency-maintenance.md).
+Buf Protobuf-ES and the reviewed schema remain the accepted toolchain.
+
 ## Context
 
 The plugin needs strict TypeScript types, proto3 optional-field presence,

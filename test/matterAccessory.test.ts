@@ -881,6 +881,9 @@ describe('WAVE 3 Matter accessory', () => {
         () => endpoint.state.thermostat.systemMode === MATTER_SYSTEM_MODE.cool,
         'initial automatic mode projection',
       );
+      // Visible state can precede completion of the queued snapshot updates.
+      // Drain them so the injected drop belongs to the changed setpoint below.
+      await (binding as unknown as { updateTail: Promise<void> }).updateTail;
       dropNextThermostatStateUpdate = true;
       controller.setSnapshot({
         ...onlineSnapshot(),

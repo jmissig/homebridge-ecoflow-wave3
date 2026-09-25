@@ -41,3 +41,5 @@ jobs:
       - name: Verify
         run: npm run verify
 
+      - name: Check package contents
+        run: npm pack --dry-run

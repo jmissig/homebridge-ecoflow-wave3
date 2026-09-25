@@ -5,15 +5,17 @@ Start with the [commissioning runbook](commissioning.md) for a first install.
 
 ## Update before diagnosing
 
-Development installs should use the checked-in packed-artifact helper:
+Update the development build directly from GitHub:
 
 ```sh
-git pull --ff-only
-./npm-install-dev-build.sh
+npm install -g github:jmissig/homebridge-ecoflow-wave3
 ```
 
 Restart only the EcoFlow child bridge afterward. Ordinary code updates do not
 require removing the Matter bridge from Apple Home or pairing it again.
+
+For local checkout changes, use `./npm-install-dev-build.sh` from the checkout
+to verify, build, and install a packed artifact instead.
 
 Do not use `npm install -g .` from the checkout. That creates a development
 symlink and can load a second Matter.js runtime whose class identities do not

@@ -45,7 +45,7 @@
     "typecheck:test": "npm run proto:generate && tsc -p tsconfig.test.json",
     "verify": "npm run proto:check && npm run lint && npm run typecheck:test && npm test && npm run build",
     "prepublishOnly": "npm run verify",
-    "prepack": "npm run build",
+    "prepare": "npm run build",
     "watch": "npm run build && npm link && nodemon"
   },
   "dependencies": {

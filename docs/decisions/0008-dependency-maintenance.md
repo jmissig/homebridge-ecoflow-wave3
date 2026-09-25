@@ -31,21 +31,32 @@ The official Homebridge plugin template's `latest` branch was checked on
 - Generate before standalone builds, tests, and test type checks. Verification
   lints the schema, generates, and validates the resulting code with the rest of
   the plugin. It no longer compares generated output with Git.
-- Build on `prepack` so a fresh checkout produces a complete tarball. Include
-  compiled protobuf JavaScript, licensing, and attribution in the package;
+- Build on `prepare` so Git installs and a fresh checkout's `npm pack` produce
+  a complete package. Include compiled protobuf JavaScript, licensing, and
+  attribution in the package;
   do not require generators or source schemas at runtime.
 
 ## Consequences
 
 Dependency-only PRs no longer require a bot to commit generated files. Schema
 and dependency changes are validated together from fresh generated code. A
-developer can run `npm run proto:generate` after `npm ci` for editor support.
+developer gets generated editor inputs and a build automatically with `npm ci`.
 Generated code remains inspectable locally, with provenance inherited from the
 schema. Runtime behavior and accessory identity are unchanged.
 
 This reduces routine noise, not every PR to one: security updates, major
 upgrades, and Actions updates remain distinct reviewable changes. Merging
 updates does not itself bump the plugin version or publish a release.
+
+### Git installation follow-up (2026-09-24)
+
+Julian requested direct `npm install -g github:jmissig/homebridge-ecoflow-wave3`
+support. An isolated install with the original `prepack` hook succeeded but
+omitted `dist/index.js`: npm's Git packing path runs `prepare`, not `prepack`.
+Move the build hook to `prepare`. Git installs produce a packaged copy and
+avoid the duplicate Matter.js runtime risk of a global checkout symlink. The
+local helper remains available for verification and installation of checkout
+changes; no runtime or version changes are needed.
 
 ## References
 

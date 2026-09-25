@@ -27,22 +27,21 @@ The plugin is not published to npm yet. Install the current development build
 from GitHub:
 
 ```sh
-git clone https://github.com/jmissig/homebridge-ecoflow-wave3.git
-cd homebridge-ecoflow-wave3
-./npm-install-dev-build.sh
+npm install -g github:jmissig/homebridge-ecoflow-wave3
 ```
 
-The helper verifies and builds the plugin, packs it into a temporary directory,
-and installs that artifact globally. Use the helper instead of
-`npm install -g .`; a direct global install from the checkout creates a symlink
-that can load a different Matter.js runtime from Homebridge.
+Run this with the same account and npm installation used by Homebridge. npm
+builds the plugin from source and installs a packaged copy, not a development
+symlink. Run the same command again to update to the latest default-branch code.
 
-To update an existing checkout:
+To install local checkout changes with full verification, use the helper:
 
 ```sh
-git pull --ff-only
 ./npm-install-dev-build.sh
 ```
+
+Do not use `npm install -g .`; installing a checkout directory creates a symlink
+that can load a different Matter.js runtime from Homebridge.
 
 Restart the EcoFlow child bridge after installing or updating.
 

@@ -189,9 +189,10 @@ or automatic merge/publish behavior. See [decision 0008](docs/decisions/0008-dep
 The reviewed `.proto` files are tracked; `src/proto/gen/` is ignored build output.
 `npm run build`, `npm test`, and `npm run typecheck:test` each generate their
 inputs, and `npm run verify` lints schemas, generates, and validates the result.
-After `npm ci`, use `npm run proto:generate` if editor imports need resolving.
-`npm pack` builds through `prepack`; installed tarballs need only runtime
-dependencies, not Buf or the source schemas. Keep provenance comments in the
+`prepare` builds after `npm ci` and when npm installs from Git or packs the
+checkout. Direct GitHub installs use a packaged copy, not a checkout symlink.
+Installed tarballs need only runtime dependencies, not Buf or the source
+schemas. Keep provenance comments in the
 schemas so generation preserves them in distributed JavaScript.
 
 ## Configuration and secrets

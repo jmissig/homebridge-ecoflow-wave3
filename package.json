@@ -49,14 +49,14 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "^2.13.0",
+    "@bufbuild/protobuf": "^2.16.0",
     "mqtt": "^5.15.2"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.72.0",
-    "@bufbuild/protoc-gen-es": "^2.13.0",
+    "@bufbuild/protoc-gen-es": "^2.16.0",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.6.3",
     "ajv": "^8.20.0",
     "eslint": "^10.3.0",
     "homebridge": "^2.3.0",
@@ -65,6 +65,6 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.70.1"
+    "typescript-eslint": "^8.71.0"
   }
 }
